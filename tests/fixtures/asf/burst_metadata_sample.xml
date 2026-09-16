@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Minimal ASF burst metadata XML (additionalUrls[0] of an S1BurstProduct), layout as in
+     ASFHyP3/burst2safe test data: burst/manifest/xfdu:XFDU + burst/metadata/product{swath,polarisation,content}. -->
+<burst>
+  <manifest>
+    <xfdu:XFDU xmlns:xfdu="urn:ccsds:schema:xfdu:1" xmlns:safe="http://www.esa.int/safe/sentinel-1.0" version="esa/safe/sentinel-1.0/sentinel-1/sar/level-1/slc/standard/iwdp">
+      <informationPackageMap/>
+      <metadataSection>
+        <metadataObject ID="processing" classification="PROVENANCE" category="PDI">
+          <metadataWrap mimeType="text/xml" vocabularyName="SAFE" textInfo="Processing">
+            <xmlData>
+              <safe:processing name="SLC Post Processing" start="2024-04-08T03:10:00.000000" stop="2024-04-08T03:20:00.000000">
+                <safe:facility country="Germany" name="Copernicus S1 Core Ground Segment - DPA" organisation="ESA" site="DLR-Oberpfaffenhofen">
+                  <safe:software name="Sentinel-1 IPF" version="003.71"/>
+                </safe:facility>
+                <safe:resource name="unknown" role="Raw Data">
+                  <safe:processing name="Generation of Sentinel-1 L0 SAR Product">
+                    <safe:facility country="" name="" organisation="" site="">
+                      <safe:software name="" version=""/>
+                    </safe:facility>
+                  </safe:processing>
+                </safe:resource>
+              </safe:processing>
+            </xmlData>
+          </metadataWrap>
+        </metadataObject>
+      </metadataSection>
+      <dataObjectSection/>
+    </xfdu:XFDU>
+  </manifest>
+  <metadata>
+    <product source_filename="s1a-iw1-slc-vv-20240408t015045-20240408t015113-053336-06778c-004.xml">
+      <swath>IW1</swath>
+      <polarisation>VV</polarisation>
+      <content>
+        <adsHeader><missionId>S1A</missionId><productType>SLC</productType><polarisation>VV</polarisation><mode>IW</mode><swath>IW1</swath><startTime>2024-04-08T01:50:45.343649</startTime><stopTime>2024-04-08T01:51:13.245770</stopTime><absoluteOrbitNumber>53336</absoluteOrbitNumber></adsHeader>
+        <generalAnnotation><productInformation><pass>Ascending</pass><platformHeading>-1.297301730117246e+01</platformHeading><rangeSamplingRate>6.434523812571428e+07</rangeSamplingRate><radarFrequency>5.405000454334350e+09</radarFrequency></productInformation></generalAnnotation>
+        <imageAnnotation><imageInformation><slantRangeTime>5.337574920665150e-03</slantRangeTime><rangePixelSpacing>2.329562e+00</rangePixelSpacing><azimuthPixelSpacing>1.397051e+01</azimuthPixelSpacing><azimuthTimeInterval>2.055556299999998e-03</azimuthTimeInterval><numberOfSamples>21577</numberOfSamples><numberOfLines>14970</numberOfLines><incidenceAngleMidSwath>3.392652331212236e+01</incidenceAngleMidSwath></imageInformation></imageAnnotation>
+        <swathTiming><linesPerBurst>1497</linesPerBurst><samplesPerBurst>21577</samplesPerBurst><burstList count="10"><burst><azimuthTime>2024-04-08T01:50:45.343649</azimuthTime></burst></burstList></swathTiming>
+        <geolocationGrid><geolocationGridPointList count="2">
+          <geolocationGridPoint><line>0</line><pixel>0</pixel><incidenceAngle>3.069249991651755e+01</incidenceAngle></geolocationGridPoint>
+          <geolocationGridPoint><line>0</line><pixel>21576</pixel><incidenceAngle>3.676700000000000e+01</incidenceAngle></geolocationGridPoint>
+        </geolocationGridPointList></geolocationGrid>
+      </content>
+    </product>
+    <noise source_filename="noise-s1a-iw1-slc-vv-20240408t015045-20240408t015113-053336-06778c-004.xml"><swath>IW1</swath><polarisation>VV</polarisation><content/></noise>
+    <product source_filename="s1a-iw2-slc-vv-20240408t015046-20240408t015111-053336-06778c-005.xml">
+      <swath>IW2</swath>
+      <polarisation>VV</polarisation>
+      <content>
+        <adsHeader><missionId>S1A</missionId><productType>SLC</productType><polarisation>VV</polarisation><mode>IW</mode><swath>IW2</swath><startTime>2024-04-08T01:50:46.000000</startTime><stopTime>2024-04-08T01:51:11.000000</stopTime><absoluteOrbitNumber>53336</absoluteOrbitNumber></adsHeader>
+        <generalAnnotation><productInformation><pass>Ascending</pass><rangeSamplingRate>6.434523812571428e+07</rangeSamplingRate></productInformation></generalAnnotation>
+        <imageAnnotation><imageInformation><rangePixelSpacing>2.329562e+00</rangePixelSpacing><azimuthPixelSpacing>1.395e+01</azimuthPixelSpacing><azimuthTimeInterval>2.055556299999998e-03</azimuthTimeInterval><incidenceAngleMidSwath>3.9e+01</incidenceAngleMidSwath></imageInformation></imageAnnotation>
+        <swathTiming><linesPerBurst>1506</linesPerBurst><samplesPerBurst>24734</samplesPerBurst><burstList count="9"/></swathTiming>
+        <geolocationGrid><geolocationGridPointList count="2">
+          <geolocationGridPoint><line>0</line><pixel>0</pixel><incidenceAngle>3.65e+01</incidenceAngle></geolocationGridPoint>
+          <geolocationGridPoint><line>0</line><pixel>24733</pixel><incidenceAngle>4.19e+01</incidenceAngle></geolocationGridPoint>
+        </geolocationGridPointList></geolocationGrid>
+      </content>
+    </product>
+  </metadata>
+</burst>

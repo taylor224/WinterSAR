@@ -1,0 +1,42 @@
+# S 사이트 템플릿 (플랜 §6.3: 2 burst x 30 dates, 국내 사이트 — 대조군 포함).
+# 자리표시자(<...>)를 채우기 전에는 실행되지 않는다 (BENCH-004). 실데이터는 네트워크가 필요하다 (BENCH-002).
+name: S_korea
+size: S
+description: "Korean S site: 2 bursts x ~30 dates with levelling/GNSS control (plan §6.3 item 1)"
+synthetic: false
+network: true
+runner: pipeline
+repeats: 3
+aoi: "<AOI_GEOJSON: e.g. benchmarks/sites/aoi/S_korea.geojson (~10 km box)>"
+time_range:
+  start: "<START_DATE: YYYY-MM-DD>"
+  end: "<END_DATE: YYYY-MM-DD, ~30 acquisitions>"
+ground_truth: "<GROUND_TRUTH_CSV: plan §5.6 schema site_id,lat,lon,elev_m,date,up_m,east_m,north_m,method,sigma_mm>"
+config:
+  data:
+    source: asf
+    product: burst
+    polarization: VV
+    credentials: env:EARTHDATA_TOKEN
+  selection:
+    network: sbas
+    max_perp_baseline_m: 150
+    max_temporal_baseline_days: 48
+  engine:
+    interferogram: hyp3
+    looks: auto
+    target_pixel_m: 40
+  unwrap:
+    method: auto
+    coherence_threshold: 0.3
+  timeseries:
+    engine: mintpy
+    troposphere: era5
+  validate:
+    radius_m: 100
+stages: [fetch, coregister, interferogram, multilook, unwrap, timeseries, corrections, geocode]
+metrics: [closure_rms, gt_rmse]
+regression_threshold: 0.15
+baseline: "<BASELINE_JSON: bench_result.json of the 'before' tool chain (HyP3 + MintPy defaults)>"
+notes:
+  baseline_protocol: "plan §6.3 item 2: HyP3 + MintPy default template / ISCE2 topsStack sequential + SNAPHU single tile"

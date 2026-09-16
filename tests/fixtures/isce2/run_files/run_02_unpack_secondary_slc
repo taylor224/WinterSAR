@@ -1,0 +1,8 @@
+fake_job.sh config_secondary_20240113 0.3 &
+fake_job.sh config_secondary_20240125 0.3 &
+wait
+
+fake_job.sh config_secondary_20240206 0.3 &
+fake_job.sh config_secondary_20240218 0.3 &
+wait
+

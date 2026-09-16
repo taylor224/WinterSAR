@@ -1,0 +1,114 @@
+# ISCE2 / topsStack failure knowledge base (plan §5.5, ADR-0035).
+# Patterns are copied from https://github.com/isce-framework/isce2 (main branch):
+# components/isceobj/TopsProc/*.py, components/isceobj/Sensor/TOPS/Sentinel1.py,
+# contrib/stack/topsStack/*.py, contrib/demUtils/demstitcher/DemStitcher.py.
+# topsStack option names in fix texts are from contrib/stack/topsStack/stackSentinel.py createParser().
+
+- id: KB-ISCE2-001
+  engine: isce2
+  stage: coregister
+  pattern: 'No common bursts found for swath (?P<swath>\d)|No swaths contain any burst overlaps|NODATA: No bursts to extract|There is no imagery to extract\. Check region of interest and inputs|There is no common region between the two dates to process'
+  extract: [swath]
+  severity: FAIL
+  cause:
+    ko: "참조 영상과 보조 영상 사이에 공통 burst가 없습니다. 두 날짜의 프레임(슬라이스)이 서로 다른 구간을 덮거나, 지정한 bbox가 어느 한 날짜의 burst와 겹치지 않거나, 서로 다른 트랙(relative orbit)의 영상을 섞었을 때 발생합니다."
+    en: "The reference and secondary acquisitions share no common bursts. This happens when the two dates' frames (slices) cover different segments, when the bbox does not intersect the bursts of one date, or when scenes from different tracks (relative orbits) are mixed."
+  fix:
+    ko: "같은 relative orbit·같은 편파의 영상만 스택에 넣고, 모든 날짜에 공통으로 존재하는 burst만 AOI로 선택하세요('wintersar precheck'의 SEL 규칙이 이를 검사합니다). topsStack에서는 '-b/--bbox'를 모든 날짜가 덮는 범위로 줄이거나, 공통 burst가 없는 날짜를 '-x/--exclude_dates'로 제외하세요."
+    en: "Keep only scenes with the same relative orbit and polarization in the stack and restrict the AOI to bursts present on every date ('wintersar precheck' SEL rules check this). In topsStack, shrink '-b/--bbox' to the area covered by all dates or drop the dates without common bursts with '-x/--exclude_dates'."
+  refs:
+    - "https://github.com/isce-framework/isce2/blob/main/components/isceobj/TopsProc/runComputeBaseline.py"
+    - "https://github.com/isce-framework/isce2/blob/main/components/isceobj/Sensor/TOPS/Sentinel1.py"
+    - "https://github.com/isce-framework/isce2/blob/main/contrib/stack/topsStack/stackSentinel.py"
+  retry_hint:
+    stage: precheck
+    action: manual
+    params: {}
+    note: "Re-run selection with common-burst filtering; no automatic retry of coregistration."
+  pattern_verified: true
+  pattern_source: "components/isceobj/TopsProc/runComputeBaseline.py ('No common bursts found for swath {0}', 'No swaths contain any burst overlaps ... cannot continue for interferometry applications'); components/isceobj/Sensor/TOPS/Sentinel1.py ('NODATA: No bursts to extract', 'There is no imagery to extract. Check region of interest and inputs.'); components/isceobj/TopsProc/runTopo.py ('There is no common region between the two dates to process')"
+
+- id: KB-ISCE2-002
+  engine: isce2
+  stage: coregister
+  pattern: 'Coherence threshold too strict\. No points left for reliable ESD estimate'
+  severity: FAIL
+  cause:
+    ko: "ESD(Enhanced Spectral Diversity) 방위각 정합 보정 단계에서 코히어런스 임계값(topsStack 기본 0.85)을 넘는 burst 오버랩 픽셀이 하나도 없습니다. 오버랩 영역이 수역·식생·적설 등으로 코히어런스가 낮거나 시간 기선이 너무 길 때 발생합니다."
+    en: "In the ESD (Enhanced Spectral Diversity) azimuth misregistration step no burst-overlap pixel exceeds the coherence threshold (topsStack default 0.85). Overlap areas dominated by water, vegetation or snow, or very long temporal baselines, cause this."
+  fix:
+    ko: "topsStack의 '-e/--esd_coherence_threshold' 값을 낮추거나(예: 0.85 → 0.7), 해당 쌍의 시간 기선을 줄이거나, ESD 없이 기하 정합만 사용하도록 '-C/--coregistration geometry'로 재실행하세요(정합 정밀도는 낮아질 수 있음). wintersar 설정에서는 engine.esd 를 false 로 두면 ESD를 건너뜁니다."
+    en: "Lower topsStack's '-e/--esd_coherence_threshold' (e.g. 0.85 -> 0.7), shorten the temporal baseline of the pair, or rerun with geometry-only coregistration via '-C/--coregistration geometry' (possibly less precise). In the wintersar config, engine.esd: false skips ESD."
+  refs:
+    - "https://github.com/isce-framework/isce2/blob/main/components/isceobj/TopsProc/runESD.py"
+    - "https://github.com/isce-framework/isce2/blob/main/contrib/stack/topsStack/estimateAzimuthMisreg.py"
+    - "https://github.com/isce-framework/isce2/blob/main/contrib/stack/topsStack/stackSentinel.py"
+  retry_hint:
+    stage: coregister
+    action: retry
+    params: {esd_coherence_threshold: 0.7}
+    note: "0.7 is a heuristic below the topsStack default 0.85 (stackSentinel.py '-e' default '0.85'); if it still fails set engine.esd: false."
+  pattern_verified: true
+  pattern_source: "components/isceobj/TopsProc/runESD.py and contrib/stack/topsStack/estimateAzimuthMisreg.py (raise Exception('Coherence threshold too strict. No points left for reliable ESD estimate'))"
+
+- id: KB-ISCE2-003
+  engine: isce2
+  stage: fetch
+  pattern: 'No suitable orbit file found|Failed to download orbit ID|Failed to find \S+ orbits for tref'
+  severity: FAIL
+  cause:
+    ko: "해당 취득 시각을 덮는 궤도 파일(POEORB 정밀 궤도 또는 RESORB 복원 궤도)을 궤도 디렉터리에서 찾지 못했거나 다운로드에 실패했습니다. 궤도 디렉터리가 비어 있거나, 최근 영상이라 정밀 궤도가 아직 공개되지 않았거나, 궤도 서버 인증에 실패한 경우입니다."
+    en: "No orbit file (POEORB precise or RESORB restituted) covering the acquisition time was found in the orbit directory, or the download failed. The orbit directory is empty, the scene is too recent for a precise orbit, or authentication with the orbit server failed."
+  fix:
+    ko: "궤도 파일을 미리 받아 topsStack '-o/--orbit_directory'에 두세요(topsStack의 dloadOrbits.py / fetchOrbit.py는 Copernicus Data Space Ecosystem 계정이 필요합니다). wintersar fetch 단계는 궤도를 ~/.cache/wintersar 에 캐시합니다(PERF-02). 최근 영상은 RESORB로 대체하거나 정밀 궤도 공개 후 재실행하고, 마지막 수단으로 orbitdir을 해제해 annotation 궤도를 쓸 수 있습니다(정밀도 저하)."
+    en: "Download the orbit files in advance into topsStack's '-o/--orbit_directory' (topsStack's dloadOrbits.py / fetchOrbit.py need a Copernicus Data Space Ecosystem account). The wintersar fetch stage caches orbits under ~/.cache/wintersar (PERF-02). For recent scenes fall back to RESORB or rerun once the precise orbit is published; as a last resort unset orbitdir to use the annotation orbit (lower accuracy)."
+  refs:
+    - "https://github.com/isce-framework/isce2/blob/main/components/isceobj/Sensor/TOPS/Sentinel1.py"
+    - "https://github.com/isce-framework/isce2/blob/main/contrib/stack/topsStack/fetchOrbit.py"
+    - "https://github.com/isce-framework/isce2/blob/main/contrib/stack/topsStack/Stack.py"
+  retry_hint:
+    stage: fetch
+    action: retry
+    params: {orbit_type: RESORB}
+    note: "Retry after (re)fetching orbits; RESORB fallback only when POEORB is not yet published."
+  pattern_verified: true
+  pattern_source: "components/isceobj/Sensor/TOPS/Sentinel1.py (s1_findOrbitFile: 'No suitable orbit file found. If you want to process anyway - unset the orbitdir parameter'); contrib/stack/topsStack/fetchOrbit.py ('Failed to download orbit ID:', 'Failed to find {1} orbits for tref {0}')"
+
+- id: KB-ISCE2-004
+  engine: isce2
+  stage: coregister
+  pattern: 'Could not create a stitched DEM\. Some tiles are missing|The full region of interested is not available\. A DEM with all null values will be created|Unknown reference system for DEM: |WGS84 version of dem found by reference set to EGM96'
+  severity: FAIL
+  cause:
+    ko: "DEM이 처리 영역을 덮지 못합니다(누락 타일, 또는 null 값으로 채워진 DEM). 또는 ISCE2가 요구하는 DEM 기준계 메타데이터(WGS84 타원체고 vs EGM96 지오이드)가 맞지 않습니다."
+    en: "The DEM does not cover the processing area (missing tiles, or a DEM filled with null values), or the DEM reference-system metadata that ISCE2 expects (WGS84 ellipsoid vs EGM96 geoid) is inconsistent."
+  fix:
+    ko: "처리 bbox보다 여유 있게 넓은 범위의 DEM을 준비해 topsStack '-d/--dem'으로 지정하세요. 누락 타일은 Earthdata 인증(~/.netrc, machine urs.earthdata.nasa.gov) 후 다시 받고, ISCE2용 DEM은 WGS84 타원체고로 변환한 파일과 그에 맞는 .xml 메타데이터를 사용하세요. 해안·국경 지역은 DEM 공백이 있을 수 있으니 wintersar fetch가 만든 DEM의 범위를 확인하세요."
+    en: "Prepare a DEM that extends well beyond the processing bbox and pass it with topsStack '-d/--dem'. Re-download missing tiles after Earthdata authentication (~/.netrc, machine urs.earthdata.nasa.gov), and for ISCE2 use a DEM converted to WGS84 ellipsoid heights with matching .xml metadata. Coastal / border areas may have DEM gaps: check the extent of the DEM produced by wintersar fetch."
+  refs:
+    - "https://github.com/isce-framework/isce2/blob/main/contrib/demUtils/demstitcher/DemStitcher.py"
+    - "https://github.com/isce-framework/isce2/blob/main/components/isceobj/TopsProc/runVerifyDEM.py"
+    - "https://github.com/isce-framework/isce2/blob/main/contrib/stack/topsStack/stackSentinel.py"
+  retry_hint:
+    stage: fetch
+    action: manual
+    params: {dem_margin_deg: 0.1}
+    note: "Regenerate the DEM with a larger margin; 0.1 deg is a heuristic margin, not measured."
+  pattern_verified: true
+  pattern_source: "contrib/demUtils/demstitcher/DemStitcher.py (stitchDems: 'Could not create a stitched DEM. Some tiles are missing', logger.warning 'The full region of interested is not available. A DEM with all null values will be created.'); components/isceobj/TopsProc/runVerifyDEM.py ('Unknown reference system for DEM: {0}', 'WGS84 version of dem found by reference set to EGM96')"
+
+- id: KB-ISCE2-005
+  engine: isce2
+  stage: precheck
+  pattern: 'No acquisition fulfills the temporal range and bbox requirement'
+  severity: FAIL
+  cause:
+    ko: "topsStack이 지정한 기간과 bbox를 모두 만족하는 SAFE 영상을 하나도 찾지 못했습니다. bbox(SNWE 순서)가 영상 범위와 어긋났거나, SAFE 디렉터리·날짜 범위가 잘못되었거나, bbox를 완전히 덮지 않는 날짜가 모두 제외된 경우입니다."
+    en: "topsStack found no SAFE scene that satisfies both the date range and the bbox. The bbox (SNWE order) does not overlap the scenes, the SAFE directory / date range is wrong, or every date was dropped because it does not fully cover the bbox."
+  fix:
+    ko: "'-b/--bbox'를 'S N W E' 순서로 다시 확인하고 영상 footprint와 겹치는지 검사하세요('wintersar precheck'가 coverage_of_aoi를 계산합니다). bbox를 줄이거나, 부분적으로만 덮는 날짜를 허용하려면 topsStack 옵션으로 강제 포함하세요."
+    en: "Re-check '-b/--bbox' ('S N W E' order) against the scene footprints ('wintersar precheck' computes coverage_of_aoi). Shrink the bbox, or force-include dates that only partially cover it using the topsStack options."
+  refs:
+    - "https://github.com/isce-framework/isce2/blob/main/contrib/stack/topsStack/stackSentinel.py"
+  pattern_verified: true
+  pattern_source: "contrib/stack/topsStack/stackSentinel.py (get_dates: print('No acquisition fulfills the temporal range and bbox requirement.'))"

@@ -1,0 +1,23 @@
+wintersar engines.mintpy: smallbaselineApp.py /home/user/work/ts/smallbaselineApp.cfg --dostep correct_troposphere
+Atmospheric correction using Weather Re-analysis dataset (PyAPS, Jolivet et al., 2011)
+Weather Re-analysis dataset: ERA5
+
+tropo_pyaps3.py -f timeseries.h5 -g inputs/geometryRadar.h5 -w /home/user/weather
+weather model: ERA5 - comb delay
+Download global atmospheric model files...
+--------------------------------------------------
+downloading weather model data using PyAPS (version 0.3.6) ...
+number of grib files to download: 12
+WARNING: the 1 attempt to download failed, retry it.
+
+WARNING: the 2 attempt to download failed, retry it.
+
+WARNING: the 3 attempt to download failed, retry it.
+
+
+
+**************************************************
+WARNING: downloading failed for 3 times, stop trying and continue.
+**************************************************
+
+

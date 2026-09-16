@@ -1,0 +1,4 @@
+2024-05-02 10:00:00 INFO  wintersar.pipeline: starting stage multilook
+2024-05-02 10:00:01 INFO  wintersar.pipeline: 12 pairs, looks (10, 2)
+2024-05-02 10:00:05 ERROR wintersar.pipeline: stage multilook failed: disk quota exceeded while writing /home/user/work/multilook/20240101_20240113.npz
+2024-05-02 10:00:05 INFO  wintersar.pipeline: cleaning up

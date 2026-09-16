@@ -1,0 +1,9 @@
+wintersar engines.hyp3: submitting 24 INSAR_ISCE_MULTI_BURST jobs (looks 20x4, 3 bursts per job)
+Traceback (most recent call last):
+  File "/home/user/work/wintersar/src/wintersar/engines/hyp3.py", line 150, in run
+    batch = hyp3.submit_prepared_jobs(prepared)
+  File "/home/user/miniconda3/envs/insar/lib/python3.11/site-packages/hyp3_sdk/hyp3.py", line 232, in submit_prepared_jobs
+    _raise_for_hyp3_status(response)
+  File "/home/user/miniconda3/envs/insar/lib/python3.11/site-packages/hyp3_sdk/exceptions.py", line 39, in _raise_for_hyp3_status
+    raise HyP3Error(f'{response} {response.json()["detail"]}')
+hyp3_sdk.exceptions.HyP3Error: <Response [400]> These jobs would cost 120 credits, but you have only 35 remaining.

@@ -100,6 +100,7 @@ def check_install(
         )
     findings.extend(_check_credentials())
     findings.extend(_check_geo_libs())
+    findings.extend(_check_optional_packages())
     if not spec.gpu:
         findings.append(
             Finding(
@@ -155,6 +156,26 @@ def check_install(
         )
     console.print(table)
     print_findings(findings)
+
+
+def _check_optional_packages() -> list[Finding]:
+    """ENV-006 for optional helper packages (DEM via sardem, orbits via sentineleof)."""
+    out: list[Finding] = []
+    try:
+        from wintersar.select import dem as _dem
+
+        out.extend(_dem.check_install())
+    except Exception:
+        pass
+    try:
+        from wintersar.engines import aux_cache as _aux
+
+        fn = getattr(_aux, "check_install", None)
+        if callable(fn):
+            out.extend(fn())
+    except Exception:
+        pass
+    return out
 
 
 def _check_credentials() -> list[Finding]:

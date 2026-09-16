@@ -18,3 +18,6 @@ site/
 tests/fixtures/data/large/
 bench_result*.json
 !tests/regression/golden/**
+
+# diagnose log fixtures (tests/fixtures/logs, plan §8) must be versioned despite *.log
+!tests/fixtures/logs/**/*.log

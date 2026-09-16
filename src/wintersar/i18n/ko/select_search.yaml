@@ -1,0 +1,52 @@
+# select/search · metadata · baseline · auth 메시지 (규칙 11.6: 원인 → 조치 순서)
+select_search:
+  KB-AUTH-001:
+    cause: "Earthdata Login 인증 정보를 사용할 수 없습니다 ({reason})."
+    cause_missing: "Earthdata Login 인증 정보가 없습니다 (환경변수 {env_var} 미설정, ~/.netrc에 {host} 항목 없음). 검색은 가능하지만 다운로드는 실패합니다."
+    cause_invalid_token: "환경변수 {env_var}의 Earthdata 토큰이 거부되었습니다 (만료되었거나 잘못된 토큰): {error}"
+    cause_netrc_error: "~/.netrc의 {host} 계정으로 로그인하지 못했습니다: {error}"
+    cause_network: "Earthdata Login 서버({host})에 연결하지 못했습니다: {error}"
+    fix: "https://urs.earthdata.nasa.gov 에서 계정을 만든 뒤 (1) https://urs.earthdata.nasa.gov/user_tokens 에서 토큰을 발급해 {env_var} 환경변수로 설정하거나 (2) ~/.netrc에 'machine {host} login <ID> password <PW>' 줄을 추가하세요. SLC BURST 다운로드에는 asf-urs 쿠키가 필요하므로 .netrc(ID/비밀번호) 방식을 권장합니다."
+    fix_invalid_token: "https://urs.earthdata.nasa.gov/user_tokens 에서 새 토큰을 발급해 {env_var}를 갱신하거나 ~/.netrc 방식으로 바꾸세요."
+    fix_network: "네트워크·프록시 설정을 확인한 뒤 다시 시도하세요. 장애 여부는 https://status.earthdata.nasa.gov 에서 확인할 수 있습니다."
+  SEL-SEARCH-01:
+    cause: "검색 결과: {product_type} {n_records}건 · 날짜 {n_dates}개 · 트랙 {tracks} · burst/씬 {n_bursts}개 (AOI 밖 {n_dropped}건 제외)."
+    fix: "후보가 예상과 다르면 AOI 좌표(경도, 위도 순서)·기간·편파·궤도 방향 설정을 확인하세요."
+  SEL-SEARCH-02:
+    cause: "AOI·기간에 해당하는 Sentinel-1 SLC-BURST 제품이 없어 IW SLC 전체 씬으로 대체 검색했습니다 ({n_slc}건)."
+    fix: "SLC 경로는 다운로드 용량이 크고 프레임 경계가 날짜마다 달라 burst 단위 겹침이 보장되지 않습니다. 가능하면 기간을 넓혀 BURST 제품을 다시 확인하세요."
+  SEL-SEARCH-03:
+    cause: "AOI·기간({start} ~ {end})에 해당하는 Sentinel-1 {product_type} 제품이 없습니다."
+    fix: "AOI 좌표(경도, 위도 순서), 기간, 편파({polarization}), 궤도 방향({orbit_direction}), 트랙({relative_orbit}) 설정을 확인하세요."
+  SEL-SEARCH-04:
+    cause: "CMR 검색이 불완전하게 끝났습니다 (받은 결과 {n_records}건, 일부 페이지 누락 가능)."
+    fix: "잠시 후 검색을 다시 실행하세요. 반복되면 기간을 나누어 검색하세요."
+  SEL-SEARCH-05:
+    cause: "asf_search 검색 중 오류가 발생했습니다 ({error_type}): {error}"
+    fix: "네트워크 연결과 AOI WKT를 확인하고 다시 시도하세요. CMR 장애 여부는 https://status.earthdata.nasa.gov 에서 확인하세요."
+  SEL-SEARCH-06:
+    cause: "{n_missing}개 날짜의 수직 기선을 구하지 못했습니다 (상태벡터 없음 또는 스택에 없음): {dates}"
+    fix: "해당 날짜는 SEL-06 판정에서 제외됩니다. 정밀궤도(POEORB) EOF 파일을 orbit_dir에 두고 method='orbit'으로 다시 계산하세요."
+  SEL-SEARCH-07:
+    cause: "AOI 파일을 읽지 못했습니다 ({path}): {error}"
+    fix: "GeoJSON(Feature/FeatureCollection/Geometry, WGS84 경도·위도) 또는 WKT POLYGON 텍스트 파일을 지정하세요."
+  SEL-SEARCH-08:
+    cause: "asf_search stack API에서 기선을 받지 못한 {n_orbit}개 날짜는 궤도 상태벡터로 자체 계산했습니다 (출처: {source})."
+    fix: "자체 계산값은 stack API 값과 ±1 m 이내로 검증되었습니다(ADR-0011). 확인이 필요하면 method='asf'로 다시 계산하세요."
+  aoi:
+    invalid: "AOI 파일을 해석할 수 없습니다: {error}"
+    empty: "AOI 도형이 비어 있습니다: {path}"
+    unsupported: "지원하지 않는 AOI 도형 유형입니다: {geom_type}"
+  metadata:
+    unknown_platform: "알 수 없는 플랫폼 값: {value}"
+    unknown_mode: "알 수 없는 빔 모드 값: {value}"
+    no_product_entry: "burst 메타데이터 XML에 {subswath}/{polarization} product 항목이 없습니다: {path}"
+    bad_xml: "XML을 읽지 못했습니다 ({path}): {error}"
+  baseline:
+    method_unknown: "알 수 없는 기선 계산 방법: {method} (asf | orbit | auto)"
+    no_state_vectors: "상태벡터가 없어 기선을 계산할 수 없습니다: {granule}"
+    no_zero_doppler: "궤도 구간 안에서 zero-Doppler 시각을 찾지 못했습니다: {granule}"
+    too_few_state_vectors: "상태벡터가 2개 미만입니다 ({n}개)"
+  candidates:
+    saved: "후보 목록 저장: {path} ({n_records}건)"
+    bad_file: "candidates.json 형식이 올바르지 않습니다 ({path}): {error}"

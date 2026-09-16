@@ -1,0 +1,32 @@
+# M 사이트 템플릿 (플랜 §6.3: 1 frame x 60 dates). 자리표시자를 채우기 전에는 실행되지 않는다.
+name: M_frame
+size: M
+description: "M site: one IW frame (all AOI bursts) x ~60 dates"
+synthetic: false
+network: true
+runner: pipeline
+repeats: 3
+aoi: "<AOI_GEOJSON: one IW frame footprint>"
+time_range:
+  start: "<START_DATE: YYYY-MM-DD>"
+  end: "<END_DATE: YYYY-MM-DD, ~60 acquisitions>"
+config:
+  data:
+    source: asf
+    product: burst
+    polarization: VV
+    credentials: env:EARTHDATA_TOKEN
+  engine:
+    interferogram: isce2_topsstack
+    looks: auto
+    target_pixel_m: 40
+    cleanup: stage
+  unwrap:
+    method: auto
+    coherence_threshold: 0.3
+  timeseries:
+    engine: mintpy
+    troposphere: era5
+stages: [fetch, coregister, interferogram, multilook, unwrap, timeseries, corrections, geocode]
+metrics: [closure_rms]
+regression_threshold: 0.15

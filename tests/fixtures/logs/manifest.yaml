@@ -1,0 +1,101 @@
+# Log fixtures for wintersar.diagnose (plan §8: synthetic excerpts built from verified upstream strings,
+# paths/tokens are fake). `engine` is the expected auto-detected engine (null = generic),
+# `expect` the exact KB ids diagnose_logs() must return (Phase 3 DoD), `params` extracted values.
+- file: snaphu/secondary_nodes.log
+  engine: snaphu
+  expect:
+  - KB-SNAPHU-001
+  params: {}
+- file: snaphu/out_of_memory.log
+  engine: snaphu
+  expect:
+  - KB-SNAPHU-002
+- file: snaphu/child_killed.log
+  engine: snaphu
+  expect:
+  - KB-SNAPHU-002
+- file: snaphu/tiles_too_small.log
+  engine: snaphu
+  expect:
+  - KB-SNAPHU-003
+- file: isce2/no_common_bursts.log
+  engine: isce2
+  expect:
+  - KB-ISCE2-001
+  params:
+    swath: '1'
+- file: isce2/esd_low_coherence.log
+  engine: isce2
+  expect:
+  - KB-ISCE2-002
+- file: isce2/orbit_missing.log
+  engine: isce2
+  expect:
+  - KB-ISCE2-003
+- file: isce2/dem_tiles_missing.log
+  engine: isce2
+  expect:
+  - KB-ISCE2-004
+- file: mintpy/reference_point.log
+  engine: mintpy
+  expect:
+  - KB-MINTPY-001
+  params:
+    threshold: '0.85'
+- file: mintpy/not_enough_pixels.log
+  engine: mintpy
+  expect:
+  - KB-MINTPY-002
+  params:
+    min_num_pixel: '100'
+- file: mintpy/era5_download_failed.log
+  engine: mintpy
+  expect:
+  - KB-MINTPY-003
+- file: hyp3/insufficient_credits.log
+  engine: hyp3
+  expect:
+  - KB-HYP3-001
+  params:
+    cost: '120'
+    remaining: '35'
+- file: hyp3/polarization_mismatch.log
+  engine: hyp3
+  expect:
+  - KB-HYP3-002
+  params:
+    pol1: VV
+    pol2: VH
+- file: hyp3/burst_id_mismatch.log
+  engine: hyp3
+  expect:
+  - KB-HYP3-002
+- file: hyp3/dem_coverage.log
+  engine: hyp3
+  expect:
+  - KB-HYP3-003
+- file: asf/cmr_500.log
+  engine: asf
+  expect:
+  - KB-ASF-001
+  params:
+    status: '503'
+- file: asf/earthdata_401.log
+  engine: asf
+  expect:
+  - KB-AUTH-001
+- file: env/proj_db_mismatch.log
+  engine: null
+  expect:
+  - KB-ENV-001
+- file: generic/unknown_traceback.log
+  engine: null
+  expect:
+  - KB-UNKNOWN
+- file: generic/unknown_error_line.log
+  engine: null
+  expect:
+  - KB-UNKNOWN
+- file: generic/clean.log
+  engine: null
+  expect: []

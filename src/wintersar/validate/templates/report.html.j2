@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+<meta charset="utf-8">
+<title>{{ L.title }}</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", "Noto Sans KR", sans-serif; margin: 2rem auto; max-width: 1100px; padding: 0 1rem; color: #1b1b1b; }
+  h1 { font-size: 1.6rem; } h2 { font-size: 1.2rem; margin-top: 2rem; border-bottom: 1px solid #ddd; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; margin: 0.5rem 0 1rem; }
+  th, td { border: 1px solid #ddd; padding: 0.3rem 0.5rem; text-align: right; }
+  th:first-child, td:first-child { text-align: left; }
+  th { background: #f3f4f6; }
+  .fail { color: #b91c1c; font-weight: 600; } .warn { color: #b45309; font-weight: 600; } .info { color: #1d4ed8; }
+  .muted { color: #666; font-size: 0.85rem; }
+  .plots img { max-width: 100%; margin: 0.5rem 0; border: 1px solid #eee; }
+  .kv td:first-child { font-weight: 600; text-align: left; }
+</style>
+</head>
+<body>
+<h1>{{ L.title }}</h1>
+<p class="muted">{{ L.generated }}{% if source %}<br>{{ L.source }}{% endif %}</p>
+
+<h2>{{ L.section_summary }}</h2>
+<table class="kv">
+  <tr><td>{{ L.overall_rmse }}</td><td>{{ summary.rmse_mm }} mm</td></tr>
+  <tr><td>{{ L.overall_bias }}</td><td>{{ summary.bias_mm }} mm</td></tr>
+  <tr><td>{{ L.n_sites }}</td><td>{{ summary.n_sites }}</td></tr>
+  <tr><td>{{ L.n_points }}</td><td>{{ summary.n_points }}</td></tr>
+</table>
+<p class="muted">{{ L.conventions }}</p>
+
+<h2>{{ L.section_sites }}</h2>
+{% if sites %}
+<table>
+  <thead><tr>
+    <th>{{ L.col_site }}</th><th>{{ L.col_method }}</th><th>{{ L.col_n }}</th><th>{{ L.col_rmse }}</th><th>{{ L.col_bias }}</th><th>{{ L.col_corr }}</th>
+    <th>{{ L.col_v_insar }}</th><th>{{ L.col_v_gt }}</th><th>{{ L.col_v_diff }}</th><th>{{ L.col_n_pixels }}</th><th>{{ L.col_distance }}</th><th>{{ L.col_ref_date }}</th>
+  </tr></thead>
+  <tbody>
+  {% for s in sites %}
+  <tr><td>{{ s.site_id }}</td><td>{{ s.method }}</td><td>{{ s.n }}</td><td>{{ s.rmse_mm }}</td><td>{{ s.bias_mm }}</td><td>{{ s.corr }}</td>
+      <td>{{ s.v_insar }}</td><td>{{ s.v_gt }}</td><td>{{ s.v_diff }}</td><td>{{ s.n_pixels }}</td><td>{{ s.distance_m }}</td><td>{{ s.reference_date }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>{{ L.no_sites }}</p>
+{% endif %}
+
+<h2>{{ L.section_findings }}</h2>
+{% if findings %}
+<table>
+  <thead><tr><th></th><th>ID</th><th>{{ L.cause }}</th><th>{{ L.fix }}</th></tr></thead>
+  <tbody>
+  {% for f in findings %}
+  <tr><td class="{{ f.severity | lower }}">{{ f.severity_label }}</td><td>{{ f.rule_id }}{% if f.scope %} <span class="muted">[{{ f.scope }}]</span>{% endif %}</td><td style="text-align:left">{{ f.cause }}</td><td style="text-align:left">{{ f.fix }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>{{ L.no_findings }}</p>
+{% endif %}
+
+{% if refpoints %}
+<h2>{{ L.section_refpoints }}</h2>
+<table>
+  <thead><tr><th>{{ L.col_rank }}</th><th>{{ L.col_pixel }}</th><th>{{ L.col_latlon }}</th><th>{{ L.col_score }}</th><th>{{ L.col_coherence }}</th></tr></thead>
+  <tbody>
+  {% for r in refpoints %}
+  <tr><td>{{ r.rank }}</td><td>{{ r.row }}, {{ r.col }}</td><td>{{ r.lat }}, {{ r.lon }}</td><td>{{ r.score }}</td><td>{{ r.coherence }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if closure %}
+<h2>{{ L.section_closure }}</h2>
+<p>{{ closure.summary }}</p>
+<table>
+  <thead><tr><th>{{ L.col_rank }}</th><th>{{ L.col_pair }}</th><th>{{ L.col_closure_score }}</th><th>{{ L.col_n_triplets }}</th><th>{{ L.col_suspicious }}</th></tr></thead>
+  <tbody>
+  {% for r in closure.igrams %}
+  <tr><td>{{ r.rank }}</td><td>{{ r.pair }}</td><td>{{ r.score }}</td><td>{{ r.n_triplets }}</td><td>{{ r.suspicious }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if sweep_html %}
+<h2>{{ L.section_sweep }}</h2>
+{{ sweep_html | safe }}
+{% endif %}
+
+{% if plots %}
+<h2>{{ L.section_plots }}</h2>
+<p class="muted">{{ L.plot_caption }}</p>
+<div class="plots">
+{% for p in plots %}
+  <figure><img src="{{ p.path }}" alt="{{ p.site_id }}"><figcaption>{{ p.site_id }}</figcaption></figure>
+{% endfor %}
+</div>
+{% endif %}
+</body>
+</html>

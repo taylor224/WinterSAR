@@ -1,0 +1,73 @@
+<?xml version="1.0" ?>
+<!-- Synthetic (NOT real) AUX_POEORB excerpt in the ESA EOF layout: Data_Block/List_of_OSVs/OSV with
+     TAI/UTC/UT1/Absolute_Orbit/X/Y/Z/VX/VY/VZ/Quality. Four vectors bracket 2024-01-07T09:32:3x (the
+     fixture burst); positions/velocities come from the CMR state vectors of that burst, extended
+     linearly, so tests only rely on parsing and on Hermite consistency, not on orbit realism. -->
+<Earth_Explorer_File>
+  <Earth_Explorer_Header>
+    <Fixed_Header>
+      <File_Name>S1A_OPER_AUX_POEORB_OPOD_20240127T070649_V20240106T225942_20240108T005942</File_Name>
+      <File_Type>AUX_POEORB</File_Type>
+      <Validity_Period>
+        <Validity_Start>UTC=2024-01-06T22:59:42</Validity_Start>
+        <Validity_Stop>UTC=2024-01-08T00:59:42</Validity_Stop>
+      </Validity_Period>
+    </Fixed_Header>
+  </Earth_Explorer_Header>
+  <Data_Block type="xml">
+    <List_of_OSVs count="4">
+      <OSV>
+        <TAI>TAI=2024-01-07T09:32:59.000000</TAI>
+        <UTC>UTC=2024-01-07T09:32:22.000000</UTC>
+        <UT1>UT1=2024-01-07T09:32:22.000000</UT1>
+        <Absolute_Orbit>+51999</Absolute_Orbit>
+        <X unit="m">-2984179.876000</X>
+        <Y unit="m">4902935.000000</Y>
+        <Z unit="m">4129649.000000</Z>
+        <VX unit="m/s">3731.800000</VX>
+        <VY unit="m/s">-2793.700000</VY>
+        <VZ unit="m/s">5995.700000</VZ>
+        <Quality>NOMINAL</Quality>
+      </OSV>
+      <OSV>
+        <TAI>TAI=2024-01-07T09:33:09.000000</TAI>
+        <UTC>UTC=2024-01-07T09:32:32.000000</UTC>
+        <UT1>UT1=2024-01-07T09:32:32.000000</UT1>
+        <Absolute_Orbit>+51999</Absolute_Orbit>
+        <X unit="m">-2946718.046583</X>
+        <Y unit="m">4874657.329086</Y>
+        <Z unit="m">4189362.577055</Z>
+        <VX unit="m/s">3760.520915</VX>
+        <VY unit="m/s">-2853.788468</VY>
+        <VZ unit="m/s">5948.416648</VZ>
+        <Quality>NOMINAL</Quality>
+      </OSV>
+      <OSV>
+        <TAI>TAI=2024-01-07T09:33:19.000000</TAI>
+        <UTC>UTC=2024-01-07T09:32:42.000000</UTC>
+        <UT1>UT1=2024-01-07T09:32:42.000000</UT1>
+        <Absolute_Orbit>+51999</Absolute_Orbit>
+        <X unit="m">-2908969.328569</X>
+        <Y unit="m">4845819.238380</Y>
+        <Z unit="m">4248609.053406</Z>
+        <VX unit="m/s">3789.137459</VX>
+        <VY unit="m/s">-2913.782518</VY>
+        <VZ unit="m/s">5900.767262</VZ>
+        <Quality>NOMINAL</Quality>
+      </OSV>
+      <OSV>
+        <TAI>TAI=2024-01-07T09:33:29.000000</TAI>
+        <UTC>UTC=2024-01-07T09:32:52.000000</UTC>
+        <UT1>UT1=2024-01-07T09:32:52.000000</UT1>
+        <Absolute_Orbit>+51999</Absolute_Orbit>
+        <X unit="m">-2870934.000000</X>
+        <Y unit="m">4816386.000000</Y>
+        <Z unit="m">4307380.000000</Z>
+        <VX unit="m/s">3817.500000</VX>
+        <VY unit="m/s">-2973.500000</VY>
+        <VZ unit="m/s">5852.500000</VZ>
+        <Quality>NOMINAL</Quality>
+      </OSV>
+    </List_of_OSVs>
+  </Data_Block>
+</Earth_Explorer_File>

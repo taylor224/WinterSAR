@@ -1,0 +1,52 @@
+# select/geometry_masks + select/dem messages (R-04, SEL-12, PERF-02). Keys must match ko/select_geometry.yaml.
+select_geometry:
+  SEL-12:
+    cause: "On the {flight_direction} pass (heading {heading_deg:.1f}°, incidence {incidence_deg:.1f}°) {layover_pct:.1f}% of the AOI is in layover and {shadow_pct:.1f}% in shadow (threshold {threshold_pct:.0f}%). On steep slopes facing the radar the summit echoes before the foot and the range order reverses (layover); slopes facing away are not illuminated (shadow). Phase in those areas is unreliable, and which slopes are affected depends on the orbit direction."
+    fix: "Exclude layover/shadow pixels from unwrapping and the time series using the mask layer ({mask_path}). Prefer the {recommended} pass, which has the smaller distorted fraction; if both passes are available, process each and use them for LOS decomposition."
+    ok: "{flight_direction} pass: AOI layover {layover_pct:.1f}% · shadow {shadow_pct:.1f}% (within the {threshold_pct:.0f}% threshold)."
+  recommend: "Recommended pass: {recommended} (layover + shadow ascending {asc_pct:.1f}% vs descending {desc_pct:.1f}%)"
+  explain:
+    title: "Layover, foreshortening and shadow (range geometry of a side-looking radar)"
+    layover: "Layover: when a slope facing the radar is steeper than the incidence angle, the summit is closer to the sensor than the foot and echoes first. The image order reverses and several ground points collapse into one pixel, so the phase is unusable."
+    foreshortening: "Foreshortening: gentle slopes facing the radar are compressed to less than their true length (index 0 = flat, 1 = fully compressed). The phase is valid but the terrain change per pixel is large, raising the risk of unwrapping errors and DEM residuals."
+    shadow: "Shadow: when the slope facing away from the radar is steeper than (90° − incidence angle) no energy reaches it and only noise remains."
+    direction: "An ascending pass (flying NNW, looking east) puts west-facing slopes into layover; a descending pass (flying SSW, looking west) affects east-facing slopes. Pick the direction with the smaller distorted fraction for your site, or process both."
+    local_incidence: "Local incidence angle: the angle between the terrain normal and the line of sight. Equal to the incidence angle on flat ground, smaller on slopes facing the radar (near 0° means layover), larger on slopes facing away (above 90° the surface is not illuminated)."
+    not_doppler: "These distortions come from slant-range geometry; explaining them by the Doppler effect is incorrect."
+  stats:
+    layover_fraction: "layover fraction"
+    shadow_fraction: "shadow fraction"
+    foreshortening_mean: "mean foreshortening index"
+    aoi_pixels: "AOI pixels"
+  band:
+    layover: "layover (1 = yes)"
+    shadow: "shadow (1 = yes)"
+    foreshortening: "foreshortening index (0–1)"
+    local_incidence_deg: "local incidence angle (deg)"
+    ls_map: "layover/shadow map (0 none, 1 layover, 2 shadow, 3 both, 255 nodata)"
+  dem:
+    cache_hit: "Using cached DEM: {path}"
+    fetching: "Fetching DEM ({source}, bbox {bbox}) → {path}"
+    source:
+      copernicus_glo30: "Copernicus DEM GLO-30 (30 m, converted to WGS84 ellipsoid heights)"
+      srtm1: "SRTM 1 arc-second (30 m, converted to WGS84 ellipsoid heights)"
+    attribution:
+      copernicus_glo30: "© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. doi:10.5270/ESA-c5d3d65"
+      srtm1: "NASA Shuttle Radar Topography Mission (SRTM) 1 Arc-Second Global, NASA/USGS (public domain)"
+  error:
+    dem_ndim: "The DEM array must be 2-D (got {ndim} dimensions). Pass a single band."
+    dem_too_small: "The DEM array is too small to compute slopes (shape {shape}). At least 2×2 pixels are required."
+    invalid_spacing: "Invalid pixel spacing (dx_m={dx_m}, dy_m={dy_m}). Pass finite, non-zero values in metres (dy_m<0 for south-up arrays)."
+    invalid_direction: "Unknown flight direction '{value}'. Use one of {allowed}."
+    invalid_incidence: "Incidence angle {value}° must lie strictly between 0° and 90°. Sentinel-1 IW incidence angles are about 29°–46°."
+    shape_mismatch: "Shape {a} of {what} differs from the DEM shape {b}. Resample to the same grid."
+    no_transform: "Writing a GeoTIFF needs an affine transform. Use compute_from_dem_file() or pass the transform argument."
+    rotated_raster: "Rotated rasters (transform b, d ≠ 0) are not supported. Reproject to a north-up grid first."
+    unknown_units: "Cannot convert the projected CRS linear unit '{units}' to metres. Reproject to a metre-based CRS."
+    aoi_outside_dem: "The AOI lies outside the DEM {dem} bounds {bounds} or is too small. Check the DEM extent and that the AOI is in lon/lat WGS84."
+    bad_mask_file: "{path} is not a wintersar geometry mask file (4 bands expected)."
+    empty_results: "No results to compare. Pass the output of masks_for_both_directions()."
+    empty_aoi: "The AOI geometry is empty. Check the WKT polygon."
+    invalid_bbox: "Invalid bbox {bbox} (needs left<right and bottom<top)."
+    unknown_source: "Unknown DEM source '{source}'. Use one of {allowed}."
+    fetch_failed: "DEM source {source} did not produce a file ({path}). Check network access and credentials (NASA sources need an Earthdata login) and retry."

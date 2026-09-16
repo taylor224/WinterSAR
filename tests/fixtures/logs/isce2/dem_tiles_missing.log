@@ -1,0 +1,5 @@
+wintersar fetch: preparing DEM for bbox S=37.0 N=38.0 W=126.0 E=128.0 (isce2 dem.py stitch)
+dem.py -a stitch -b 37 38 126 128 -r -s 1 -c -f /home/user/work/isce/DEM
+isce.contrib.demUtils.DemStitcher - WARNING - There was a problem in retrieving the file  https://e4ftl01.cr.usgs.gov/MEASURES/SRTMGL1.003/2000.02.11/N37E127.SRTMGL1.hgt.zip. Exception HTTP Error 404: Not Found
+Could not create a stitched DEM. Some tiles are missing
+wintersar fetch: dem.py exited with status 1

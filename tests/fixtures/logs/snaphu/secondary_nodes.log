@@ -1,0 +1,15 @@
+wintersar unwrap: pair 20240101_20240113 engine=snaphu ntiles=(3, 3) tile_overlap=200 nproc=4
+wintersar unwrap: snaphu -f /home/user/work/unwrap/20240101_20240113/snaphu.conf --tile 3 3 200 200 --nproc 4
+Starting first-round tile-mode unwrapping
+Unwrapping tile at row 0, column 0 (pid 41213)
+Unwrapping tile at row 0, column 1 (pid 41214)
+Unwrapping tile at row 0, column 2 (pid 41215)
+Unwrapping tile at row 1, column 0 (pid 41216)
+Unwrapping tile at row 1, column 1 (pid 41217)
+Unwrapping tile at row 1, column 2 (pid 41218)
+Unwrapping tile at row 2, column 0 (pid 41219)
+Unwrapping tile at row 2, column 1 (pid 41220)
+Unwrapping tile at row 2, column 2 (pid 41221)
+Exceeded maximum number of secondary nodes
+Decrease TILECOSTTHRESH and/or increase MINREGIONSIZE
+wintersar unwrap: snaphu exited with status 1

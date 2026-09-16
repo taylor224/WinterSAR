@@ -1,0 +1,4 @@
+wintersar unwrap: pair 20240101_20240113 engine=snaphu ntiles=(64, 64) tile_overlap=500 nproc=2
+wintersar unwrap: snaphu -f /home/user/work/unwrap/20240101_20240113/snaphu.conf --tile 64 64 500 500 --nproc 2
+tiles too small or overlap too large for given input
+wintersar unwrap: snaphu exited with status 1

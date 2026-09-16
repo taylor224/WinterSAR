@@ -1,0 +1,24 @@
+Reference Granule: S1_109903_IW2_20240101T092000_VV_01AB-BURST
+Secondary Granule: S1_109903_IW2_20240113T092000_VV_13AB-BURST
+Reference Pass Direction: DESCENDING
+Reference Orbit Number: 50000
+Secondary Orbit Number: 50175
+Baseline: -23.4
+UTC time: 33600.0
+Heading: -167.9
+Spacecraft height: 693000.0
+Earth radius at nadir: 6371000.0
+Slant range near: 800000.0
+Slant range center: 850000.0
+Slant range far: 900000.0
+Range looks: 20
+Azimuth looks: 4
+InSAR phase filter: yes
+Phase filter parameter: 0.6
+Range bandpass filter: no
+Azimuth bandpass filter: no
+DEM source: GLO-30
+DEM resolution: 30
+Unwrapping type: snaphu_mcf
+Speckle filter: no
+Water mask: no

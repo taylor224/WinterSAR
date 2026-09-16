@@ -1,0 +1,70 @@
+# Engine-independent failures: authentication and environment (plan §5.5, ADR-0035).
+
+- id: KB-AUTH-001
+  engine: any
+  stage: fetch
+  pattern: 'HTTP 40[13]\b|40[13] Client Error|Invalid/Expired token passed|Failed to log in with provided credentials|Was not able to authenticate with (?:username and password provided|\.netrc file and no credentials provided)|Please create a \.netrc file in your home directory|ASFAuthenticationError'
+  severity: FAIL
+  cause:
+    ko: "NASA Earthdata Login 인증에 실패했습니다(HTTP 401/403). EARTHDATA_TOKEN 또는 ~/.netrc 의 자격 증명이 없거나 만료되었거나 틀렸고, 계정이 ASF 데이터 접근(EULA)을 승인하지 않았을 수도 있습니다."
+    en: "NASA Earthdata Login authentication failed (HTTP 401/403). The credentials in EARTHDATA_TOKEN or ~/.netrc are missing, expired or wrong, or the account has not approved ASF data access (EULA)."
+  fix:
+    ko: "https://urs.earthdata.nasa.gov 에서 로그인 상태와 토큰 유효기간을 확인하고, EARTHDATA_TOKEN 환경변수 또는 ~/.netrc(machine urs.earthdata.nasa.gov, login/password, 권한 600)를 다시 설정하세요. 'wintersar check-install'이 자격 증명 유무를 점검합니다."
+    en: "Check the account and token expiry at https://urs.earthdata.nasa.gov and reset EARTHDATA_TOKEN or ~/.netrc (machine urs.earthdata.nasa.gov, login/password, mode 600). 'wintersar check-install' verifies that credentials are present."
+  refs:
+    - ".venv/lib/python3.11/site-packages/asf_search/ASFSession.py"
+    - ".venv/lib/python3.11/site-packages/asf_search/download/download.py"
+    - "https://github.com/ASFHyP3/hyp3-sdk/blob/develop/src/hyp3_sdk/util.py"
+    - "https://github.com/isce-framework/isce2/blob/main/contrib/demUtils/demstitcher/DemStitcher.py"
+    - "https://urs.earthdata.nasa.gov"
+  retry_hint:
+    stage: fetch
+    action: manual
+    params: {}
+    note: "Fix credentials, then rerun the stage."
+  pattern_verified: true
+  pattern_source: "asf_search/ASFSession.py ('Invalid/Expired token passed', 'Failed to log in with provided credentials. Original Exception: ...'); asf_search/download/download.py (ASFAuthenticationError(f'HTTP {status}: {text}')); hyp3_sdk/util.py ('Was not able to authenticate with username and password provided', 'Was not able to authenticate with .netrc file and no credentials provided'); requests/models.py ('{status} Client Error: {reason} for url: ...'); isce2 DemStitcher.py ('Please create a .netrc file in your home directory containing ...')"
+
+- id: KB-ENV-001
+  engine: any
+  stage: geocode
+  pattern: 'It comes from another PROJ installation|Cannot find proj\.db|DATABASE\.LAYOUT\.VERSION\.(?:MAJOR|MINOR)|lib(?:gdal|proj)\.so[.\d]*: cannot open shared object file'
+  severity: FAIL
+  cause:
+    ko: "GDAL/PROJ 라이브러리 버전이 서로 맞지 않습니다: 다른 PROJ 설치의 proj.db 를 읽고 있거나(PROJ_LIB/PROJ_DATA 환경변수 또는 pip 휠과 conda 라이브러리 혼용), 공유 라이브러리(libgdal/libproj)를 찾지 못합니다."
+    en: "GDAL/PROJ library versions do not match: a proj.db from a different PROJ installation is being read (PROJ_LIB/PROJ_DATA environment variable, or pip wheels mixed with conda libraries), or the shared library (libgdal/libproj) cannot be loaded."
+  fix:
+    ko: "rasterio·pyproj·gdal 을 같은 환경(conda-forge 또는 pip 휠 중 하나)에서 함께 재설치하고, 다른 설치를 가리키는 PROJ_LIB / PROJ_DATA / GDAL_DATA 환경변수를 해제하세요. 'wintersar check-install'이 rasterio 와 pyproj 의 PROJ 버전 불일치를 ENV-004 로 보고합니다."
+    en: "Reinstall rasterio, pyproj and gdal together in one environment (either conda-forge or pip wheels, not both) and unset PROJ_LIB / PROJ_DATA / GDAL_DATA variables that point to another installation. 'wintersar check-install' reports a rasterio/pyproj PROJ mismatch as ENV-004."
+  refs:
+    - "https://github.com/OSGeo/PROJ/blob/master/src/iso19111/factory.cpp"
+    - "https://github.com/bminor/glibc/blob/master/elf/dl-load.c"
+    - "src/wintersar/cli.py (ENV-004)"
+  retry_hint:
+    stage: geocode
+    action: manual
+    params: {}
+    note: "Environment fix; rerun after reinstalling."
+  pattern_verified: true
+  pattern_source: "PROJ src/iso19111/factory.cpp ('... lacks DATABASE.LAYOUT.VERSION.MAJOR / DATABASE.LAYOUT.VERSION.MINOR metadata. It comes from another PROJ installation.', 'Cannot find proj.db'); glibc elf/dl-load.c (_dl_map_new_object: N_(\"cannot open shared object file\"))"
+
+- id: KB-ENV-002
+  engine: any
+  pattern: 'Out of memory: Killed process|^Killed(?::\s*9)?\b|^MemoryError\b|Cannot allocate memory|Command .+ died with <Signals\.SIGKILL: 9>'
+  severity: FAIL
+  cause:
+    ko: "프로세스가 메모리 부족으로 종료되었습니다(리눅스 OOM killer의 'Killed', Python MemoryError, 또는 errno ENOMEM 'Cannot allocate memory'). 데이터 크기(픽셀 수 x 쌍 수)에 비해 가용 메모리가 작거나 병렬 작업 수가 너무 많습니다."
+    en: "The process ran out of memory (Linux OOM killer 'Killed', Python MemoryError, or errno ENOMEM 'Cannot allocate memory'). The data volume (pixels x pairs) exceeds the available memory or too many jobs run in parallel."
+  fix:
+    ko: "동시 작업 수(compute.cores)와 메모리 상한(compute.memory_gb)을 낮추고, 멀티룩 배율을 높이거나 AOI를 줄여 픽셀 수를 줄이세요. 언래핑이면 타일 모드(KB-SNAPHU-002), MintPy 역산이면 compute.maxMemory/numWorker 템플릿 값을 머신 사양에 맞추세요(PERF-09)."
+    en: "Lower the number of concurrent jobs (compute.cores) and the memory budget (compute.memory_gb), and reduce the pixel count with a larger multilook factor or a smaller AOI. For unwrapping use tile mode (KB-SNAPHU-002); for the MintPy inversion set the compute.maxMemory/numWorker template values to the machine spec (PERF-09)."
+  refs:
+    - "https://github.com/torvalds/linux/blob/master/mm/oom_kill.c"
+    - "src/wintersar/util/sysinfo.py"
+  retry_hint:
+    stage: unwrap
+    action: tile
+    params: {nproc: 1}
+    note: "Serialise jobs first; the stage of the failing job is set by the caller."
+  pattern_verified: true
+  pattern_source: "linux mm/oom_kill.c (__oom_kill_process: pr_err(\"%s: Killed process %d (%s) ...\") with message \"Out of memory\"); signal.strsignal(SIGKILL) == 'Killed'; os.strerror(errno.ENOMEM) == 'Cannot allocate memory'; CPython subprocess.CalledProcessError.__str__ (\"Command '%s' died with %r.\"); MemoryError = Python builtin"

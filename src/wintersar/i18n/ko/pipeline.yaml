@@ -1,0 +1,70 @@
+# pipeline 모듈 메시지 (DAG·캐시·실행기·plan/run CLI). 진단 텍스트는 원인 → 조치 순서.
+pipeline:
+  PIPELINE-001:
+    cause: "단계 '{stage}'(엔진 {engine})이(가) 실패했습니다: {error}"
+    fix: "로그 {log_dir}를 확인하고 'wintersar diagnose {log_dir} --engine {engine}'으로 원인을 진단한 뒤 'wintersar run --from {stage}'로 재개하세요."
+  PIPELINE-002:
+    cause: "단계 '{stage}'에 필요한 입력 '{artifact}'(생산 단계: {producer})의 캐시 결과가 없습니다."
+    fix: "--from 없이 실행하거나 먼저 'wintersar run --until {producer}'로 상류 단계를 실행하세요."
+  PIPELINE-003:
+    cause: "단계 '{stage}'의 현재 설정과 일치하는 캐시가 없어 가장 최근 결과({node_hash}, {finished_at})를 재사용합니다 (--from)."
+    fix: "상류 설정을 바꿨다면 --from 없이 실행해 해당 단계를 다시 계산하세요."
+  PIPELINE-004:
+    cause: "파이썬 단계 '{stage}'의 구현({module}.{function})을 불러올 수 없어 건너뜁니다."
+    fix: "해당 모듈을 설치·구현하거나 이 단계를 필요로 하지 않는 경로(예: fake 엔진)를 사용하세요."
+  PIPELINE-005:
+    cause: "단계 '{stage}'에 지정된 엔진 '{engine}'이(가) 등록되어 있지 않습니다 (등록된 엔진: {known})."
+    fix: "config.yaml의 {engine_key} 값을 등록된 엔진으로 바꾸거나 'wintersar check-install'로 설치 상태를 확인하세요."
+  PIPELINE-006:
+    cause: "단계 '{stage}'의 예상 메모리 {need_gb:.1f} GB가 예산 {budget_gb:.1f} GB를 초과합니다."
+    fix: "compute.memory_gb를 늘리거나 unwrap.tiles·looks를 조정해 단일 작업 크기를 줄이세요. 엔진은 예산(_memory_gb) 안에서 타일링해야 합니다."
+  PIPELINE-007:
+    cause: "엔진 '{engine}'은(는) 단계 '{stage}'를 구현하지 않아 건너뜁니다 (지원 단계: {stages})."
+    fix: "이 엔진이 해당 단계를 상위 단계에서 함께 처리한다면 정상입니다. 아니라면 config.yaml에서 다른 엔진을 선택하세요."
+  PIPELINE-008:
+    cause: "단계 '{stage}'는 조정된 파라미터로 재시도할 수 있습니다: {hint}"
+    fix: "'wintersar run --from {stage} --set {stage}.<key>=<value>'로 제안된 값을 적용해 재실행하세요."
+  PIPELINE-009:
+    cause: "단계 '{stage}'가 산출물 '{artifact}'을(를) 선언했지만 경로 {path}가 존재하지 않습니다."
+    fix: "엔진 로그를 확인하세요. 산출물 경로는 _out_dir 아래에 있어야 합니다."
+  PIPELINE-011:
+    cause: "언래핑 단계를 건너뜁니다: 간섭도 엔진 '{engine}'이(가) 언래핑 결과(unw)를 함께 산출합니다."
+    fix: "로컬 SNAPHU/tophu로 다시 언래핑하려면 engine.interferogram을 isce2_topsstack으로 바꾸세요."
+  PIPELINE-010:
+    cause: "검증 단계를 건너뜁니다: validate.leveling_csv 또는 validate.gnss가 설정되지 않았습니다."
+    fix: "대조군이 있다면 config.yaml의 validate 절에 경로를 지정하세요."
+  cli:
+    plan_title: "실행 계획: {project} ({workdir})"
+    run_title: "실행: {project} ({workdir})"
+    col_stage: "단계"
+    col_engine: "엔진"
+    col_version: "버전"
+    col_status: "상태"
+    col_hash: "노드 해시"
+    col_wall: "소요(s)"
+    col_size: "크기"
+    col_finished: "완료 시각"
+    col_inputs: "입력"
+    status_cached: "캐시됨"
+    status_to_run: "실행 예정"
+    status_ran: "실행됨"
+    status_skipped: "건너뜀"
+    status_failed: "실패"
+    status_blocked: "차단됨"
+    status_pending: "대기"
+    summary: "실행 예정 {n_run} · 캐시됨 {n_cached} · 건너뜀 {n_skipped}"
+    resources: "예상 리소스: 시간 {wall} · 메모리 {mem} · 디스크 {disk} · 크레딧 {credits}"
+    run_ok: "완료: {n_ran}단계 실행, {n_cached}단계 캐시 재사용 ({wall:.1f}s)"
+    run_failed: "실패: 단계 '{stage}' (로그: {log_dir})"
+    dry_run: "dry-run: 아무 단계도 실행하지 않았습니다."
+    unknown_stage: "알 수 없는 단계 '{stage}'. 사용 가능: {stages}"
+    bad_set: "--set 형식 오류 '{value}': stage.key=value 형식이어야 합니다 (예: unwrap.coherence_threshold=0.4)"
+    cache_empty: "캐시가 비어 있습니다: {workdir}"
+    cache_total: "총 {n}개 항목 · {size}"
+    gc_summary: "삭제 {n_removed}개 ({freed}) · 유지 {n_kept}개{dry}"
+    gc_dry_suffix: " [dry-run: 실제로 삭제하지 않음]"
+    help_plan: "DAG를 만들고 캐시/재실행 대상과 예상 리소스를 표로 출력합니다 (실행하지 않음)."
+    help_run: "파이프라인을 실행합니다. 캐시된 단계는 건너뛰고 변경된 단계와 그 하류만 재실행합니다 (PERF-03)."
+    help_cache: "작업 디렉터리 캐시(work/<stage>/<hash>) 조회·정리."
+    help_cache_ls: "캐시된 단계 결과 목록."
+    help_cache_gc: "단계별로 최근 N개만 남기고 오래된 캐시를 삭제합니다."

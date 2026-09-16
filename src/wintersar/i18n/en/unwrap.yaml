@@ -1,0 +1,51 @@
+# unwrap module messages (R-06, PERF-04). Diagnostics are cause -> fix.
+unwrap:
+  plan:
+    title: "Unwrap execution plan"
+    method: "Method"
+    tiles: "Tiles (rows×cols)"
+    overlap: "Tile overlap (px)"
+    tile_shape: "Tile size (px)"
+    n_parallel: "Interferograms in parallel"
+    nproc_per_igram: "Tile processes per interferogram"
+    est_mb: "Estimated memory per interferogram (MB)"
+    single_tile_mb: "Estimated single-tile memory (MB)"
+    budget: "Memory budget (MB)"
+    fringe: "Fringe density (0-1)"
+    executor: "Executor"
+    reasons: "Reasons"
+    machine: "Machine: {cores} cores · memory budget {memory_gb:.1f} GB"
+    reason:
+      single_tile: "Estimated single-tile memory {single_tile_mb:.0f} MB ≤ budget {budget_mb:.0f} MB → no tiling."
+      tiled_memory: "Estimated single-tile memory {single_tile_mb:.0f} MB > budget {budget_mb:.0f} MB → split into {rows}×{cols} tiles (overlap {overlap_px} px, {tile_mb:.0f} MB per tile)."
+      tiles_explicit: "Using the configured unwrap.tiles as given: {rows}×{cols} tiles (overlap {overlap_px} px)."
+      nproc_raised: "Tiling is required, so the tile processes per interferogram were raised to {nproc_per_igram} to fill the cores (interferogram-level parallelism is memory-bound)."
+      memory_insufficient: "One tile ({tile_mb:.0f} MB) exceeds the budget {budget_mb:.0f} MB. Increase multilooking, free memory, or set unwrap.tiles explicitly."
+      parallel_cores_bound: "Interferograms in parallel {n_parallel} = floor(cores {cores} / processes per interferogram {nproc_per_igram}) (core-bound)."
+      parallel_memory_bound: "Interferograms in parallel {n_parallel} = floor(budget {budget_mb:.0f} MB / {est_mb_per_igram:.0f} MB per interferogram) (memory-bound)."
+      parallel_igrams_bound: "Only {n_igrams} interferograms, so parallelism is {n_parallel}."
+      method_explicit: "Using '{method}' as configured in unwrap.method."
+      method_tophu_large: "Large interferogram that needs tiling → multiresolution unwrapper tophu preferred."
+      method_tophu_fringe: "High fringe density {fringe} → multiresolution unwrapper tophu preferred."
+      method_snaphu_default: "Default unwrapper snaphu (single tile or low fringe density)."
+      method_first_available: "Neither snaphu nor tophu available; using the first available backend '{method}'."
+      method_none_available: "No unwrap backend is available. Planning with 'snaphu'; ENV-001 will be reported at run time."
+  run:
+    start: "Unwrapping: {n_pairs} interferograms · method {method} · tiles {rows}×{cols} · {n_parallel} in parallel"
+    done: "Unwrapping done: {n_pairs} interferograms · {wall_time_s:.1f} s · peak RSS {peak_rss_mb:.0f} MB"
+    failed: "Unwrapping failed for {n_failed} interferogram(s) ({pairs})"
+    conncomp: "Connected components (median) {median_conncomp} · masked fraction {masked_fraction:.1%}"
+    jumps: "Tile-seam jumps: {n_jump} / {n_boundaries} boundaries"
+    outputs: "Outputs: {unw} · {stats}"
+  UNW-001:
+    cause: "Unwrap backend '{method}' is not available ({detail})."
+    fix: "Run wintersar check-install, or set unwrap.method to an installed engine (snaphu, tophu)."
+  UNW-002:
+    cause: "One tile needs an estimated {tile_mb:.0f} MB, more than the memory budget {budget_mb:.0f} MB (tiles {rows}×{cols})."
+    fix: "Increase multilooking (engine.looks), raise compute.memory_gb, or split finer with unwrap.tiles."
+  UNW-003:
+    cause: "2π-integer jumps detected on {n_jump} of {n_boundaries} tile boundaries ({n_jump_pixels} pixels in total)."
+    fix: "Increase the tile overlap (unwrap.tiles.overlap), switch unwrap.method to tophu, or re-assemble with wintersar research stitch."
+  UNW-004:
+    cause: "Unwrapping of interferogram {pair} failed: {error}"
+    fix: "Analyse the log {log} with wintersar diagnose. Out of memory → more tiles; secondary-arc overflow → raise the coherence threshold."

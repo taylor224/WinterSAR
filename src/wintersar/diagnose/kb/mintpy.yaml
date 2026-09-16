@@ -1,0 +1,90 @@
+# MintPy failure knowledge base (plan §5.5, ADR-0035).
+# Patterns are copied from https://github.com/insarlab/MintPy (main branch):
+# src/mintpy/reference_point.py, src/mintpy/smallbaselineApp.py, src/mintpy/tropo_pyaps3.py.
+# Template keys and defaults in fix texts are from src/mintpy/defaults/smallbaselineApp.cfg.
+# MintPy is GPL-3: it is only ever run as a subprocess (rule 11.2); these regexes read its stdout.
+
+- id: KB-MINTPY-001
+  engine: mintpy
+  stage: timeseries
+  pattern: 'No pixel with average spatial coherence > (?P<threshold>[0-9.]+) are found for automatic reference point selection'
+  extract: [threshold]
+  severity: FAIL
+  cause:
+    ko: "기준점 자동 선택에 실패했습니다: 평균 공간 코히어런스가 {threshold}보다 높은 픽셀이 없습니다(mintpy.reference.minCoherence, 기본 0.85). 스택 전체의 코히어런스가 낮거나(식생·수역·적설), 마스크가 과도하거나, 간섭도 자체가 잘못 만들어진 경우입니다."
+    en: "Automatic reference-point selection failed: no pixel has an average spatial coherence above {threshold} (mintpy.reference.minCoherence, default 0.85). The stack is coherent nowhere (vegetation, water, snow), the mask is too aggressive, or the interferograms themselves are bad."
+  fix:
+    ko: "먼저 avgSpatialCoh 를 확인해 코히어런스가 높은 안정 지역(도심·암반)이 있는지 보세요. 있다면 'wintersar refpoint'로 추천 후보를 받아 mintpy.reference.lalo(또는 .yx)에 수동 지정하거나, mintpy.reference.minCoherence 를 낮추세요(예: 0.85 → 0.7). 어디에도 없다면 쌍 선택(시간 기선 단축, 코히어런스 임계)부터 다시 검토하세요."
+    en: "First inspect avgSpatialCoh for a stable, coherent area (urban, bare rock). If there is one, take a candidate from 'wintersar refpoint' and set mintpy.reference.lalo (or .yx) manually, or lower mintpy.reference.minCoherence (e.g. 0.85 -> 0.7). If nothing is coherent, revisit the pair selection (shorter temporal baselines, coherence threshold) first."
+  refs:
+    - "https://github.com/insarlab/MintPy/blob/main/src/mintpy/reference_point.py"
+    - "https://github.com/insarlab/MintPy/blob/main/src/mintpy/defaults/smallbaselineApp.cfg"
+  retry_hint:
+    stage: timeseries
+    action: retry
+    params: {"mintpy.reference.minCoherence": 0.7}
+    note: "MintPy's own message suggests lowering minCoherence; 0.7 is a heuristic below the default 0.85. Prefer a manual reference point from 'wintersar refpoint' when available."
+  pattern_verified: true
+  pattern_source: "src/mintpy/reference_point.py (select_max_coherence_yx: 'No pixel with average spatial coherence > {} are found for automatic reference point selection!')"
+
+- id: KB-MINTPY-002
+  engine: mintpy
+  stage: timeseries
+  pattern: 'Not enough reliable pixels \(minimum of (?P<min_num_pixel>\d+)\)'
+  extract: [min_num_pixel]
+  severity: FAIL
+  cause:
+    ko: "네트워크 역산 후 시간적 코히어런스 마스크(mintpy.networkInversion.minTempCoh, 기본 0.7)를 통과한 픽셀이 최소 개수({min_num_pixel}, mintpy.networkInversion.minNumPixel)보다 적습니다. 기준점이 언래핑 오류 지역에 있거나, 네트워크가 끊겨 있거나, 언래핑 오류가 많은 쌍이 섞여 있을 때 발생합니다."
+    en: "After network inversion fewer pixels than the minimum ({min_num_pixel}, mintpy.networkInversion.minNumPixel) pass the temporal-coherence mask (mintpy.networkInversion.minTempCoh, default 0.7). The reference point sits in an unwrapping-error area, the network is disconnected, or pairs with many unwrapping errors are included."
+  fix:
+    ko: "MintPy 안내대로 (1) 기준점이 언래핑 오류 없는 곳인지 확인하고, (2) 네트워크가 부분 집합 없이 연결되어 있는지 확인하세요(mintpy.network.minCoherence 로 저코히어런스 쌍 제외). 그래도 부족하면 mintpy.networkInversion.minTempCoh 를 낮추거나(예: 0.7 → 0.6) 언래핑 오류 보정(unwrap_error_correction)을 켜세요."
+    en: "As MintPy suggests: (1) make sure the reference point is free of unwrapping errors and (2) make sure the network is fully connected without subsets (drop low-coherence pairs with mintpy.network.minCoherence). If still short, lower mintpy.networkInversion.minTempCoh (e.g. 0.7 -> 0.6) or enable unwrap_error_correction."
+  refs:
+    - "https://github.com/insarlab/MintPy/blob/main/src/mintpy/smallbaselineApp.py"
+    - "https://github.com/insarlab/MintPy/blob/main/src/mintpy/defaults/smallbaselineApp.cfg"
+  retry_hint:
+    stage: timeseries
+    action: retry
+    params: {"mintpy.networkInversion.minTempCoh": 0.6}
+    note: "0.6 is a heuristic below the MintPy default 0.7; check the reference point and network connectivity first."
+  pattern_verified: true
+  pattern_source: "src/mintpy/smallbaselineApp.py (generate_temporal_coherence_mask: msg = f\"Not enough reliable pixels (minimum of {int(min_num_pixel)}). \" ...; print(f'ERROR: {msg}'); raise RuntimeError(msg))"
+
+- id: KB-MINTPY-003
+  engine: mintpy
+  stage: corrections
+  pattern: 'downloading failed for 3 times, stop trying and continue|CDS account is NOT setup to the latest format|PYAPS: No account info found for'
+  severity: FAIL
+  cause:
+    ko: "대기 지연 보정용 기상 재분석 자료(ERA5 등) 다운로드에 실패했습니다. PyAPS의 CDS(Copernicus Climate Data Store) 계정 설정이 없거나 구형 형식이거나, 네트워크 문제로 3회 재시도가 모두 실패한 경우입니다."
+    en: "Downloading the weather re-analysis data (e.g. ERA5) for tropospheric correction failed: the PyAPS CDS (Copernicus Climate Data Store) account is not configured or uses an outdated format, or all three download attempts failed for network reasons."
+  fix:
+    ko: "PyAPS 안내(https://github.com/insarlab/PyAPS/)대로 CDS API 키를 최신 형식으로 등록하고 네트워크 접근을 확인한 뒤 재실행하세요. 미리 받은 자료가 있으면 mintpy.troposphericDelay.weatherDir 에 두면 다운로드를 건너뜁니다(wintersar fetch가 캐시합니다, PERF-02). 임시로는 mintpy.troposphericDelay.method 를 height_correlation 또는 gacos 로 바꿔 진행할 수 있습니다(wintersar 설정 timeseries.troposphere)."
+    en: "Register the CDS API key in the current format as described by PyAPS (https://github.com/insarlab/PyAPS/), check network access and rerun. Pre-downloaded files placed in mintpy.troposphericDelay.weatherDir skip the download (wintersar fetch caches them, PERF-02). As a temporary workaround switch mintpy.troposphericDelay.method to height_correlation or gacos (wintersar config timeseries.troposphere)."
+  refs:
+    - "https://github.com/insarlab/MintPy/blob/main/src/mintpy/tropo_pyaps3.py"
+    - "https://github.com/insarlab/PyAPS/"
+    - "https://github.com/insarlab/MintPy/blob/main/src/mintpy/defaults/smallbaselineApp.cfg"
+  retry_hint:
+    stage: corrections
+    action: retry
+    params: {troposphere: height_correlation}
+    note: "Fallback reduces correction quality; restore era5 once the CDS account works."
+  pattern_verified: true
+  pattern_source: "src/mintpy/tropo_pyaps3.py (dload_grib_files: 'WARNING: downloading failed for 3 times, stop trying and continue.'; check_pyaps_account_config: 'CDS account is NOT setup to the latest format! Check https://github.com/insarlab/PyAPS/.', 'PYAPS: No account info found for {tropo_model} in {section} section in file: {cfg_file}')"
+
+- id: KB-MINTPY-004
+  engine: mintpy
+  stage: timeseries
+  pattern: 'input reference point is OUT of data coverage|input reference point is in masked OUT area'
+  severity: FAIL
+  cause:
+    ko: "수동으로 지정한 기준점(mintpy.reference.yx / lalo)이 데이터 범위 밖이거나 마스크로 제외된 영역에 있습니다."
+    en: "The manually specified reference point (mintpy.reference.yx / lalo) lies outside the data extent or inside the masked-out area."
+  fix:
+    ko: "기준점 좌표(위도/경도 순서, 좌표계)를 확인하고 데이터 범위 안의 안정 지역으로 옮기세요. 'wintersar refpoint'가 코히어런스가 높은 후보를 추천합니다."
+    en: "Check the reference coordinates (lat/lon order, CRS) and move the point to a stable area inside the data extent. 'wintersar refpoint' recommends high-coherence candidates."
+  refs:
+    - "https://github.com/insarlab/MintPy/blob/main/src/mintpy/reference_point.py"
+  pattern_verified: true
+  pattern_source: "src/mintpy/reference_point.py (read_reference_input: raise ValueError('input reference point is OUT of data coverage!'); msg = f'input reference point is in masked OUT area defined by {inps.maskFile}!')"

@@ -1,0 +1,8 @@
+wintersar search: asf_search.geo_search(intersectsWith=POLYGON((126.9 37.5,127.0 37.5,127.0 37.6,126.9 37.6,126.9 37.5)), start=2024-01-01, end=2024-06-30)
+asf_search - WARNING - Query Time Elapsed 30.2
+Traceback (most recent call last):
+  File "/home/user/work/wintersar/src/wintersar/select/search.py", line 44, in run_search
+    results = asf_search.geo_search(**opts)
+  File "/home/user/miniconda3/envs/insar/lib/python3.11/site-packages/asf_search/search/search_generator.py", line 382, in get_page
+    raise ASFSearch5xxError(error_message) from exc
+asf_search.exceptions.ASFSearch5xxError: HTTP 503: ['CMR is currently unavailable, please try again later']

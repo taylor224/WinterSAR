@@ -1,0 +1,59 @@
+# research 모듈 메시지 (R-07, R-15, PERF-05). 진단은 원인 → 조치 순서.
+research:
+  cli:
+    repr_done: "대표위상 계산 완료: 방법 {method} · 다운샘플 계수 {factor} · 저해상도 크기 {ny}×{nx} · 저장 {path}"
+    repr_rmse: "저해상도 진(true) 위상 대비 RMSE {rmse:.3f} rad · 평균 크기 {magnitude:.3f}"
+    repr_pair: "phase_link 쌍 (i, j) = ({i}, {j})"
+    stitch_done: "스티칭 완료: 방법 {method} · 타일 {n_tiles}개 · 오프셋(사이클) {offsets} · 저장 {path}"
+    stitch_jumps: "스티칭 후 타일 경계 단차: {n_jump} / {n_boundaries} 경계 ({n_jump_pixels} 픽셀)"
+    stitch_truth: "주입 오프셋 대비 오답 타일 {n_wrong}개 · 언래핑 오류 픽셀 비율 {error_fraction:.4f}"
+    stitch_residual: "타일 그래프 최소제곱 잔차 최대 {residual_max:.2f} 사이클 · 불일치 경계 {n_inconsistent}개"
+    synth_done: "합성 데이터 저장: 종류 {kind} · {detail} · {path}"
+    synth_detail_igrams: "날짜 {n_dates}개 · 쌍 {n_pairs}개 · 크기 {ny}×{nx}"
+    synth_detail_tiles: "타일 {rows}×{cols} · 오버랩 {overlap} px · 크기 {ny}×{nx} · 오프셋 {offsets}"
+    synth_detail_slc: "SLC {n_dates}장 · 크기 {ny}×{nx} · 코히어런스 모델 tau={tau}"
+    experiment_done: "실험 완료: {name} · 방법 {n_methods}개 · 시드 {n_seeds}개 · 결과 {json} · 표 {md}"
+    experiment_skipped: "실험 건너뜀: {name} — {reason}"
+    experiment_docs: "문서 사본: {path}"
+    experiment_list_title: "내장 실험 정의"
+    table_method: "방법"
+    table_status: "상태"
+  experiment:
+    method: "방법"
+    metric: "지표"
+    mean: "평균"
+    std: "표준편차"
+    status: "상태"
+    generated_from: "생성 원본: `{json}` (표만 기록 — 수치 해석은 ADR·연구 노트에서, 규칙 11.8)"
+    status_skipped: "상태: 건너뜀 — {reason}"
+    missing_packages: "미설치 패키지: {missing}"
+    protocol: "프로토콜"
+    seeds: "시드"
+    data: "데이터"
+    skipped_reason:
+      requires: "필요 패키지 {missing} 가 설치되어 있지 않습니다"
+      manual_protocol: "실데이터와 외부 엔진(dolphin, MintPy) 실행이 필요한 수동 프로토콜입니다 (ADR-0064)"
+  RES-001:
+    cause: "알 수 없는 방법 '{method}'입니다."
+    fix: "지원 방법 중 하나를 지정하세요: {methods}."
+  RES-002:
+    cause: "실험 '{name}'에 필요한 패키지 {missing} 가 설치되어 있지 않습니다."
+    fix: "해당 패키지를 설치하거나(ADR-0001 의존성 정책 확인) 합성 실험(S_synth_*)을 실행하세요."
+  RES-003:
+    cause: "방법 '{method}'은(는) 진폭/SLC 스택(--stack, shape (n_dates, ny, nx))이 필요합니다."
+    fix: "--stack NPZ(키 'slc' 또는 'amplitude')를 지정하거나 ml/coh_weighted/filtered 방법을 사용하세요."
+  RES-004:
+    cause: "coarse_ref 스티칭에는 저해상도 기준 언래핑 위상(lowres_ref)이 필요합니다."
+    fix: "타일 NPZ에 'lowres_ref'를 넣거나 --lowres-ref NPZ를 지정하거나 --method overlap_consensus를 사용하세요."
+  RES-005:
+    cause: "타일 그래프 최소제곱 조정에서 불일치 경계 {n_inconsistent}개(최대 잔차 {residual_max:.2f} 사이클)가 나왔습니다."
+    fix: "오버랩 구간 코히어런스를 확인하고 오버랩 폭을 늘리거나 --consensus median 또는 coarse_ref 방법으로 재시도하세요."
+  RES-006:
+    cause: "인자 '{name}' 값 {value}이(가) 허용 범위({allowed})를 벗어났습니다."
+    fix: "허용 범위 안의 값으로 다시 실행하세요."
+  RES-007:
+    cause: "방법 '{method}'에는 쌍 인덱스 (i, j)가 필요합니다 (간섭도 대신 스택에서 위상을 만듭니다)."
+    fix: "--pair I J 로 참조/부 날짜 인덱스를 지정하세요 (부 − 참조 위상 규약)."
+  RES-008:
+    cause: "실험 YAML 형식 오류: {detail}"
+    fix: "name/kind(repr_phase|stitching|seq_estimator_ab)/methods/seeds/factor/metrics 키를 내장 예시(src/wintersar/research/experiments/*.yaml)와 비교하세요."

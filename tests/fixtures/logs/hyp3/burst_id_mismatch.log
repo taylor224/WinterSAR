@@ -1,0 +1,2 @@
+wintersar engines.hyp3: submitting 1 INSAR_ISCE_BURST job
+hyp3_sdk.exceptions.HyP3Error: <Response [400]> Burst IDs do not match for S1_136231_IW2_20240101T092000_VV_ABCD-BURST and S1_136232_IW2_20240113T092000_VV_EF01-BURST.

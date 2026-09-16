@@ -1,0 +1,71 @@
+# {{ L.title }}
+
+{{ L.generated }}
+{% if source %}
+{{ L.source }}
+{% endif %}
+
+## {{ L.section_summary }}
+
+| | |
+|---|---|
+| {{ L.overall_rmse }} | {{ summary.rmse_mm }} mm |
+| {{ L.overall_bias }} | {{ summary.bias_mm }} mm |
+| {{ L.n_sites }} | {{ summary.n_sites }} |
+| {{ L.n_points }} | {{ summary.n_points }} |
+
+{{ L.conventions }}
+
+## {{ L.section_sites }}
+
+{% if sites %}
+| {{ L.col_site }} | {{ L.col_method }} | {{ L.col_n }} | {{ L.col_rmse }} | {{ L.col_bias }} | {{ L.col_corr }} | {{ L.col_v_insar }} | {{ L.col_v_gt }} | {{ L.col_v_diff }} | {{ L.col_n_pixels }} | {{ L.col_distance }} | {{ L.col_ref_date }} |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+{% for s in sites %}
+| {{ s.site_id }} | {{ s.method }} | {{ s.n }} | {{ s.rmse_mm }} | {{ s.bias_mm }} | {{ s.corr }} | {{ s.v_insar }} | {{ s.v_gt }} | {{ s.v_diff }} | {{ s.n_pixels }} | {{ s.distance_m }} | {{ s.reference_date }} |
+{% endfor %}
+{% else %}
+{{ L.no_sites }}
+{% endif %}
+
+## {{ L.section_findings }}
+
+{{ findings_md }}
+{% if refpoints %}
+
+## {{ L.section_refpoints }}
+
+| {{ L.col_rank }} | {{ L.col_pixel }} | {{ L.col_latlon }} | {{ L.col_score }} | {{ L.col_coherence }} |
+|---|---|---|---|---|
+{% for r in refpoints %}
+| {{ r.rank }} | {{ r.row }}, {{ r.col }} | {{ r.lat }}, {{ r.lon }} | {{ r.score }} | {{ r.coherence }} |
+{% endfor %}
+{% endif %}
+{% if closure %}
+
+## {{ L.section_closure }}
+
+{{ closure.summary }}
+
+| {{ L.col_rank }} | {{ L.col_pair }} | {{ L.col_closure_score }} | {{ L.col_n_triplets }} | {{ L.col_suspicious }} |
+|---|---|---|---|---|
+{% for r in closure.igrams %}
+| {{ r.rank }} | {{ r.pair }} | {{ r.score }} | {{ r.n_triplets }} | {{ r.suspicious }} |
+{% endfor %}
+{% endif %}
+{% if sweep_md %}
+
+## {{ L.section_sweep }}
+
+{{ sweep_md }}
+{% endif %}
+{% if plots %}
+
+## {{ L.section_plots }}
+
+{{ L.plot_caption }}
+
+{% for p in plots %}
+![{{ p.site_id }}]({{ p.path }})
+{% endfor %}
+{% endif %}

@@ -1,0 +1,34 @@
+# S synthetic site — 2π tile stitching on independently "unwrapped" tiles with injected
+# integer offsets (R-06/R-07, ADR-0063). Tables only.
+name: S_synth_stitching
+kind: stitching
+ids: [R-06, R-07, PERF-04]
+description: >-
+  3x3 tiles (overlap 16 px) of a 144x144 synthetic interferogram (Gaussian bowl + 1 rad
+  turbulent atmosphere), each tile shifted by a random integer number of cycles in
+  [-3, 3] and perturbed with 0.3 rad Gaussian noise. coarse_ref uses the block mean of the
+  true phase at factor 3 plus 0.5 rad noise as the low-resolution reference;
+  overlap_consensus uses the synthetic coherence as weights.
+requires: []
+factor: 3
+seeds: [0, 1, 2, 3, 4]
+data:
+  shape: [144, 144]
+  rows: 3
+  cols: 3
+  overlap: 16
+  max_offset_cycles: 3
+  noise_std_rad: 0.3
+  ref_noise_std_rad: 0.5
+  atmosphere_std_rad: 1.0
+  coherence_base: 0.8
+methods:
+  - name: coarse_ref
+  - name: coarse_ref
+    params: {ref_stat: median}
+    label: coarse_ref(median)
+  - name: overlap_consensus
+  - name: overlap_consensus
+    params: {consensus: median}
+    label: overlap_consensus(median)
+metrics: [offsets_exact, n_wrong_offsets, seam_boundaries_with_jump, seam_jump_pixels, unwrap_error_fraction, wall_s, peak_rss_mb]

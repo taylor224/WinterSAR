@@ -1,0 +1,51 @@
+# bench module messages (plan §5.9 / §6.3). Diagnostics are cause -> fix.
+bench:
+  run:
+    start: "Benchmark start: site {site} ({size}) · {repeats} repeats · runner {runner}"
+    repeat_done: "Repeat {i}/{n} done: {wall_time_s:.1f} s · peak RSS {peak_rss_gb:.2f} GB"
+    done: "Benchmark result written: {path}"
+    git: "git {git_sha} · wintersar {version}"
+  table:
+    title: "Per-stage measurements (median of {repeats} repeats)"
+    stage: "Stage"
+    wall: "wall (s)"
+    cpu: "CPU (s)"
+    rss: "peak RSS (GB)"
+    disk: "disk peak (GB)"
+    net: "network (MB)"
+    metric: "Metric"
+    before: "baseline"
+    after: "current"
+    delta: "change"
+    total: "total"
+  metrics:
+    closure_rms: "Closure phase RMS (rad)"
+    unwrap_error_fraction: "Unwrap error fraction"
+    gt_rmse: "Ground-truth RMSE (m)"
+  compare:
+    title: "Comparison with baseline (regression threshold {threshold:.0f}%)"
+    baseline: "Baseline: {site} · git {git_sha} · {created_at}"
+    current: "Current: {site} · git {git_sha} · {created_at}"
+    ok: "No regression: every stage's wall time is within +{threshold:.0f}% of the baseline."
+    regressions: "{n} regression(s): {stages}"
+  BENCH-001:
+    cause: "Stage '{stage}' is {pct:.0f}% slower than the baseline ({before:.2f} s -> {after:.2f} s, threshold {threshold:.0f}%)."
+    fix: "Review recent changes to that stage and re-run on the same machine to rule out noise. If the change is intended, refresh the baseline bench_result.json."
+  BENCH-002:
+    cause: "Site '{site}' has network: true but network runs were not allowed."
+    fix: "Run real-data sites with '--allow-network'. CI uses the synthetic site (S_synthetic.yaml) only."
+  BENCH-003:
+    cause: "Baseline file {path} could not be read ({error})."
+    fix: "Create a baseline first with 'wintersar bench --site ... --out baseline.json' and pass that path to --compare."
+  BENCH-004:
+    cause: "Site definition '{site}' has unfilled placeholders or errors: {placeholders}"
+    fix: "Copy a benchmarks/sites/*.yaml template, fill in the AOI GeoJSON path, the date range and the ground-truth CSV path, then run again."
+  BENCH-005:
+    cause: "Site '{site}' repeat {repeat} failed at stage '{stage}': {error}"
+    fix: "Analyse the logs in the work directory with 'wintersar diagnose'. Pass --workdir to keep the run directories."
+  BENCH-006:
+    cause: "Metric '{metric}' could not be computed for site '{site}' (no input artifact or ground truth)."
+    fix: "unwrap_error_fraction needs a synthetic site (truth phase); gt_rmse needs a ground_truth CSV. Remove the metric from site.metrics if it is not needed."
+  BENCH-007:
+    cause: "Total wall time {wall_time_s:.1f} s of site '{site}' exceeds the budget of {budget_s:.0f} s."
+    fix: "Reduce n_dates/shape for CI sites or adjust max_wall_time_s."

@@ -1,0 +1,5 @@
+wintersar engines.hyp3: submitting 1 INSAR_ISCE_BURST job
+Traceback (most recent call last):
+  File "/home/user/miniconda3/envs/insar/lib/python3.11/site-packages/hyp3_sdk/hyp3.py", line 232, in submit_prepared_jobs
+    _raise_for_hyp3_status(response)
+hyp3_sdk.exceptions.HyP3Error: <Response [400]> The requested scenes need to have the same polarization, got: VV, VH

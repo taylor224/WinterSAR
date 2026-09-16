@@ -1,0 +1,59 @@
+# research module messages (R-07, R-15, PERF-05). Diagnostics are cause -> fix.
+research:
+  cli:
+    repr_done: "Representative phase done: method {method} · downsample factor {factor} · low-res size {ny}×{nx} · saved {path}"
+    repr_rmse: "RMSE against the low-res true phase {rmse:.3f} rad · mean magnitude {magnitude:.3f}"
+    repr_pair: "phase_link pair (i, j) = ({i}, {j})"
+    stitch_done: "Stitching done: method {method} · {n_tiles} tiles · offsets (cycles) {offsets} · saved {path}"
+    stitch_jumps: "Tile-seam jumps after stitching: {n_jump} / {n_boundaries} boundaries ({n_jump_pixels} pixels)"
+    stitch_truth: "Tiles with a wrong offset vs the injected truth: {n_wrong} · unwrap-error pixel fraction {error_fraction:.4f}"
+    stitch_residual: "Tile-graph least-squares residual max {residual_max:.2f} cycles · inconsistent boundaries {n_inconsistent}"
+    synth_done: "Synthetic data saved: kind {kind} · {detail} · {path}"
+    synth_detail_igrams: "{n_dates} dates · {n_pairs} pairs · size {ny}×{nx}"
+    synth_detail_tiles: "tiles {rows}×{cols} · overlap {overlap} px · size {ny}×{nx} · offsets {offsets}"
+    synth_detail_slc: "{n_dates} SLCs · size {ny}×{nx} · coherence model tau={tau}"
+    experiment_done: "Experiment done: {name} · {n_methods} methods · {n_seeds} seeds · results {json} · table {md}"
+    experiment_skipped: "Experiment skipped: {name} — {reason}"
+    experiment_docs: "Docs copy: {path}"
+    experiment_list_title: "Bundled experiment definitions"
+    table_method: "Method"
+    table_status: "Status"
+  experiment:
+    method: "method"
+    metric: "metric"
+    mean: "mean"
+    std: "std"
+    status: "status"
+    generated_from: "Generated from `{json}` (tables only — interpretation belongs in ADRs / research notes, rule 11.8)"
+    status_skipped: "Status: skipped — {reason}"
+    missing_packages: "Missing packages: {missing}"
+    protocol: "Protocol"
+    seeds: "Seeds"
+    data: "Data"
+    skipped_reason:
+      requires: "required packages {missing} are not installed"
+      manual_protocol: "manual protocol that needs real data and the external engines (dolphin, MintPy) (ADR-0064)"
+  RES-001:
+    cause: "Unknown method '{method}'."
+    fix: "Use one of the supported methods: {methods}."
+  RES-002:
+    cause: "Experiment '{name}' needs packages that are not installed: {missing}."
+    fix: "Install them (check the dependency policy, ADR-0001) or run the synthetic experiments (S_synth_*)."
+  RES-003:
+    cause: "Method '{method}' needs an amplitude/SLC stack (--stack, shape (n_dates, ny, nx))."
+    fix: "Pass --stack NPZ (key 'slc' or 'amplitude') or use the ml / coh_weighted / filtered methods."
+  RES-004:
+    cause: "coarse_ref stitching needs an unwrapped low-resolution reference phase (lowres_ref)."
+    fix: "Put 'lowres_ref' in the tiles NPZ, pass --lowres-ref NPZ, or use --method overlap_consensus."
+  RES-005:
+    cause: "The tile-graph least-squares adjustment left {n_inconsistent} inconsistent boundaries (max residual {residual_max:.2f} cycles)."
+    fix: "Check the overlap coherence, widen the overlap, or retry with --consensus median or the coarse_ref method."
+  RES-006:
+    cause: "Argument '{name}' = {value} is outside the allowed range ({allowed})."
+    fix: "Re-run with a value inside the allowed range."
+  RES-007:
+    cause: "Method '{method}' needs the pair indices (i, j) (the phase is built from the stack, not from an interferogram)."
+    fix: "Pass --pair I J with the reference/secondary date indices (secondary minus reference convention)."
+  RES-008:
+    cause: "Experiment YAML error: {detail}"
+    fix: "Compare the name/kind(repr_phase|stitching|seq_estimator_ab)/methods/seeds/factor/metrics keys with the bundled examples (src/wintersar/research/experiments/*.yaml)."

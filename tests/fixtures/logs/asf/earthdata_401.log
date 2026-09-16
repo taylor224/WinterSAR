@@ -1,0 +1,7 @@
+wintersar fetch: downloading 3 burst products with asf_search
+Authorization: Bearer eyJ0eXAiOiJKV1QiLCJvcmlnaW4iOiJFYXJ0aGRhdGEgTG9naW4iLCJzaWciOiJlZGxqd3RwdWJrZXlfb3BzIiwiYWxnIjoiUlMyNTYifQ.eyJ0eXBlIjoiVXNlciIsInVpZCI6InRlc3R1c2VyIiwiZXhwIjoxNzAwMDAwMDAwfQ.abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnop
+Downloading URL: https://sentinel1-burst.asf.alaska.edu/S1A_IW_SLC__1SDV_20240101T092000_20240101T092027_051900_064500_ABCD/IW2/VV/5.tiff
+Traceback (most recent call last):
+  File "/home/user/miniconda3/envs/insar/lib/python3.11/site-packages/asf_search/download/download.py", line 126, in download_url
+    raise ASFAuthenticationError(f'HTTP {e.response.status_code}: {e.response.text}')
+asf_search.exceptions.ASFAuthenticationError: HTTP 401: {"error":"invalid_token","error_description":"The token is expired"}

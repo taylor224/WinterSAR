@@ -1,0 +1,70 @@
+# pipeline module messages (DAG, cache, executor, plan/run CLI). Diagnostics are cause -> fix.
+pipeline:
+  PIPELINE-001:
+    cause: "Stage '{stage}' (engine {engine}) failed: {error}"
+    fix: "Inspect the log in {log_dir}, run 'wintersar diagnose {log_dir} --engine {engine}' for the cause, then resume with 'wintersar run --from {stage}'."
+  PIPELINE-002:
+    cause: "Stage '{stage}' needs input '{artifact}' (produced by {producer}) but no cached result exists."
+    fix: "Run without --from, or run 'wintersar run --until {producer}' first to build the upstream stages."
+  PIPELINE-003:
+    cause: "No cache entry matches the current configuration of stage '{stage}'; reusing the most recent result ({node_hash}, {finished_at}) because of --from."
+    fix: "If you changed upstream settings, run without --from so the stage is recomputed."
+  PIPELINE-004:
+    cause: "Python stage '{stage}' implementation ({module}.{function}) could not be loaded; the stage is skipped."
+    fix: "Install/implement that module, or use a path that does not need this stage (e.g. the fake engine)."
+  PIPELINE-005:
+    cause: "Engine '{engine}' configured for stage '{stage}' is not registered (known engines: {known})."
+    fix: "Set {engine_key} in config.yaml to a registered engine, or check installation with 'wintersar check-install'."
+  PIPELINE-006:
+    cause: "Estimated memory for stage '{stage}' ({need_gb:.1f} GB) exceeds the budget ({budget_gb:.1f} GB)."
+    fix: "Raise compute.memory_gb or reduce the per-job size (unwrap.tiles, looks). Engines must tile within the budget passed as _memory_gb."
+  PIPELINE-007:
+    cause: "Engine '{engine}' does not implement stage '{stage}'; the stage is skipped (supported: {stages})."
+    fix: "This is expected when the engine handles the stage inside a parent stage; otherwise choose another engine in config.yaml."
+  PIPELINE-008:
+    cause: "Stage '{stage}' can be retried with adjusted parameters: {hint}"
+    fix: "Apply the suggested values with 'wintersar run --from {stage} --set {stage}.<key>=<value>'."
+  PIPELINE-009:
+    cause: "Stage '{stage}' declared output '{artifact}' but path {path} does not exist."
+    fix: "Check the engine log. Output paths must live under _out_dir."
+  PIPELINE-011:
+    cause: "Unwrap stage skipped: interferogram engine '{engine}' already delivers unwrapped phase (unw)."
+    fix: "To unwrap locally with SNAPHU/tophu, switch engine.interferogram to isce2_topsstack."
+  PIPELINE-010:
+    cause: "Validation stage skipped: neither validate.leveling_csv nor validate.gnss is configured."
+    fix: "If you have ground truth, set its path in the validate section of config.yaml."
+  cli:
+    plan_title: "Plan: {project} ({workdir})"
+    run_title: "Run: {project} ({workdir})"
+    col_stage: "Stage"
+    col_engine: "Engine"
+    col_version: "Version"
+    col_status: "Status"
+    col_hash: "Node hash"
+    col_wall: "Wall (s)"
+    col_size: "Size"
+    col_finished: "Finished"
+    col_inputs: "Inputs"
+    status_cached: "cached"
+    status_to_run: "will run"
+    status_ran: "ran"
+    status_skipped: "skipped"
+    status_failed: "failed"
+    status_blocked: "blocked"
+    status_pending: "pending"
+    summary: "will run {n_run} · cached {n_cached} · skipped {n_skipped}"
+    resources: "Estimated resources: time {wall} · memory {mem} · disk {disk} · credits {credits}"
+    run_ok: "Done: {n_ran} stage(s) ran, {n_cached} reused from cache ({wall:.1f}s)"
+    run_failed: "Failed: stage '{stage}' (log: {log_dir})"
+    dry_run: "dry-run: no stage was executed."
+    unknown_stage: "Unknown stage '{stage}'. Available: {stages}"
+    bad_set: "Bad --set value '{value}': expected stage.key=value (e.g. unwrap.coherence_threshold=0.4)"
+    cache_empty: "Cache is empty: {workdir}"
+    cache_total: "{n} entries · {size}"
+    gc_summary: "removed {n_removed} ({freed}) · kept {n_kept}{dry}"
+    gc_dry_suffix: " [dry-run: nothing deleted]"
+    help_plan: "Build the DAG and print which stages are cached / will run plus estimated resources (no execution)."
+    help_run: "Run the pipeline. Cached stages are skipped; only changed stages and their downstream re-run (PERF-03)."
+    help_cache: "Inspect and prune the work-directory cache (work/<stage>/<hash>)."
+    help_cache_ls: "List cached stage results."
+    help_cache_gc: "Keep only the N most recent entries per stage and delete the rest."

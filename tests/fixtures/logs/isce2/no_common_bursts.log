@@ -1,0 +1,15 @@
+wintersar engines.isce2_topsstack: run_files/run_02_compute_baseline (pair 20240101_20240113)
+computeBaseline.py -m /home/user/work/isce/reference -s /home/user/work/isce/secondarys/20240113 -b /home/user/work/isce/baselines/20240101_20240113/20240101_20240113.txt
+No common bursts found for swath 1
+Skipping processing for swath number IW-1
+No common bursts found for swath 2
+Skipping processing for swath number IW-2
+No common bursts found for swath 3
+Skipping processing for swath number IW-3
+No swaths contain any burst overlaps ... cannot continue for interferometry applications
+Traceback (most recent call last):
+  File "/home/user/tools/isce2/contrib/stack/topsStack/computeBaseline.py", line 88, in <module>
+    main()
+  File "/home/user/tools/isce2/contrib/stack/topsStack/computeBaseline.py", line 80, in main
+    raise Exception('No swaths contain any burst overlaps')
+Exception: No swaths contain any burst overlaps

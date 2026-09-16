@@ -18,7 +18,8 @@ nav:
       - 검증·튠: tutorials/validate-tune.md
   - 진단 KB: kb/index.md
   - 연구 (Research): research/index.md
-  - ADR: adr/0001-license-and-engine-boundaries.md
+  - ADR: adr/README.md
+  - 기여 (Contributing): contributing.md
   - 미확정 사항: open-questions.md
   - 구현 계획서: plan/wintersar_implementation_plan.md
 markdown_extensions:

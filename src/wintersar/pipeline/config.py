@@ -81,6 +81,16 @@ class EngineCfg(_Strict):
     filter: FilterCfg = Field(default_factory=FilterCfg)
     esd: bool = True
     cleanup: Literal["none", "stage", "aggressive"] = "stage"
+    hyp3: dict[str, Any] = Field(
+        default_factory=dict,
+        description="hyp3 adapter options (apply_water_mask, looks snapping, batch size); see engines/hyp3.py",
+    )
+    isce2: dict[str, Any] = Field(
+        default_factory=dict,
+        description="isce2_topsstack options: slc_dir, orbit_dir, aux_dir, dem, bbox [S,N,W,E], "
+        "reference_date, num_connections, esd_coherence_threshold, num_overlap_connections, "
+        "unwrap_in_isce, workdir, max_parallel_per_step, retries, regenerate_run_files",
+    )
 
     @field_validator("looks", mode="before")
     @classmethod
@@ -129,6 +139,12 @@ class TimeseriesCfg(_Strict):
     deramp: Literal["linear", "quadratic", "no"] = "linear"
     unwrap_error_correction: Literal["phase_closure", "bridging", "no"] = "phase_closure"
     coherence_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    dolphin: dict[str, Any] = Field(
+        default_factory=dict,
+        description="dolphin options: cslc_files|cslc_glob|cslc_dir, subdataset, wavelength_m, "
+        "ministack_size, half_window, max_bandwidth, unwrap_method, ntiles, reference_point_rowcol, "
+        "strides, workdir",
+    )
 
     @field_validator("reference_point", mode="before")
     @classmethod

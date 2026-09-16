@@ -1,0 +1,4 @@
+wintersar unwrap: pair 20240101_20240125 engine=snaphu ntiles=(1, 1) nproc=1
+wintersar unwrap: snaphu -f /home/user/work/unwrap/20240101_20240125/snaphu.conf
+Out of memory
+wintersar unwrap: snaphu exited with status 1

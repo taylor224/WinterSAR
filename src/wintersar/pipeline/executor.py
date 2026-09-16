@@ -1,0 +1,456 @@
+"""Sequential stage executor with cache lookup, resource budget and failure diagnosis
+(plan §5.3; ADR-0033 failure/retry semantics).
+
+Stages run in :data:`STAGE_ORDER`. Per-item parallelism *inside* a stage (one job per
+interferogram, tiles, run_files) is the engine's job: it receives the machine budget as
+private params (``_cores``, ``_memory_gb``, ``_gpu``) together with ``_out_dir``,
+``_workdir``, ``_cache_dir`` and ``_log_dir``. The executor reserves the stage's estimated
+memory against the budget (sum of reservations <= budget) so that a future stage-parallel
+executor keeps the same accounting.
+
+On failure the manifest is written with ``status: failed``, the engine logs are handed to
+``wintersar.diagnose.api.diagnose_logs`` (lazy; absent -> no extra findings), a generic
+``PIPELINE-001`` finding with the masked log excerpt is attached, an optional
+``retry_hint`` is copied into ``record.extra`` and :class:`PipelineError` is raised with
+every record produced so far.
+"""
+
+from __future__ import annotations
+
+import resource
+import sys
+import time
+import uuid
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from wintersar.engines.base import EngineNotAvailableError
+from wintersar.io.schemas import Artifact, Artifacts, Finding, Resources, StageRecord
+from wintersar.pipeline import cache
+from wintersar.pipeline.config import Config
+from wintersar.pipeline.dag import Dag, Node
+from wintersar.pipeline.stages import (
+    DIAGNOSE_LOGS_ENTRYPOINT,
+    FAKE_ENGINE,
+    UNWRAP_ENTRYPOINT,
+    load_entrypoint,
+    load_python_stage,
+    stage_index,
+)
+from wintersar.util import sysinfo
+from wintersar.util.masking import mask_text
+
+LOG_EXCERPT_LINES = 40
+LOG_EXCERPT_MAX_CHARS = 8000
+RETRY_HINT_KEY = "retry_hint"
+
+
+class PipelineError(RuntimeError):
+    """A stage failed or was blocked; carries every record produced so far."""
+
+    def __init__(
+        self,
+        message: str,
+        records: list[StageRecord],
+        findings: list[Finding],
+        artifacts: Artifacts | None = None,
+        failed: StageRecord | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.records = records
+        self.findings = findings
+        self.artifacts = artifacts or Artifacts()
+        self.failed = failed
+
+    @property
+    def failed_stage(self) -> str | None:
+        return self.failed.stage if self.failed is not None else None
+
+
+# ---------------------------------------------------------------------- budget
+
+
+def machine_budget(cfg: Config, machine: sysinfo.MachineSpec | None = None) -> sysinfo.MachineSpec:
+    """Detected machine spec with ``compute.*`` overrides applied."""
+    spec = machine or sysinfo.detect()
+    return spec.budget(
+        cores=cfg.compute.cores, memory_gb=cfg.compute.memory_gb, gpu=cfg.compute.gpu
+    )
+
+
+@dataclass
+class ResourceBudget:
+    """Memory reservations: ``sum(reserved) <= machine.memory_gb``."""
+
+    machine: sysinfo.MachineSpec
+    reservations: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def memory_gb(self) -> float:
+        return float(self.machine.memory_gb)
+
+    @property
+    def reserved_gb(self) -> float:
+        return sum(self.reservations.values())
+
+    @property
+    def available_gb(self) -> float:
+        return max(self.memory_gb - self.reserved_gb, 0.0)
+
+    def fits(self, need_gb: float) -> bool:
+        return need_gb <= self.available_gb + 1e-9
+
+    def reserve(self, key: str, need_gb: float | None) -> float:
+        """Reserve ``need_gb`` (or everything available when unknown); returns the grant."""
+        grant = self.available_gb if need_gb is None else min(max(need_gb, 0.0), self.available_gb)
+        self.reservations[key] = grant
+        return grant
+
+    def release(self, key: str) -> None:
+        self.reservations.pop(key, None)
+
+
+# ---------------------------------------------------------------------- helpers
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _peak_rss_gb() -> float | None:
+    """Process-lifetime high-water mark of resident memory (self and children).
+
+    ``ru_maxrss`` is in KiB on Linux and bytes on macOS.
+    # source: https://man7.org/linux/man-pages/man2/getrusage.2.html ("in KiB")
+    # source: local check on darwin (resource.getrusage(RUSAGE_SELF).ru_maxrss ~= 13e6 for a
+    #         bare interpreter, i.e. bytes); see docs/open-questions.md
+    """
+    try:
+        own = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        children = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss
+    except (OSError, ValueError):  # pragma: no cover
+        return None
+    peak = max(own, children)
+    scale = 1.0 if sys.platform == "darwin" else 1024.0
+    return float(peak) * scale / 1e9
+
+
+def log_excerpt(log_dir: Path, n_lines: int = LOG_EXCERPT_LINES) -> dict[str, str]:
+    """Last ``n_lines`` of every ``*.log`` under ``log_dir``, masked (rule 11.11)."""
+    excerpt: dict[str, str] = {}
+    if not log_dir.is_dir():
+        return excerpt
+    budget = LOG_EXCERPT_MAX_CHARS
+    for p in sorted(log_dir.rglob("*.log")):
+        try:
+            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        text = mask_text("\n".join(lines[-n_lines:]))[:budget]
+        budget -= len(text)
+        excerpt[mask_text(p.relative_to(log_dir).as_posix())] = text
+        if budget <= 0:
+            break
+    return excerpt
+
+
+def _as_artifacts(result: Any) -> tuple[Artifacts, list[Finding]]:
+    """Normalise what a stage callable returned."""
+    findings: list[Finding] = []
+    if isinstance(result, tuple) and len(result) == 2:
+        result, extra = result
+        findings = [f for f in extra if isinstance(f, Finding)]
+    if isinstance(result, Artifacts):
+        return result, findings
+    if isinstance(result, Artifact):
+        return Artifacts().add(result), findings
+    msg = f"stage callable must return Artifacts (got {type(result).__name__})"
+    raise TypeError(msg)
+
+
+def diagnose_logs(log_dir: Path, engine: str | None) -> tuple[list[Finding], str | None]:
+    """``wintersar.diagnose.api.diagnose_logs(log_dir, engine)`` if importable."""
+    fn = load_entrypoint(*DIAGNOSE_LOGS_ENTRYPOINT)
+    if fn is None:
+        return [], None
+    try:
+        # source: src/wintersar/diagnose/api.py::diagnose_logs(path, engine=None, ...)
+        try:
+            result = fn(log_dir, engine)
+        except ValueError:
+            # engine name unknown to the KB (e.g. 'fake'): let the parsers auto-detect
+            result = fn(log_dir, None)
+    except Exception as exc:  # a diagnose bug must never mask the original failure
+        return [], f"{type(exc).__name__}: {exc}"
+    if not isinstance(result, list):
+        return [], None
+    return [f for f in result if isinstance(f, Finding)], None
+
+
+def _retry_hint(exc: BaseException, findings: list[Finding]) -> Any | None:
+    hint = getattr(exc, RETRY_HINT_KEY, None)
+    if hint is not None:
+        return hint
+    for f in findings:
+        for source in (f.evidence, f.params):
+            if RETRY_HINT_KEY in source:
+                return source[RETRY_HINT_KEY]
+    return None
+
+
+# ---------------------------------------------------------------------- executor
+
+
+class Executor:
+    def __init__(
+        self,
+        cfg: Config,
+        dag: Dag,
+        machine: sysinfo.MachineSpec | None = None,
+        from_stage: str | None = None,
+        estimates: dict[str, Resources] | None = None,
+    ) -> None:
+        self.cfg = cfg
+        self.dag = dag
+        self.workdir = dag.workdir
+        self.machine = machine or machine_budget(cfg)
+        self.budget = ResourceBudget(self.machine)
+        self.from_stage = from_stage
+        self.estimates = estimates or {}
+        self.run_id = _now().strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:6]
+
+    # -------------------------------------------------------------- run
+    def run(self) -> tuple[list[StageRecord], Artifacts, list[Finding]]:
+        records: list[StageRecord] = []
+        findings: list[Finding] = []
+        available = Artifacts()
+        start = stage_index(self.from_stage) if self.from_stage else 0
+
+        def fail(record: StageRecord, message: str) -> PipelineError:
+            return PipelineError(message, records, findings, available, failed=record)
+
+        for node in self.dag.nodes:
+            if node.skip_reason is not None:
+                records.append(node.pending_record())
+                findings.extend(node.findings)
+                continue
+            before_start = stage_index(node.stage) < start
+            if before_start and node.fallback and node.record is not None:
+                records.append(_cache_hit(node.record, fallback=True))
+                findings.extend(node.findings)
+                available = available.merged(cache.record_artifacts(node.record))
+                continue
+            resolved = self.dag.resolve(node, available)
+            record = self.dag.lookup_cache(node) if resolved else None
+            if record is not None:
+                node.record = record
+                records.append(_cache_hit(record))
+                available = available.merged(cache.record_artifacts(record))
+                continue
+            if not resolved or node.blocked or before_start:
+                if before_start and not node.blocked:
+                    node.findings.append(
+                        self.dag._missing_input(node, ",".join(node.spec.outputs), None)
+                    )
+                    node.findings[-1].params["producer"] = node.stage
+                blocked = node.pending_record()
+                blocked.status = "failed"
+                records.append(blocked)
+                findings.extend(node.findings)
+                raise fail(blocked, f"stage {node.stage!r} is blocked")
+            record = self._execute(node, available)
+            records.append(record)
+            findings.extend(record.findings)
+            if record.status != "ok":
+                raise fail(record, f"stage {node.stage!r} failed")
+            node.record = record
+            available = available.merged(cache.record_artifacts(record))
+        return records, available, findings
+
+    # -------------------------------------------------------------- one node
+    def _execute(self, node: Node, available: Artifacts) -> StageRecord:
+        assert node.node_hash is not None
+        node_dir = cache.stage_dir(self.workdir, node.stage, node.node_hash)
+        out_dir, log_dir = cache.prepare_node_dir(node_dir, clean=True)
+        record = StageRecord(
+            stage=node.stage,
+            node_hash=node.node_hash,
+            engine=node.engine,
+            engine_version=node.engine_version,
+            params=node.params,
+            inputs=dict(node.input_hashes),
+            status="running",
+            started_at=_now(),
+            log_path=log_dir,
+            extra={"forced": node.forced, "run_id": self.run_id, "cache_hit": False},
+        )
+        cache.write_record(record, node_dir)
+
+        estimate = self.estimates.get(node.stage, Resources())
+        need = estimate.peak_rss_gb
+        if need is not None and not self.budget.fits(need):
+            record.findings.append(
+                Finding(
+                    rule_id="PIPELINE-006",
+                    severity="WARN",
+                    message_key="pipeline.PIPELINE-006.cause",
+                    fix_key="pipeline.PIPELINE-006.fix",
+                    params={
+                        "stage": node.stage,
+                        "need_gb": float(need),
+                        "budget_gb": self.budget.available_gb,
+                    },
+                    evidence={"need_gb": need, "budget_gb": self.budget.available_gb},
+                    scope=node.stage,
+                )
+            )
+        granted = self.budget.reserve(node.stage, need)
+        inputs = Artifacts(
+            items={
+                n: available[n]
+                for n in [*node.spec.inputs, *node.spec.optional_inputs]
+                if n in available
+            }
+        )
+        params: dict[str, Any] = {
+            **node.params,
+            "_out_dir": str(out_dir),
+            "_log_dir": str(log_dir),
+            "_workdir": str(self.workdir),
+            "_cache_dir": str(self.cfg.cache_dir),
+            "_cores": int(self.machine.cores),
+            "_memory_gb": float(granted),
+            "_gpu": bool(self.machine.gpu),
+        }
+        t0 = time.perf_counter()
+        try:
+            outputs, extra_findings = self._dispatch(node, inputs, params, out_dir, log_dir)
+            record.findings.extend(extra_findings)
+            outputs = self._hash_outputs(node, outputs)
+            record.outputs = {n: str(a.path) for n, a in outputs.items.items()}
+            record.extra[cache.ARTIFACTS_KEY] = cache.artifacts_to_extra(outputs)
+            record.status = "ok"
+        except Exception as exc:
+            self._on_failure(node, record, log_dir, exc)
+        finally:
+            self.budget.release(node.stage)
+            record.finished_at = _now()
+            record.resources = Resources(
+                wall_time_s=time.perf_counter() - t0,
+                peak_rss_gb=_peak_rss_gb(),
+                disk_gb=cache.dir_size(out_dir) / 1e9,
+                notes={"rss_method": "ru_maxrss process high-water mark (not per-stage)"},
+            )
+            cache.write_record(record, node_dir)
+        return record
+
+    def _dispatch(
+        self,
+        node: Node,
+        inputs: Artifacts,
+        params: dict[str, Any],
+        out_dir: Path,
+        log_dir: Path,
+    ) -> tuple[Artifacts, list[Finding]]:
+        if node.spec.is_python:
+            fn = load_python_stage(node.stage)
+            if fn is None:  # pragma: no cover - build() marks such nodes skipped
+                msg = f"python stage {node.stage!r} has no implementation"
+                raise RuntimeError(msg)
+            return _as_artifacts(fn(self.cfg, inputs, params, out_dir, log_dir))
+        assert node.engine is not None
+        if node.stage == "unwrap" and node.engine != FAKE_ENGINE:
+            run_unwrap = load_entrypoint(*UNWRAP_ENTRYPOINT)
+            if run_unwrap is None:
+                msg = "unwrap scheduler wintersar.unwrap.api.run_unwrap is not available"
+                raise RuntimeError(msg)
+            return _as_artifacts(
+                run_unwrap(inputs["igrams"], params, out_dir, log_dir, self.machine)
+            )
+        engine = self.dag.engine(node.engine)
+        if engine is None:  # pragma: no cover - build() blocks unregistered engines
+            msg = f"engine {node.engine!r} is not registered"
+            raise RuntimeError(msg)
+        install = engine.check_install()
+        if any(f.is_fail for f in install):
+            err = EngineNotAvailableError(f"engine {node.engine!r} is not available")
+            err.findings = install  # type: ignore[attr-defined]
+            raise err
+        return engine.run(node.stage, inputs, params, log_dir), [
+            f for f in install if not f.is_fail
+        ]
+
+    def _hash_outputs(self, node: Node, outputs: Artifacts) -> Artifacts:
+        for name, art in outputs.items.items():
+            if not Path(art.path).exists():
+                exc = FileNotFoundError(f"output {name!r} missing: {art.path}")
+                exc.findings = [  # type: ignore[attr-defined]
+                    Finding(
+                        rule_id="PIPELINE-009",
+                        severity="FAIL",
+                        message_key="pipeline.PIPELINE-009.cause",
+                        fix_key="pipeline.PIPELINE-009.fix",
+                        params={
+                            "stage": node.stage,
+                            "artifact": name,
+                            "path": mask_text(str(art.path)),
+                        },
+                        scope=node.stage,
+                    )
+                ]
+                raise exc
+        return cache.hash_artifacts(outputs, fast=True)
+
+    def _on_failure(
+        self, node: Node, record: StageRecord, log_dir: Path, exc: BaseException
+    ) -> None:
+        record.status = "failed"
+        error = mask_text(f"{type(exc).__name__}: {exc}")
+        record.extra["error"] = error
+        attached: list[Finding] = [
+            f for f in getattr(exc, "findings", []) or [] if isinstance(f, Finding)
+        ]
+        diagnosed, diag_error = diagnose_logs(log_dir, node.engine)
+        if diag_error:
+            record.extra["diagnose_error"] = diag_error
+        generic = Finding(
+            rule_id="PIPELINE-001",
+            severity="FAIL",
+            message_key="pipeline.PIPELINE-001.cause",
+            fix_key="pipeline.PIPELINE-001.fix",
+            params={
+                "stage": node.stage,
+                "engine": node.engine or "python",
+                "error": error,
+                "log_dir": mask_text(str(log_dir)),
+            },
+            evidence={
+                "error": error,
+                "log_excerpt": log_excerpt(log_dir),
+                "node_hash": node.node_hash,
+            },
+            scope=node.stage,
+        )
+        record.findings.extend([generic, *attached, *diagnosed])
+        hint = _retry_hint(exc, [*attached, *diagnosed])
+        if hint is not None:
+            record.extra[RETRY_HINT_KEY] = hint
+            record.findings.append(
+                Finding(
+                    rule_id="PIPELINE-008",
+                    severity="INFO",
+                    message_key="pipeline.PIPELINE-008.cause",
+                    fix_key="pipeline.PIPELINE-008.fix",
+                    params={"stage": node.stage, "hint": mask_text(str(hint))},
+                    evidence={RETRY_HINT_KEY: hint},
+                    scope=node.stage,
+                )
+            )
+
+
+def _cache_hit(record: StageRecord, fallback: bool = False) -> StageRecord:
+    return record.model_copy(
+        update={"extra": {**record.extra, "cache_hit": True, "fallback": fallback}}
+    )

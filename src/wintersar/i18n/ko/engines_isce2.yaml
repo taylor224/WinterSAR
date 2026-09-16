@@ -1,0 +1,73 @@
+# engines/isce2_topsstack · engines/runfiles · engines/burst2safe · engines/dolphin 메시지
+# (규칙 11.6: 원인 → 조치 순서). 네임스페이스 engines.isce2.* / engines.dolphin.*
+engines:
+  isce2:
+    ISCE2-001:
+      cause: "topsStack 단계 '{step}'({run_file})이(가) 실패했습니다: 작업 #{job_index}이(가) {attempts}회 시도 후 종료 코드 {returncode}로 끝났습니다. 명령: {command}. 로그: {log}"
+      fix: "'wintersar diagnose {log}'로 로그를 분석하세요. 같은 명령을 다시 실행하면 이 단계부터 이어서 실행합니다(완료 단계는 runfiles_state.json에 기록). 단계를 처음부터 다시 하려면 해당 항목을 지우거나 isce2.regenerate_run_files=true를 주세요."
+    ISCE2-002:
+      cause: "topsStack에 쓸 DEM이 없습니다 ({reason})."
+      fix: "isce2.dem=<파일>(WGS84 타원체고, 옆에 ISCE .xml 사이드카)을 지정하거나 AOI를 주어 wintersar가 sardem으로 받게 하세요. 사이드카가 없으면 'gdal2isce_xml.py -i <dem>'으로 만듭니다."
+    ISCE2-003:
+      cause: "stackSentinel.py가 run_files를 생성하지 못했습니다 (종료 코드 {returncode}). 로그: {log}"
+      fix: "로그를 확인하세요. 흔한 원인은 bbox와 겹치지 않는 SAFE('No acquisition fulfills the temporal range and bbox requirement'), 궤도 다운로드 실패, bbox를 덮지 못하는 DEM입니다. 입력을 고치고 다시 실행하세요."
+    ISCE2-004:
+      cause: "burst2safe가 {date}의 SAFE 제품을 만들지 못했습니다 (burst granule {n_granules}개, 종료 코드 {returncode}). 로그: {log}"
+      fix: "Earthdata 인증(EARTHDATA_TOKEN 또는 EARTHDATA_USERNAME/EARTHDATA_PASSWORD 또는 ~/.netrc)과 네트워크를 확인한 뒤 다시 실행하세요. 이미 SAFE가 있는 날짜는 건너뜁니다."
+    ISCE2-005:
+      cause: "burst2safe는 설치되어 있지만 Earthdata Login 자격 증명({env_vars} 또는 ~/.netrc)이 없습니다."
+      fix: "fetch 단계 전에 EARTHDATA_TOKEN(또는 EARTHDATA_USERNAME과 EARTHDATA_PASSWORD)을 내보내거나 ~/.netrc에 'machine urs.earthdata.nasa.gov'를 추가하세요."
+    ISCE2-006:
+      cause: "처리 bbox가 없습니다: topsStack이 스택 전체의 공통 겹침 영역을 처리합니다 (AOI보다 넓고 느립니다)."
+      fix: "isce2.bbox: [S, N, W, E](stackSentinel.py -b)를 설정하거나 AOI 폴리곤을 주어 wintersar가 계산하게 하세요."
+    ISCE2-007:
+      cause: "topsStack에 넣을 Sentinel-1 SLC 입력이 없습니다 ({reason}; slc_dir: {slc_dir})."
+      fix: "isce2.slc_dir에 S1*_IW_SLC*.zip / .SAFE 제품이 있는 폴더를 지정하거나, (burst 제품이면) burst2safe를 설치하고 wintersar search를 다시 실행해 stack.json에 notes.granules가 담기게 하세요."
+    ISCE2-008:
+      cause: "{workdir}에 이미 정합된 스택이 있습니다. topsStack 업데이트 모드가 참조 기하(reference/, geom_reference/)를 재사용하고 새 날짜와 마지막 num_overlap_connections*2개 날짜만 다시 정합합니다 (PERF-11)."
+      fix: "조치 불필요. 마지막으로 정합된 날짜들의 원본 SAFE 파일은 계속 보관하세요 (ESD 재추정에 필요)."
+    ISCE2-009:
+      cause: "topsStack 단계 '{step}'은(는) 끝났지만 기대한 산출물이 없습니다: {path}"
+      fix: "해당 단계의 작업 로그를 여세요. topsStack이 '이미 있음'으로 건너뛰었다면 불완전한 산출물 폴더를 지우고 isce2.regenerate_run_files=true로 다시 실행하세요."
+    ISCE2-010:
+      cause: "멀티룩 계수를 자동 선택했습니다: range {rg} x azimuth {az} (목표 {target_m} m, 결과 픽셀 약 {pixel_m} m)."
+      fix: "고정하려면 engine.looks: [rg, az]를 설정하세요. topsStack은 merge_burst_igram에서 -r/-z로 적용합니다."
+    ISCE2-011:
+      cause: "디스크 정리 정책 '{policy}'이(가) 단계 '{step}' 뒤에 디렉터리 {n}개를 삭제했습니다."
+      fix: "중간 산출물(burst 간섭도, ESD, coarse offsets)을 모두 남기려면 engine.cleanup=none으로 두세요."
+    ISCE2-012:
+      cause: "단계 '{stage}'에는 이전 단계의 '{needed}' 산출물이 필요하지만 없습니다."
+      fix: "단계를 순서대로 실행하세요 (wintersar run --until {stage}). work/<stage> 디렉터리를 수동으로 지우지 마세요."
+    ISCE2-013:
+      cause: "topsStack 간섭도 네트워크를 선택된 쌍에서 유도한 nearest-{n}(-c {n})으로 설정했습니다. 추가로 생성되는 쌍은 시계열 단계의 네트워크 임계값으로 걸러집니다."
+      fix: "직접 제어하려면 isce2.num_connections를 설정하세요."
+    ISCE2-014:
+      cause: "{orbit_dir}에 정밀 궤도 파일(*.EOF)이 없습니다. topsStack이 run file 생성 중 fetchOrbit.py로 직접 내려받습니다."
+      fix: "오프라인 실행이면 궤도 폴더를 미리 채우거나(sentineleof: 'eof --date … --mission …') EOF 파일이 있는 폴더를 isce2.orbit_dir로 지정하세요."
+    ISCE2-015:
+      cause: "stackSentinel.py는 run_files/가 있으면 실행을 거부하므로 기존 '{path}'을(를) '{backup}'(으)로 옮겼습니다."
+      fix: "조치 불필요. 새 실행이 성공하면 백업을 지우세요."
+    ISCE2-016:
+      cause: "{executable}은(는) PATH에 있지만 'python3 -c \"import isce\"'가 실패했습니다: 이 환경에서 ISCE2 파이썬 패키지를 불러올 수 없습니다."
+      fix: "ISCE2 환경을 활성화하고(conda activate isce2) contrib/stack README대로 ISCE_HOME / PYTHONPATH를 내보내세요. PATH에는 스택 프로세서 하나(topsStack)만 두어야 합니다."
+    prep_isce_note: "MintPy 입력: prep_isce.py -f '{unw}' -m '{meta}' -b '{baselines}' -g '{geom}' (또는 prep_isce.json의 mintpy.load.* 키)."
+  dolphin:
+    DOL-001:
+      cause: "dolphin run이 종료 코드 {returncode}로 끝났습니다. 로그: {log}"
+      fix: "'wintersar diagnose {log}'로 로그를 분석하세요. 메모리 오류면 worker_settings.block_shape를 줄이거나 dolphin.strides [2, 2]를 주고, 입력 오류면 모든 CSLC 파일이 존재하고 파일명에 날짜(cslc_date_fmt %Y%m%d)가 있는지 확인하세요."
+    DOL-002:
+      cause: "dolphin에 넣을 정합 SLC(CSLC) 입력이 없습니다 (받은 입력: {inputs})."
+      fix: "dolphin은 언래핑된 간섭도가 아니라 정합 SLC 스택에서 시작합니다. engine.interferogram=isce2_topsstack으로 interferogram 단계를 실행하거나(merged/SLC 자동 탐색) dolphin.cslc_files / dolphin.cslc_dir(HDF5면 subdataset 포함)을 설정하세요."
+    DOL-003:
+      cause: "dolphin은 끝났지만 {path}에 timeseries/<ref>_<date>.tif 산출물이 없습니다. 로그: {log}"
+      fix: "timeseries_options.run_inversion이 true인지, 언래핑 단계가 unwrapped/에 파일을 만들었는지 로그에서 확인하세요."
+    DOL-004:
+      cause: "참조점이 없습니다: dolphin이 가장 큰 고품질 영역의 중심을 고르는데, 실행마다 달라져 검증 비교가 어렵습니다."
+      fix: "dolphin.reference_point_rowcol: [row, col](dolphin은 픽셀 좌표 사용)을 설정하세요. 예: wintersar refpoint 결과."
+    DOL-005:
+      cause: "언래핑 방법 '{requested}'은(는) dolphin UnwrapMethod(snaphu, icu, phass, spurt, whirlwind)가 아닙니다. '{used}'를 사용합니다."
+      fix: "dolphin.unwrap_method를 지원 값 중 하나로 두세요. 타일 다중 스케일 언래핑은 dolphin.ntiles로 설정합니다."
+    DOL-006:
+      cause: "dolphin 실행에 input_options.wavelength가 없어 산출물이 라디안입니다. wintersar가 Sentinel-1 파장(c / 5.405 GHz)으로 미터로 변환했습니다."
+      fix: "Sentinel-1이 아닌 자료면 dolphin.wavelength_m을 명시하세요."
+    normalisation_note: "dolphin 산출물을 MintPy 규약으로 정규화했습니다: 미터, 양수 = 위성 방향, 첫 날짜 0."

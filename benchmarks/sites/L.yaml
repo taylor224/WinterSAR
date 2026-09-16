@@ -1,0 +1,33 @@
+# L 사이트 템플릿 (플랜 §6.3: 2 frames x 120 dates). 자리표시자를 채우기 전에는 실행되지 않는다.
+name: L_two_frames
+size: L
+description: "L site: two IW frames x ~120 dates (disk-peak and unwrap-scheduler stress test)"
+synthetic: false
+network: true
+runner: pipeline
+repeats: 3
+aoi: "<AOI_GEOJSON: two adjacent IW frames>"
+time_range:
+  start: "<START_DATE: YYYY-MM-DD>"
+  end: "<END_DATE: YYYY-MM-DD, ~120 acquisitions>"
+config:
+  data:
+    source: asf
+    product: burst
+    polarization: VV
+    credentials: env:EARTHDATA_TOKEN
+  engine:
+    interferogram: isce2_topsstack
+    looks: auto
+    target_pixel_m: 40
+    cleanup: aggressive
+  unwrap:
+    method: auto
+    coherence_threshold: 0.3
+    tiles: auto
+  timeseries:
+    engine: mintpy
+    troposphere: era5
+stages: [fetch, coregister, interferogram, multilook, unwrap, timeseries, corrections, geocode]
+metrics: [closure_rms]
+regression_threshold: 0.15

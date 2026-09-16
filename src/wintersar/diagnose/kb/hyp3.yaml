@@ -1,0 +1,86 @@
+# HyP3 failure knowledge base (plan §5.5, ADR-0035).
+# HyP3 API error texts come from https://github.com/ASFHyP3/hyp3 (develop branch):
+# lib/dynamo/dynamo/jobs.py, lib/dynamo/dynamo/exceptions.py, apps/api/src/hyp3_api/validation.py.
+# The SDK surfaces them as HyP3Error(f'{response} {response.json()["detail"]}')
+# (https://github.com/ASFHyP3/hyp3-sdk/blob/develop/src/hyp3_sdk/exceptions.py, _raise_for_hyp3_status),
+# e.g. "<Response [400]> These jobs would cost 30 credits, but you have only 5 remaining."
+# Credit numbers: https://hyp3-docs.asf.alaska.edu/using/credits/ (see resources.yaml).
+
+- id: KB-HYP3-001
+  engine: hyp3
+  stage: interferogram
+  pattern: 'These jobs would cost (?P<cost>[0-9.]+) credits, but you have only (?P<remaining>[0-9.]+) remaining'
+  extract: [cost, remaining]
+  severity: FAIL
+  cause:
+    ko: "HyP3 크레딧이 부족합니다: 제출한 작업의 비용은 {cost} 크레딧인데 남은 크레딧은 {remaining}입니다. HyP3 Basic 계정은 매월 8,000 크레딧을 무료로 받으며, 작업당 비용은 제품 종류·해상도·burst 수에 따라 다릅니다."
+    en: "Not enough HyP3 credits: the submitted jobs cost {cost} credits but only {remaining} remain. HyP3 Basic accounts receive 8,000 free credits per month; the cost per job depends on product type, resolution and number of bursts."
+  fix:
+    ko: "쌍 수를 줄이거나(SBAS 네트워크의 최대 시간/수직 기선 축소), 해상도를 낮추거나(80 m / 20x4 looks 가 가장 저렴), 다음 달 크레딧이 채워질 때까지 기다리거나, HyP3+로 추가 크레딧을 구매하세요. 'wintersar plan'이 제출 전 예상 크레딧을 보여 주며, 설정 selection.budget_credits 로 상한을 둘 수 있습니다."
+    en: "Reduce the number of pairs (tighter temporal/perpendicular baselines in the SBAS network), use a coarser resolution (80 m / 20x4 looks is cheapest), wait for next month's allotment, or purchase additional credits through HyP3+. 'wintersar plan' shows the expected credits before submission and selection.budget_credits caps them."
+  refs:
+    - "https://github.com/ASFHyP3/hyp3/blob/develop/lib/dynamo/dynamo/jobs.py"
+    - "https://github.com/ASFHyP3/hyp3-sdk/blob/develop/src/hyp3_sdk/exceptions.py"
+    - "https://hyp3-docs.asf.alaska.edu/using/credits/"
+  retry_hint:
+    stage: plan
+    action: manual
+    params: {}
+    note: "Re-plan with fewer pairs or lower resolution; check_credits() (hyp3_sdk) reports remaining_credits."
+  pattern_verified: true
+  pattern_source: "lib/dynamo/dynamo/jobs.py (put_jobs: raise InsufficientCreditsError(f'These jobs would cost {total_cost} credits, but you have only {remaining_credits} remaining.'))"
+
+- id: KB-HYP3-002
+  engine: hyp3
+  stage: interferogram
+  pattern: 'Burst IDs do not match for (?P<granule1>\S+) and (?P<granule2>\S+)\.|The requested scenes need to have the same polarization, got: (?P<pol1>\w+), (?P<pol2>\w+)|Only VV and HH polarizations are currently supported, got: (?P<pol>\w+)'
+  severity: FAIL
+  cause:
+    ko: "HyP3 burst InSAR 작업의 입력 검증에 실패했습니다: 참조·보조 burst의 Full Burst ID가 서로 다르거나, 두 burst의 편파가 다르거나, 지원하지 않는 편파(VH/HV)를 제출했습니다. HyP3 burst InSAR는 같은 burst ID·같은 편파(VV 또는 HH)의 쌍만 처리합니다."
+    en: "HyP3 rejected the burst InSAR job at input validation: the reference and secondary bursts have different Full Burst IDs, their polarizations differ, or an unsupported polarization (VH/HV) was submitted. HyP3 burst InSAR only processes pairs with the same burst ID and the same polarization (VV or HH)."
+  fix:
+    ko: "같은 Full Burst ID(예: 052_109903_IW2)와 같은 편파(VV 권장)의 burst 제품만 쌍으로 묶으세요. 'wintersar precheck'의 SEL 규칙이 트랙·편파·burst 일치를 미리 검사하고, 설정 data.polarization 은 VV 로 두는 것을 권장합니다."
+    en: "Pair only burst products with the same Full Burst ID (e.g. 052_109903_IW2) and the same polarization (VV recommended). 'wintersar precheck' SEL rules check track, polarization and burst consistency beforehand; keep data.polarization: VV in the config."
+  refs:
+    - "https://github.com/ASFHyP3/hyp3/blob/develop/apps/api/src/hyp3_api/validation.py"
+    - "https://hyp3-docs.asf.alaska.edu/guides/burst_insar_product_guide/"
+  retry_hint:
+    stage: precheck
+    action: manual
+    params: {}
+    note: "Fix the pair list; no automatic retry."
+  pattern_verified: true
+  pattern_source: "apps/api/src/hyp3_api/validation.py (check_single_burst_pair: 'Burst IDs do not match for {granule1} and {granule2}.', 'The requested scenes need to have the same polarization, got: {granule1_pol}, {granule2_pol}', 'Only VV and HH polarizations are currently supported, got: {granule1_pol}')"
+
+- id: KB-HYP3-003
+  engine: hyp3
+  stage: interferogram
+  pattern: 'Some requested scenes do not have DEM coverage: (?P<granules>.+)'
+  extract: [granules]
+  severity: FAIL
+  cause:
+    ko: "HyP3가 사용하는 DEM이 요청한 씬({granules})의 범위를 덮지 못해 작업이 거부되었습니다. 극지·일부 해양 지역에서 발생합니다."
+    en: "HyP3 rejected the job because its DEM does not cover the requested scenes ({granules}). This occurs in polar regions and over some ocean areas."
+  fix:
+    ko: "DEM 범위 안에 있는 다른 씬/burst를 고르거나 AOI를 조정하세요. 해당 지역을 꼭 처리해야 하면 자체 DEM으로 ISCE2 로컬 경로(engine.interferogram: isce2_topsstack)를 사용하세요."
+    en: "Choose other scenes/bursts inside the DEM coverage or adjust the AOI. If that area must be processed, use the local ISCE2 path (engine.interferogram: isce2_topsstack) with your own DEM."
+  refs:
+    - "https://github.com/ASFHyP3/hyp3/blob/develop/apps/api/src/hyp3_api/validation.py"
+  pattern_verified: true
+  pattern_source: "apps/api/src/hyp3_api/validation.py (check_dem_coverage: 'Some requested scenes do not have DEM coverage: {bad_granules}')"
+
+- id: KB-HYP3-004
+  engine: hyp3
+  stage: interferogram
+  pattern: 'must request access before submitting jobs|request for access is pending review|request for access has been rejected'
+  severity: FAIL
+  cause:
+    ko: "HyP3 계정의 접근 신청 상태 때문에 작업 제출이 거부되었습니다(신청 전, 검토 대기 중, 또는 거부됨)."
+    en: "Job submission was refused because of the HyP3 account's access-application status (not yet requested, pending review, or rejected)."
+  fix:
+    ko: "HyP3 On Demand(https://hyp3-docs.asf.alaska.edu/)에서 접근을 신청하고 승인될 때까지 기다리세요. 승인 전에는 'wintersar plan'으로 견적만 확인할 수 있습니다."
+    en: "Request access through HyP3 On Demand (https://hyp3-docs.asf.alaska.edu/) and wait for approval. Until then, 'wintersar plan' can still produce the estimate."
+  refs:
+    - "https://github.com/ASFHyP3/hyp3/blob/develop/lib/dynamo/dynamo/exceptions.py"
+  pattern_verified: true
+  pattern_source: "lib/dynamo/dynamo/exceptions.py (NotStartedApplicationError '{user_id} must request access before submitting jobs', PendingApplicationError \"{user_id}'s request for access is pending review\", RejectedApplicationError \"{user_id}'s request for access has been rejected\")"

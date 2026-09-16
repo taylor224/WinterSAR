@@ -1,0 +1,51 @@
+# unwrap 모듈 메시지 (R-06, PERF-04). 진단은 원인 → 조치 순서.
+unwrap:
+  plan:
+    title: "언래핑 실행 계획"
+    method: "방법"
+    tiles: "타일 (행×열)"
+    overlap: "타일 오버랩 (px)"
+    tile_shape: "타일 크기 (px)"
+    n_parallel: "동시 실행 간섭도 수"
+    nproc_per_igram: "간섭도당 타일 프로세스 수"
+    est_mb: "간섭도당 예상 메모리 (MB)"
+    single_tile_mb: "단일 타일 예상 메모리 (MB)"
+    budget: "메모리 예산 (MB)"
+    fringe: "프린지 밀도 (0~1)"
+    executor: "실행기"
+    reasons: "결정 근거"
+    machine: "머신: CPU {cores}코어 · 메모리 예산 {memory_gb:.1f} GB"
+    reason:
+      single_tile: "단일 타일 예상 메모리 {single_tile_mb:.0f} MB ≤ 예산 {budget_mb:.0f} MB → 타일 분할 없음."
+      tiled_memory: "단일 타일 예상 메모리 {single_tile_mb:.0f} MB > 예산 {budget_mb:.0f} MB → {rows}×{cols} 타일(오버랩 {overlap_px} px, 타일당 {tile_mb:.0f} MB)로 분할."
+      tiles_explicit: "설정 unwrap.tiles에 따라 {rows}×{cols} 타일(오버랩 {overlap_px} px)을 그대로 사용."
+      nproc_raised: "타일 분할이 필요하므로 간섭도당 타일 프로세스 수를 {nproc_per_igram}로 올려 코어를 채움(간섭도 단위 병렬은 메모리로 제한됨)."
+      memory_insufficient: "타일 하나({tile_mb:.0f} MB)가 예산 {budget_mb:.0f} MB를 넘습니다. 멀티룩을 늘리거나 메모리를 확보하거나 unwrap.tiles를 직접 지정하세요."
+      parallel_cores_bound: "동시 실행 간섭도 수 {n_parallel} = floor(코어 {cores} / 간섭도당 프로세스 {nproc_per_igram}) (코어 제한)."
+      parallel_memory_bound: "동시 실행 간섭도 수 {n_parallel} = floor(예산 {budget_mb:.0f} MB / 간섭도당 {est_mb_per_igram:.0f} MB) (메모리 제한)."
+      parallel_igrams_bound: "간섭도가 {n_igrams}개뿐이라 동시 실행 수를 {n_parallel}로 둠."
+      method_explicit: "설정 unwrap.method에 따라 '{method}' 사용."
+      method_tophu_large: "타일 분할이 필요한 대형 간섭도이므로 다중해상도 언래퍼 tophu를 우선 선택."
+      method_tophu_fringe: "프린지 밀도 {fringe}가 높아 다중해상도 언래퍼 tophu를 우선 선택."
+      method_snaphu_default: "기본 언래퍼 snaphu 선택(단일 타일 또는 낮은 프린지 밀도)."
+      method_first_available: "snaphu/tophu가 없어 사용 가능한 첫 백엔드 '{method}' 선택."
+      method_none_available: "사용 가능한 언래핑 백엔드가 없습니다. 'snaphu'로 계획하되 실행 시 ENV-001이 보고됩니다."
+  run:
+    start: "언래핑 시작: 간섭도 {n_pairs}개 · 방법 {method} · 타일 {rows}×{cols} · 동시 {n_parallel}"
+    done: "언래핑 완료: 간섭도 {n_pairs}개 · {wall_time_s:.1f}초 · peak RSS {peak_rss_mb:.0f} MB"
+    failed: "언래핑 실패: 간섭도 {n_failed}개 ({pairs})"
+    conncomp: "연결성분 수(중앙값) {median_conncomp} · 마스크 비율 {masked_fraction:.1%}"
+    jumps: "타일 경계 단차: {n_jump} / {n_boundaries} 경계"
+    outputs: "산출물: {unw} · {stats}"
+  UNW-001:
+    cause: "언래핑 백엔드 '{method}'을(를) 사용할 수 없습니다 ({detail})."
+    fix: "wintersar check-install로 설치 상태를 확인하거나 unwrap.method를 설치된 엔진(snaphu, tophu)으로 바꾸세요."
+  UNW-002:
+    cause: "타일 하나의 예상 메모리 {tile_mb:.0f} MB가 메모리 예산 {budget_mb:.0f} MB를 넘습니다 (타일 {rows}×{cols})."
+    fix: "멀티룩(engine.looks)을 늘리거나 compute.memory_gb를 올리거나 unwrap.tiles로 더 잘게 분할하세요."
+  UNW-003:
+    cause: "타일 경계 {n_boundaries}개 중 {n_jump}개에서 2π 정수배 단차가 검출되었습니다 (총 {n_jump_pixels} 픽셀)."
+    fix: "타일 오버랩을 늘리거나(unwrap.tiles.overlap) unwrap.method를 tophu로 바꾸거나 wintersar research stitch로 재조립하세요."
+  UNW-004:
+    cause: "간섭도 {pair} 언래핑이 실패했습니다: {error}"
+    fix: "로그 {log}를 wintersar diagnose로 분석하세요. 메모리 부족이면 타일 수를 늘리고, 보조 arc 초과이면 코히어런스 임계값을 올리세요."

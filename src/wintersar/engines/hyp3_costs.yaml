@@ -1,0 +1,59 @@
+# HyP3 credit cost table used by wintersar.engines.hyp3 (plan §5.2: credit numbers are never
+# hard-coded in Python; they live here with their source and fetch date).
+#
+# source: https://hyp3-docs.asf.alaska.edu/using/credits/   (fetched 2026-09-16)
+# source: https://hyp3-docs.asf.alaska.edu/guides/burst_insar_product_guide/  (looks -> pixel spacing)
+#
+# Burst InSAR (INSAR_ISCE_BURST / INSAR_ISCE_MULTI_BURST) cost depends on the looks option
+# (pixel spacing) and on the number of burst *pairs* processed in one job: a single-burst job is
+# 1 pair, a multi-burst job with N reference + N secondary bursts is N pairs (1..15).
+# "All single-burst InSAR jobs cost the same number of credits, regardless of the processing
+# options selected." (product guide)
+source_url: https://hyp3-docs.asf.alaska.edu/using/credits/
+fetched: "2026-09-16"
+monthly_free_credits: 8000          # "free allotment of 8,000 credits per month" (HyP3 Basic)
+hyp3_plus_usd_per_credit: 0.05      # derived from the "HyP3+ Job Cost" column (1 credit <-> $0.05)
+max_bursts_per_job: 15              # product guide: "Sets of bursts can contain 1-15 bursts"
+
+burst_insar:
+  # tiers: credits for a job with up to `max_pairs` burst pairs (first matching tier wins)
+  "20x4":
+    pixel_m: 80
+    tiers:
+      - { max_pairs: 4, credits: 1 }
+      - { max_pairs: 12, credits: 5 }
+      - { max_pairs: 15, credits: 10 }
+  "10x2":
+    pixel_m: 40
+    tiers:
+      - { max_pairs: 3, credits: 1 }
+      - { max_pairs: 9, credits: 5 }
+      - { max_pairs: 15, credits: 10 }
+  "5x1":
+    pixel_m: 20
+    tiers:
+      - { max_pairs: 1, credits: 1 }
+      - { max_pairs: 2, credits: 5 }
+      - { max_pairs: 3, credits: 10 }
+      - { max_pairs: 4, credits: 15 }
+      - { max_pairs: 5, credits: 20 }
+      - { max_pairs: 6, credits: 25 }
+      - { max_pairs: 7, credits: 30 }
+      - { max_pairs: 8, credits: 35 }
+      - { max_pairs: 9, credits: 40 }
+      - { max_pairs: 10, credits: 45 }
+      - { max_pairs: 11, credits: 90 }
+      - { max_pairs: 12, credits: 95 }
+      - { max_pairs: 13, credits: 100 }
+      - { max_pairs: 14, credits: 105 }
+      - { max_pairs: 15, credits: 110 }
+
+# Other job types (not used by wintersar, recorded for completeness / SEL-13 estimates)
+other_jobs:
+  INSAR_GAMMA_80m: 10
+  INSAR_GAMMA_40m: 15
+  RTC_30m: 5
+  RTC_20m: 15
+  RTC_10m: 60
+  ARIA_S1_GUNW_90m: 60
+  AUTORIFT_120m: 25

@@ -1,0 +1,8 @@
+wintersar run: stage interferogram (engine fake) token=abcdef1234567890
+fake interferogram start params={"n_dates": 6, "shape": [64, 64]}
+Traceback (most recent call last):
+  File "/home/user/work/wintersar/src/wintersar/pipeline/executor.py", line 120, in _run_stage
+    outputs = engine.run(stage, inputs, params, log_dir)
+  File "/home/user/work/wintersar/src/wintersar/engines/fake.py", line 77, in run
+    raise FakeEngineFailureError(msg)
+wintersar.engines.fake.FakeEngineFailureError: fake engine failure injected at stage interferogram

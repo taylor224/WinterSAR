@@ -1,0 +1,25 @@
+; QGIS plugin metadata (ADR-0070).
+; Required keys per the PyQGIS cookbook: name, qgisMinimumVersion, description, about,
+; version, author, email, repository.
+; source: https://docs.qgis.org/latest/en/docs/pyqgis_developer_cookbook/plugins/plugins.html
+; qgisMinimumVersion = current LTR line 3.44 (qgis.org/download, 2026-09-16: LTR 3.44.14);
+; qgisMaximumVersion = 4.99 so the Qt6-based QGIS 4.x line (next LTR 4.2, roadmap) loads it.
+; source: https://plugins.qgis.org/docs/migrate-qgis4 ("Set qgisMaximumVersion to cover QGIS 4.x")
+[general]
+name=wintersar
+qgisMinimumVersion=3.44
+qgisMaximumVersion=4.99
+description=Sentinel-1 InSAR (SBAS) toolkit client: search, precheck, run, results, reference point, validation
+about=Thin client over the wintersar command line (installed in a separate conda/pixi/uv environment). Panels: AOI and search, parameters (config.yaml), run with progress/log/findings, result layers (COG), reference-point candidates, validation against levelling/GNSS. Also exposes search/precheck/run/validate as Processing algorithms. Requires the wintersar CLI; see qgis_plugin/README.md.
+version=0.1.0
+author=wintersar contributors
+email=taylor@kloa.kr
+repository=https://github.com/wintersar/wintersar
+tracker=https://github.com/wintersar/wintersar/issues
+homepage=https://github.com/wintersar/wintersar
+category=Plugins
+tags=insar,sar,sentinel-1,sbas,deformation,subsidence
+hasProcessingProvider=yes
+experimental=True
+deprecated=False
+changelog=0.1.0 - first skeleton (Phase 7): six panels, Processing provider, JSON CLI client

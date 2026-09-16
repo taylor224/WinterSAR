@@ -1,0 +1,73 @@
+{
+  "_source": "shape of hyp3_sdk.Job.to_dict() / GET /jobs response (hyp3-sdk 7.7.8 src/hyp3_sdk/jobs.py); values are synthetic, hashes are not real products",
+  "jobs": [
+    {
+      "job_id": "7c1f7b2e-0000-4000-8000-000000000001",
+      "job_type": "INSAR_ISCE_BURST",
+      "request_time": "2026-09-16T01:02:03+00:00",
+      "status_code": "SUCCEEDED",
+      "user_id": "example_user",
+      "name": "wintersar_T052D_VV_20240101_20240113",
+      "job_parameters": {
+        "granules": [
+          "S1_109903_IW2_20240101T092000_VV_01AB-BURST",
+          "S1_109903_IW2_20240113T092000_VV_13AB-BURST"
+        ],
+        "apply_water_mask": false,
+        "looks": "20x4"
+      },
+      "files": [
+        {
+          "filename": "S1_109903_IW2_20240101_20240113_VV_INT80_A1B2.zip",
+          "s3": {"bucket": "hyp3-example-bucket", "key": "7c1f.../S1_109903_IW2_20240101_20240113_VV_INT80_A1B2.zip"},
+          "size": 12345678,
+          "url": "https://example.invalid/S1_109903_IW2_20240101_20240113_VV_INT80_A1B2.zip"
+        }
+      ],
+      "logs": [],
+      "browse_images": ["https://example.invalid/S1_109903_IW2_20240101_20240113_VV_INT80_A1B2_unw_phase.png"],
+      "thumbnail_images": [],
+      "expiration_time": "2999-01-01T00:00:00+00:00",
+      "processing_times": [512.3],
+      "credit_cost": 1
+    },
+    {
+      "job_id": "7c1f7b2e-0000-4000-8000-000000000002",
+      "job_type": "INSAR_ISCE_MULTI_BURST",
+      "request_time": "2026-09-16T01:02:04+00:00",
+      "status_code": "FAILED",
+      "user_id": "example_user",
+      "name": "wintersar_T052D_VV_20240113_20240125",
+      "job_parameters": {
+        "reference": [
+          "S1_109903_IW2_20240113T092000_VV_13AB-BURST",
+          "S1_109904_IW2_20240113T092003_VV_13AC-BURST"
+        ],
+        "secondary": [
+          "S1_109903_IW2_20240125T092000_VV_25AB-BURST",
+          "S1_109904_IW2_20240125T092003_VV_25AC-BURST"
+        ],
+        "apply_water_mask": true,
+        "looks": "10x2"
+      },
+      "logs": ["https://example.invalid/7c1f7b2e-0000-4000-8000-000000000002.log"],
+      "expiration_time": null,
+      "credit_cost": 1
+    },
+    {
+      "job_id": "7c1f7b2e-0000-4000-8000-000000000003",
+      "job_type": "INSAR_ISCE_BURST",
+      "request_time": "2026-09-16T01:02:05+00:00",
+      "status_code": "RUNNING",
+      "user_id": "example_user",
+      "job_parameters": {
+        "granules": [
+          "S1_109903_IW2_20240101T092000_VV_01AB-BURST",
+          "S1_109903_IW2_20240125T092000_VV_25AB-BURST"
+        ],
+        "apply_water_mask": false,
+        "looks": "5x1"
+      }
+    }
+  ]
+}

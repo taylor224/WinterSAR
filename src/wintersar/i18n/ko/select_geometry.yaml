@@ -1,0 +1,52 @@
+# select/geometry_masks + select/dem 메시지 (R-04, SEL-12, PERF-02). 키는 en/select_geometry.yaml과 동일해야 한다.
+select_geometry:
+  SEL-12:
+    cause: "{flight_direction} 궤도(헤딩 {heading_deg:.1f}°, 입사각 {incidence_deg:.1f}°)에서 AOI의 {layover_pct:.1f}%가 레이오버, {shadow_pct:.1f}%가 셰도우입니다 (기준 {threshold_pct:.0f}%). 레이더를 향한 급경사 사면은 산 정상이 산기슭보다 먼저 되돌아와 순서가 뒤집히고(레이오버), 반대 사면은 신호가 닿지 않으므로(셰도우) 그 영역의 위상은 신뢰할 수 없습니다. 어느 사면이 왜곡되는지는 상승/하강 궤도에 따라 달라집니다."
+    fix: "마스크 레이어({mask_path})로 레이오버·셰도우 영역을 언래핑과 시계열에서 제외하세요. 왜곡 비율이 더 낮은 {recommended} 궤도를 우선 검토하고, 두 궤도가 모두 있으면 각각 처리해 LOS 분해에 활용하세요."
+    ok: "{flight_direction} 궤도: AOI 레이오버 {layover_pct:.1f}% · 셰도우 {shadow_pct:.1f}% (기준 {threshold_pct:.0f}% 이하)."
+  recommend: "{recommended} 궤도 추천: 레이오버+셰도우 비율 상승 {asc_pct:.1f}% vs 하강 {desc_pct:.1f}%"
+  explain:
+    title: "레이오버·foreshortening·셰도우 (측면 관측 레이더의 거리 기하 왜곡)"
+    layover: "레이오버: 레이더를 향한 사면의 경사가 입사각보다 급하면 산 정상이 산기슭보다 센서에 가까워져 먼저 되돌아옵니다. 영상에서 순서가 뒤집히고 여러 지점이 한 픽셀에 겹치므로 그 위상은 사용할 수 없습니다."
+    foreshortening: "foreshortening: 레이더를 향한 완만한 사면은 실제 길이보다 짧게 압축됩니다(지수 0 = 평지, 1 = 완전 압축). 위상은 유효하지만 픽셀당 지형 변화가 커 언래핑 오류와 DEM 잔차 위험이 큽니다."
+    shadow: "셰도우: 레이더 반대편 사면의 경사가 (90° − 입사각)보다 급하면 신호가 닿지 않아 잡음만 남습니다."
+    direction: "상승 궤도(NNW 진행, 동쪽 관측)는 서향 사면을, 하강 궤도(SSW 진행, 서쪽 관측)는 동향 사면을 레이오버로 만듭니다. 사이트마다 왜곡 비율이 낮은 궤도 방향을 고르거나 두 방향을 모두 처리하세요."
+    local_incidence: "국지 입사각: 지형 법선과 시선 사이의 각도. 평지에서는 입사각과 같고, 레이더를 향한 사면에서 작아지며(0°에 가까우면 레이오버), 반대 사면에서 커집니다(90° 이상이면 조명되지 않음)."
+    not_doppler: "이 왜곡은 거리(slant range) 기하에서 생기며 도플러 효과로 설명하는 것은 부정확합니다."
+  stats:
+    layover_fraction: "레이오버 비율"
+    shadow_fraction: "셰도우 비율"
+    foreshortening_mean: "평균 foreshortening 지수"
+    aoi_pixels: "AOI 픽셀 수"
+  band:
+    layover: "레이오버 (1 = 해당)"
+    shadow: "셰도우 (1 = 해당)"
+    foreshortening: "foreshortening 지수 (0~1)"
+    local_incidence_deg: "국지 입사각 (도)"
+    ls_map: "레이오버/셰도우 맵 (0 없음, 1 레이오버, 2 셰도우, 3 둘 다, 255 자료 없음)"
+  dem:
+    cache_hit: "DEM 캐시 사용: {path}"
+    fetching: "DEM 내려받는 중 ({source}, bbox {bbox}) → {path}"
+    source:
+      copernicus_glo30: "Copernicus DEM GLO-30 (30 m, WGS84 타원체고로 변환)"
+      srtm1: "SRTM 1 arc-second (30 m, WGS84 타원체고로 변환)"
+    attribution:
+      copernicus_glo30: "© DLR e.V. 2010-2014 and © Airbus Defence and Space GmbH 2014-2018 provided under COPERNICUS by the European Union and ESA; all rights reserved. doi:10.5270/ESA-c5d3d65"
+      srtm1: "NASA Shuttle Radar Topography Mission (SRTM) 1 Arc-Second Global, NASA/USGS (public domain)"
+  error:
+    dem_ndim: "DEM 배열은 2차원이어야 합니다 (받은 차원: {ndim}). 단일 밴드 배열을 넘기세요."
+    dem_too_small: "DEM 배열이 너무 작아 경사를 계산할 수 없습니다 (shape {shape}). 최소 2×2 픽셀이 필요합니다."
+    invalid_spacing: "픽셀 간격이 잘못되었습니다 (dx_m={dx_m}, dy_m={dy_m}). 0이 아닌 유한한 미터 값을 넘기세요 (남쪽이 위인 배열은 dy_m<0)."
+    invalid_direction: "궤도 방향 '{value}'을(를) 인식할 수 없습니다. {allowed} 중 하나를 사용하세요."
+    invalid_incidence: "입사각 {value}°은(는) 0°와 90° 사이여야 합니다. Sentinel-1 IW의 입사각은 약 29°~46°입니다."
+    shape_mismatch: "{what}의 shape {a}이(가) DEM shape {b}와 다릅니다. 같은 격자로 리샘플링하세요."
+    no_transform: "GeoTIFF를 쓰려면 affine transform이 필요합니다. compute_from_dem_file()을 쓰거나 transform 인자를 넘기세요."
+    rotated_raster: "회전된 래스터(transform b, d ≠ 0)는 지원하지 않습니다. 북쪽이 위가 되도록 먼저 재투영하세요."
+    unknown_units: "투영 좌표계의 선형 단위 '{units}'을(를) 미터로 변환할 수 없습니다. 미터 단위 좌표계로 재투영하세요."
+    aoi_outside_dem: "AOI가 DEM {dem} 범위 {bounds} 밖이거나 너무 작습니다. DEM 범위와 AOI 좌표계(경위도 WGS84)를 확인하세요."
+    bad_mask_file: "{path}은(는) wintersar 기하 마스크 파일이 아닙니다 (밴드 4개 필요)."
+    empty_results: "비교할 결과가 없습니다. masks_for_both_directions() 결과를 넘기세요."
+    empty_aoi: "AOI 지오메트리가 비어 있습니다. WKT 폴리곤을 확인하세요."
+    invalid_bbox: "bbox {bbox}가 잘못되었습니다 (left<right, bottom<top 이어야 함)."
+    unknown_source: "DEM 소스 '{source}'을(를) 알 수 없습니다. {allowed} 중 하나를 사용하세요."
+    fetch_failed: "DEM 소스 {source}에서 파일을 만들지 못했습니다 ({path}). 네트워크·인증(NASA 소스는 Earthdata 로그인)을 확인하고 다시 시도하세요."

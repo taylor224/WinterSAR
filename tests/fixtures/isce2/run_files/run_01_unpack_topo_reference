@@ -1,0 +1,2 @@
+# fixture: single-job step (topo parallelises internally; numProcess4topo)
+fake_job.sh config_reference 0.05

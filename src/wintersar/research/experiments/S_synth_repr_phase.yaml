@@ -1,0 +1,39 @@
+# S synthetic site — representative-phase methods on one interferogram of a simulated SLC
+# stack with a known coherence model and two amplitude regions (R-07, ADR-0060/0061/0062).
+# Tables only; interpretation goes to the ADR after the researcher confirms the design.
+name: S_synth_repr_phase
+kind: repr_phase
+ids: [R-07, PERF-04]
+description: >-
+  Representative (low-resolution) phase of pair (0, 3) from a 12-date synthetic SLC stack
+  (exponential coherence model tau=4, floor 0.15, left/right amplitude regions with scale
+  1 and 3) at downsample factor 3, compared with the block mean of the true phase.
+requires: []
+factor: 3
+seeds: [0, 1, 2]
+data:
+  kind: synthetic_slc_stack
+  n_dates: 12
+  shape: [48, 48]
+  tau_dates: 4.0
+  coherence_floor: 0.15
+  region_kind: halves
+  region_scales: [1.0, 3.0]
+  pair: [0, 3]
+methods:
+  - name: ml
+  - name: coh_weighted
+    params: {p: 1.0}
+  - name: shp
+    params: {alpha: 0.05, test: ks}
+  - name: phase_link
+    params: {link_method: evd}
+  - name: phase_link
+    params: {link_method: emi, beta: 0.01}
+    label: phase_link(emi)
+  - name: phase_link
+    params: {link_method: evd, ministack_size: 4}
+    label: phase_link(evd, sequential m=4)
+  - name: filtered
+    params: {alpha: 0.5, window: 16, overlap: 0.5}
+metrics: [phase_rmse_rad, phase_mae_rad, mean_magnitude, wall_s, peak_rss_mb]

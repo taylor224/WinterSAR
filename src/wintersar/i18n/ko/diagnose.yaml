@@ -1,0 +1,88 @@
+# diagnose module messages (ko). Keys diagnose.KB-*.cause/fix are generated from
+# src/wintersar/diagnose/kb/*.yaml by scripts/render_kb_docs.py --write-i18n; edit the KB, not this block.
+diagnose:
+  cli:
+    title: 로그 진단
+    path_required: 로그 파일 또는 디렉터리 경로를 지정하세요 (KB 목록은 --list-kb).
+    path_not_found: '경로를 찾을 수 없습니다: {path}'
+    unknown_engine: '알 수 없는 엔진 ''{engine}''. 선택 가능: {engines}'
+    no_logs: '로그 파일이 없습니다: {path}'
+    files_scanned: '검사한 로그 파일 {n}개 (엔진: {engine})'
+    kb_title: 진단 KB 항목 {n}개
+    retry_hint: '재시도 제안 [{rule_id}]: 단계 ''{stage}'' 를 동작 ''{action}'' 으로, 파라미터 {params}'
+  report:
+    title: 실패 진단 리포트
+    source: '대상: `{path}`'
+    evidence: 증거
+    line: 행 {line} · {count}회
+    retry_hint: 재시도 제안
+    retry_detail: '{rule_id}: 단계 ''{stage}'' 를 동작 ''{action}'' 으로 다시 실행'
+    retry_params: 파라미터
+    unverified: '이 패턴은 아직 업스트림 소스 문자열로 검증되지 않았습니다 (pattern_verified: false, docs/open-questions.md 참고).'
+    engine_mismatch: 탐지된 엔진({engine})과 다른 엔진의 KB 항목이 일치했습니다. 로그가 섞여 있거나 엔진 탐지가 틀렸을 수 있습니다.
+    generated: wintersar diagnose 가 생성한 리포트입니다. 경로와 토큰은 마스킹되었습니다.
+  KB-UNKNOWN:
+    cause: '로그에서 오류 흔적({n_events}건)은 보이지만 알려진 실패 패턴(KB)과 일치하지 않습니다. 엔진: {engine}. 발췌:
+
+      {excerpt}'
+    fix: 발췌된 로그의 마지막 예외/ERROR 행을 읽고 docs/kb/index.md 에서 비슷한 항목을 찾으세요. 원인을 확인했다면 src/wintersar/diagnose/kb/*.yaml 에 새 항목을 추가하고 scripts/render_kb_docs.py --write-i18n 을 실행해 KB 를 확장하세요.
+  KB-ASF-001:
+    cause: ASF/CMR 검색 API 호출이 실패했습니다(HTTP {status}). 4xx는 잘못된 질의(잘못된 WKT, 날짜 형식, 알 수 없는 키워드)이고, 5xx·타임아웃은 CMR 서버 측 문제로 보통 일시적입니다. asf_search는 5xx를 3회까지 자동 재시도한 뒤 예외를 냅니다.
+    fix: '4xx: AOI GeoJSON/WKT와 time_range 를 확인하고 ''wintersar search --json''의 오류 메시지를 읽으세요. 5xx/타임아웃: 잠시 후 재시도하고, 반복되면 https://status.asf.alaska.edu 를 확인하세요. 대용량 질의는 기간을 나눠 실행하세요.'
+  KB-AUTH-001:
+    cause: NASA Earthdata Login 인증에 실패했습니다(HTTP 401/403). EARTHDATA_TOKEN 또는 ~/.netrc 의 자격 증명이 없거나 만료되었거나 틀렸고, 계정이 ASF 데이터 접근(EULA)을 승인하지 않았을 수도 있습니다.
+    fix: https://urs.earthdata.nasa.gov 에서 로그인 상태와 토큰 유효기간을 확인하고, EARTHDATA_TOKEN 환경변수 또는 ~/.netrc(machine urs.earthdata.nasa.gov, login/password, 권한 600)를 다시 설정하세요. 'wintersar check-install'이 자격 증명 유무를 점검합니다.
+  KB-ENV-001:
+    cause: 'GDAL/PROJ 라이브러리 버전이 서로 맞지 않습니다: 다른 PROJ 설치의 proj.db 를 읽고 있거나(PROJ_LIB/PROJ_DATA 환경변수 또는 pip 휠과 conda 라이브러리 혼용), 공유 라이브러리(libgdal/libproj)를 찾지 못합니다.'
+    fix: rasterio·pyproj·gdal 을 같은 환경(conda-forge 또는 pip 휠 중 하나)에서 함께 재설치하고, 다른 설치를 가리키는 PROJ_LIB / PROJ_DATA / GDAL_DATA 환경변수를 해제하세요. 'wintersar check-install'이 rasterio 와 pyproj 의 PROJ 버전 불일치를 ENV-004 로 보고합니다.
+  KB-ENV-002:
+    cause: 프로세스가 메모리 부족으로 종료되었습니다(리눅스 OOM killer의 'Killed', Python MemoryError, 또는 errno ENOMEM 'Cannot allocate memory'). 데이터 크기(픽셀 수 x 쌍 수)에 비해 가용 메모리가 작거나 병렬 작업 수가 너무 많습니다.
+    fix: 동시 작업 수(compute.cores)와 메모리 상한(compute.memory_gb)을 낮추고, 멀티룩 배율을 높이거나 AOI를 줄여 픽셀 수를 줄이세요. 언래핑이면 타일 모드(KB-SNAPHU-002), MintPy 역산이면 compute.maxMemory/numWorker 템플릿 값을 머신 사양에 맞추세요(PERF-09).
+  KB-HYP3-001:
+    cause: 'HyP3 크레딧이 부족합니다: 제출한 작업의 비용은 {cost} 크레딧인데 남은 크레딧은 {remaining}입니다. HyP3 Basic 계정은 매월 8,000 크레딧을 무료로 받으며, 작업당 비용은 제품 종류·해상도·burst 수에 따라 다릅니다.'
+    fix: 쌍 수를 줄이거나(SBAS 네트워크의 최대 시간/수직 기선 축소), 해상도를 낮추거나(80 m / 20x4 looks 가 가장 저렴), 다음 달 크레딧이 채워질 때까지 기다리거나, HyP3+로 추가 크레딧을 구매하세요. 'wintersar plan'이 제출 전 예상 크레딧을 보여 주며, 설정 selection.budget_credits 로 상한을 둘 수 있습니다.
+  KB-HYP3-002:
+    cause: 'HyP3 burst InSAR 작업의 입력 검증에 실패했습니다: 참조·보조 burst의 Full Burst ID가 서로 다르거나, 두 burst의 편파가 다르거나, 지원하지 않는 편파(VH/HV)를 제출했습니다. HyP3 burst InSAR는 같은 burst ID·같은 편파(VV 또는 HH)의 쌍만 처리합니다.'
+    fix: '같은 Full Burst ID(예: 052_109903_IW2)와 같은 편파(VV 권장)의 burst 제품만 쌍으로 묶으세요. ''wintersar precheck''의 SEL 규칙이 트랙·편파·burst 일치를 미리 검사하고, 설정 data.polarization 은 VV 로 두는 것을 권장합니다.'
+  KB-HYP3-003:
+    cause: HyP3가 사용하는 DEM이 요청한 씬({granules})의 범위를 덮지 못해 작업이 거부되었습니다. 극지·일부 해양 지역에서 발생합니다.
+    fix: 'DEM 범위 안에 있는 다른 씬/burst를 고르거나 AOI를 조정하세요. 해당 지역을 꼭 처리해야 하면 자체 DEM으로 ISCE2 로컬 경로(engine.interferogram: isce2_topsstack)를 사용하세요.'
+  KB-HYP3-004:
+    cause: HyP3 계정의 접근 신청 상태 때문에 작업 제출이 거부되었습니다(신청 전, 검토 대기 중, 또는 거부됨).
+    fix: HyP3 On Demand(https://hyp3-docs.asf.alaska.edu/)에서 접근을 신청하고 승인될 때까지 기다리세요. 승인 전에는 'wintersar plan'으로 견적만 확인할 수 있습니다.
+  KB-ISCE2-001:
+    cause: 참조 영상과 보조 영상 사이에 공통 burst가 없습니다. 두 날짜의 프레임(슬라이스)이 서로 다른 구간을 덮거나, 지정한 bbox가 어느 한 날짜의 burst와 겹치지 않거나, 서로 다른 트랙(relative orbit)의 영상을 섞었을 때 발생합니다.
+    fix: 같은 relative orbit·같은 편파의 영상만 스택에 넣고, 모든 날짜에 공통으로 존재하는 burst만 AOI로 선택하세요('wintersar precheck'의 SEL 규칙이 이를 검사합니다). topsStack에서는 '-b/--bbox'를 모든 날짜가 덮는 범위로 줄이거나, 공통 burst가 없는 날짜를 '-x/--exclude_dates'로 제외하세요.
+  KB-ISCE2-002:
+    cause: ESD(Enhanced Spectral Diversity) 방위각 정합 보정 단계에서 코히어런스 임계값(topsStack 기본 0.85)을 넘는 burst 오버랩 픽셀이 하나도 없습니다. 오버랩 영역이 수역·식생·적설 등으로 코히어런스가 낮거나 시간 기선이 너무 길 때 발생합니다.
+    fix: 'topsStack의 ''-e/--esd_coherence_threshold'' 값을 낮추거나(예: 0.85 → 0.7), 해당 쌍의 시간 기선을 줄이거나, ESD 없이 기하 정합만 사용하도록 ''-C/--coregistration geometry''로 재실행하세요(정합 정밀도는 낮아질 수 있음). wintersar 설정에서는 engine.esd 를 false 로 두면 ESD를 건너뜁니다.'
+  KB-ISCE2-003:
+    cause: 해당 취득 시각을 덮는 궤도 파일(POEORB 정밀 궤도 또는 RESORB 복원 궤도)을 궤도 디렉터리에서 찾지 못했거나 다운로드에 실패했습니다. 궤도 디렉터리가 비어 있거나, 최근 영상이라 정밀 궤도가 아직 공개되지 않았거나, 궤도 서버 인증에 실패한 경우입니다.
+    fix: 궤도 파일을 미리 받아 topsStack '-o/--orbit_directory'에 두세요(topsStack의 dloadOrbits.py / fetchOrbit.py는 Copernicus Data Space Ecosystem 계정이 필요합니다). wintersar fetch 단계는 궤도를 ~/.cache/wintersar 에 캐시합니다(PERF-02). 최근 영상은 RESORB로 대체하거나 정밀 궤도 공개 후 재실행하고, 마지막 수단으로 orbitdir을 해제해 annotation 궤도를 쓸 수 있습니다(정밀도 저하).
+  KB-ISCE2-004:
+    cause: DEM이 처리 영역을 덮지 못합니다(누락 타일, 또는 null 값으로 채워진 DEM). 또는 ISCE2가 요구하는 DEM 기준계 메타데이터(WGS84 타원체고 vs EGM96 지오이드)가 맞지 않습니다.
+    fix: 처리 bbox보다 여유 있게 넓은 범위의 DEM을 준비해 topsStack '-d/--dem'으로 지정하세요. 누락 타일은 Earthdata 인증(~/.netrc, machine urs.earthdata.nasa.gov) 후 다시 받고, ISCE2용 DEM은 WGS84 타원체고로 변환한 파일과 그에 맞는 .xml 메타데이터를 사용하세요. 해안·국경 지역은 DEM 공백이 있을 수 있으니 wintersar fetch가 만든 DEM의 범위를 확인하세요.
+  KB-ISCE2-005:
+    cause: topsStack이 지정한 기간과 bbox를 모두 만족하는 SAFE 영상을 하나도 찾지 못했습니다. bbox(SNWE 순서)가 영상 범위와 어긋났거나, SAFE 디렉터리·날짜 범위가 잘못되었거나, bbox를 완전히 덮지 않는 날짜가 모두 제외된 경우입니다.
+    fix: '''-b/--bbox''를 ''S N W E'' 순서로 다시 확인하고 영상 footprint와 겹치는지 검사하세요(''wintersar precheck''가 coverage_of_aoi를 계산합니다). bbox를 줄이거나, 부분적으로만 덮는 날짜를 허용하려면 topsStack 옵션으로 강제 포함하세요.'
+  KB-MINTPY-001:
+    cause: '기준점 자동 선택에 실패했습니다: 평균 공간 코히어런스가 {threshold}보다 높은 픽셀이 없습니다(mintpy.reference.minCoherence, 기본 0.85). 스택 전체의 코히어런스가 낮거나(식생·수역·적설), 마스크가 과도하거나, 간섭도 자체가 잘못 만들어진 경우입니다.'
+    fix: '먼저 avgSpatialCoh 를 확인해 코히어런스가 높은 안정 지역(도심·암반)이 있는지 보세요. 있다면 ''wintersar refpoint''로 추천 후보를 받아 mintpy.reference.lalo(또는 .yx)에 수동 지정하거나, mintpy.reference.minCoherence 를 낮추세요(예: 0.85 → 0.7). 어디에도 없다면 쌍 선택(시간 기선 단축, 코히어런스 임계)부터 다시 검토하세요.'
+  KB-MINTPY-002:
+    cause: 네트워크 역산 후 시간적 코히어런스 마스크(mintpy.networkInversion.minTempCoh, 기본 0.7)를 통과한 픽셀이 최소 개수({min_num_pixel}, mintpy.networkInversion.minNumPixel)보다 적습니다. 기준점이 언래핑 오류 지역에 있거나, 네트워크가 끊겨 있거나, 언래핑 오류가 많은 쌍이 섞여 있을 때 발생합니다.
+    fix: 'MintPy 안내대로 (1) 기준점이 언래핑 오류 없는 곳인지 확인하고, (2) 네트워크가 부분 집합 없이 연결되어 있는지 확인하세요(mintpy.network.minCoherence 로 저코히어런스 쌍 제외). 그래도 부족하면 mintpy.networkInversion.minTempCoh 를 낮추거나(예: 0.7 → 0.6) 언래핑 오류 보정(unwrap_error_correction)을 켜세요.'
+  KB-MINTPY-003:
+    cause: 대기 지연 보정용 기상 재분석 자료(ERA5 등) 다운로드에 실패했습니다. PyAPS의 CDS(Copernicus Climate Data Store) 계정 설정이 없거나 구형 형식이거나, 네트워크 문제로 3회 재시도가 모두 실패한 경우입니다.
+    fix: PyAPS 안내(https://github.com/insarlab/PyAPS/)대로 CDS API 키를 최신 형식으로 등록하고 네트워크 접근을 확인한 뒤 재실행하세요. 미리 받은 자료가 있으면 mintpy.troposphericDelay.weatherDir 에 두면 다운로드를 건너뜁니다(wintersar fetch가 캐시합니다, PERF-02). 임시로는 mintpy.troposphericDelay.method 를 height_correlation 또는 gacos 로 바꿔 진행할 수 있습니다(wintersar 설정 timeseries.troposphere).
+  KB-MINTPY-004:
+    cause: 수동으로 지정한 기준점(mintpy.reference.yx / lalo)이 데이터 범위 밖이거나 마스크로 제외된 영역에 있습니다.
+    fix: 기준점 좌표(위도/경도 순서, 좌표계)를 확인하고 데이터 범위 안의 안정 지역으로 옮기세요. 'wintersar refpoint'가 코히어런스가 높은 후보를 추천합니다.
+  KB-SNAPHU-001:
+    cause: SNAPHU 타일 모드에서 타일을 조립할 때 신뢰 영역(secondary network) 노드 수가 내부 한도를 넘었습니다. TILECOSTTHRESH가 높아 신뢰 영역이 지나치게 잘게 나뉘었거나 MINREGIONSIZE가 너무 작습니다.
+    fix: 'TILECOSTTHRESH를 낮추고(예: 기본 500 → 250) MINREGIONSIZE를 높인 뒤(예: 기본 100 → 200) 언래핑을 다시 실행하세요. snaphu-py에서는 tile_cost_thresh / min_region_size 인자입니다. 타일 임시 디렉터리(--tiledir)가 남아 있으면 ''snaphu --assemble''로 조립 단계만 다시 실행할 수 있습니다.'
+  KB-SNAPHU-002:
+    cause: SNAPHU가 메모리를 확보하지 못했습니다(malloc 실패 'Out of memory', 또는 타일 자식 프로세스가 OOM killer에 의해 종료됨). 단일 타일 메모리는 픽셀 수에 비례하므로 간섭도가 크거나 병렬 타일 수가 많으면 발생합니다.
+    fix: 타일 모드로 전환하거나 타일 수를 늘리고(--tile <nrow> <ncol> <rowovrlp> <colovrlp>, snaphu-py의 ntiles / tile_overlap) 동시 실행 프로세스 수(--nproc, nproc)를 줄이세요. 수역·저코히어런스 마스크로 노드 수를 줄이거나 멀티룩 배율을 높여 픽셀 수를 줄이는 것도 도움이 됩니다. wintersar unwrap 스케줄러는 unwrap.memory_mb_per_mpixel 값으로 타일 수를 자동 결정합니다.
+  KB-SNAPHU-003:
+    cause: '타일 파라미터가 입력 크기와 맞지 않습니다: 타일이 너무 작거나 오버랩이 너무 커서 유효 타일 영역이 남지 않거나, MINREGIONSIZE가 타일 크기보다 큽니다.'
+    fix: 타일 수(NTILEROW/NTILECOL, snaphu-py ntiles)를 줄이거나 오버랩(ROWOVRLP/COLOVRLP, tile_overlap)을 타일 크기보다 훨씬 작게 잡고, MINREGIONSIZE(min_region_size, 기본 100)를 타일 픽셀 수보다 작게 설정하세요. 간섭도 크기가 작으면 단일 타일(1x1)로 실행하는 것이 안전합니다.

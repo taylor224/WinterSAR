@@ -1,0 +1,8 @@
+wintersar engines.isce2_topsstack: run_files/run_01_unpack_topo_reference (date 20240101)
+Sentinel1_TOPS.py -i /home/user/data/S1A_IW_SLC__1SDV_20240101T092000_20240101T092027_051900_064500_ABCD.zip -o /home/user/work/isce/reference --orbit /home/user/work/isce/orbits -p vv
+Traceback (most recent call last):
+  File "/home/user/tools/isce2/contrib/stack/topsStack/Sentinel1_TOPS.py", line 108, in <module>
+    main()
+  File "/home/user/tools/isce2/components/isceobj/Sensor/TOPS/Sentinel1.py", line 611, in s1_findOrbitFile
+    raise Exception('No suitable orbit file found. If you want to process anyway - unset the orbitdir parameter')
+Exception: No suitable orbit file found. If you want to process anyway - unset the orbitdir parameter

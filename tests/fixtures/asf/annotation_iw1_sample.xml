@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Minimal SAFE annotation (s1a-iw1-slc-vv-*.xml) with the element paths wintersar reads.
+     Values copied from a real IW1 annotation (S1A 2024-04-08, IPF 003.71); everything else omitted. -->
+<product>
+  <adsHeader>
+    <missionId>S1A</missionId>
+    <productType>SLC</productType>
+    <polarisation>VV</polarisation>
+    <mode>IW</mode>
+    <swath>IW1</swath>
+    <startTime>2024-04-08T01:50:45.343649</startTime>
+    <stopTime>2024-04-08T01:51:13.245770</stopTime>
+    <absoluteOrbitNumber>53336</absoluteOrbitNumber>
+    <missionDataTakeId>423820</missionDataTakeId>
+    <imageNumber>004</imageNumber>
+  </adsHeader>
+  <generalAnnotation>
+    <productInformation>
+      <pass>Ascending</pass>
+      <timelinessCategory>Fast-24h</timelinessCategory>
+      <platformHeading>-1.297301730117246e+01</platformHeading>
+      <projection>Slant Range</projection>
+      <rangeSamplingRate>6.434523812571428e+07</rangeSamplingRate>
+      <radarFrequency>5.405000454334350e+09</radarFrequency>
+      <azimuthSteeringRate>1.590368784e+00</azimuthSteeringRate>
+    </productInformation>
+  </generalAnnotation>
+  <imageAnnotation>
+    <imageInformation>
+      <productFirstLineUtcTime>2024-04-08T01:50:45.343649</productFirstLineUtcTime>
+      <productLastLineUtcTime>2024-04-08T01:51:13.245770</productLastLineUtcTime>
+      <ascendingNodeTime>2024-04-08T01:40:38.702466</ascendingNodeTime>
+      <anchorTime>2024-04-08T01:50:45.343649</anchorTime>
+      <productComposition>Slice</productComposition>
+      <sliceNumber>4</sliceNumber>
+      <sliceList count="0"/>
+      <slantRangeTime>5.337574920665150e-03</slantRangeTime>
+      <pixelValue>Complex</pixelValue>
+      <outputPixels>16 bit Signed Integer</outputPixels>
+      <rangePixelSpacing>2.329562e+00</rangePixelSpacing>
+      <azimuthPixelSpacing>1.397051e+01</azimuthPixelSpacing>
+      <azimuthTimeInterval>2.055556299999998e-03</azimuthTimeInterval>
+      <azimuthFrequency>4.864863102995529e+02</azimuthFrequency>
+      <numberOfSamples>21577</numberOfSamples>
+      <numberOfLines>14970</numberOfLines>
+      <zeroDopMinusAcqTime>-1.502e-01</zeroDopMinusAcqTime>
+      <incidenceAngleMidSwath>3.392652331212236e+01</incidenceAngleMidSwath>
+    </imageInformation>
+  </imageAnnotation>
+  <swathTiming>
+    <linesPerBurst>1497</linesPerBurst>
+    <samplesPerBurst>21577</samplesPerBurst>
+    <burstList count="10">
+      <burst><azimuthTime>2024-04-08T01:50:45.343649</azimuthTime><azimuthAnxTime>6.066411e+02</azimuthAnxTime><sensingTime>2024-04-08T01:50:47.895962</sensingTime><byteOffset>109</byteOffset></burst>
+      <burst><azimuthTime>2024-04-08T01:50:48.102254</azimuthTime><azimuthAnxTime>6.093997e+02</azimuthAnxTime><sensingTime>2024-04-08T01:50:50.654567</sensingTime><byteOffset>129205981</byteOffset></burst>
+    </burstList>
+  </swathTiming>
+  <geolocationGrid>
+    <geolocationGridPointList count="6">
+      <geolocationGridPoint><azimuthTime>2024-04-08T01:50:45.343649</azimuthTime><slantRangeTime>5.337575e-03</slantRangeTime><line>0</line><pixel>0</pixel><latitude>-1.0</latitude><longitude>1.0</longitude><height>0.0</height><incidenceAngle>3.069249991651755e+01</incidenceAngle><elevationAngle>2.7e+01</elevationAngle></geolocationGridPoint>
+      <geolocationGridPoint><azimuthTime>2024-04-08T01:50:45.343649</azimuthTime><slantRangeTime>5.5e-03</slantRangeTime><line>0</line><pixel>10788</pixel><latitude>-1.0</latitude><longitude>1.5</longitude><height>0.0</height><incidenceAngle>3.392e+01</incidenceAngle><elevationAngle>3.0e+01</elevationAngle></geolocationGridPoint>
+      <geolocationGridPoint><azimuthTime>2024-04-08T01:50:45.343649</azimuthTime><slantRangeTime>5.67e-03</slantRangeTime><line>0</line><pixel>21576</pixel><latitude>-1.0</latitude><longitude>2.0</longitude><height>0.0</height><incidenceAngle>3.676700000000000e+01</incidenceAngle><elevationAngle>3.3e+01</elevationAngle></geolocationGridPoint>
+      <geolocationGridPoint><azimuthTime>2024-04-08T01:51:13.245770</azimuthTime><slantRangeTime>5.337575e-03</slantRangeTime><line>14969</line><pixel>0</pixel><latitude>0.5</latitude><longitude>1.0</longitude><height>0.0</height><incidenceAngle>3.071800000000000e+01</incidenceAngle><elevationAngle>2.7e+01</elevationAngle></geolocationGridPoint>
+      <geolocationGridPoint><azimuthTime>2024-04-08T01:51:13.245770</azimuthTime><slantRangeTime>5.5e-03</slantRangeTime><line>14969</line><pixel>10788</pixel><latitude>0.5</latitude><longitude>1.5</longitude><height>0.0</height><incidenceAngle>3.393e+01</incidenceAngle><elevationAngle>3.0e+01</elevationAngle></geolocationGridPoint>
+      <geolocationGridPoint><azimuthTime>2024-04-08T01:51:13.245770</azimuthTime><slantRangeTime>5.67e-03</slantRangeTime><line>14969</line><pixel>21576</pixel><latitude>0.5</latitude><longitude>2.0</longitude><height>0.0</height><incidenceAngle>3.677300000000000e+01</incidenceAngle><elevationAngle>3.3e+01</elevationAngle></geolocationGridPoint>
+    </geolocationGridPointList>
+  </geolocationGrid>
+</product>

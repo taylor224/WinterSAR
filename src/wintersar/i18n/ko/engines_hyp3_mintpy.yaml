@@ -1,0 +1,75 @@
+# engines/hyp3 · engines/mintpy · engines/aux_cache 메시지 (규칙 11.6: 원인 → 조치 순서)
+engines:
+  hyp3:
+    HYP3-001:
+      cause: "HyP3 작업이 실패했습니다: 쌍 {pair} (job {job_id}). 서버 메시지: {reason}"
+      fix: "HyP3 로그 URL({log_url})에서 원인을 확인하세요. 궤도·DEM 문제면 다른 날짜 쌍으로 교체하고, 일시 오류면 같은 명령을 다시 실행하면 실패한 쌍만 재제출됩니다."
+    HYP3-002:
+      cause: "쌍 {pair}의 HyP3 산출물에 필수 파일 또는 메타데이터 키가 없습니다: {missing}"
+      fix: "산출물 폴더({product_dir})를 삭제하고 다시 실행하면 해당 쌍만 다시 내려받습니다. 반복되면 HyP3 제품 버전 변경 여부를 확인하세요 (ADR-0020)."
+    HYP3-003:
+      cause: "HyP3는 looks {requested}를 지원하지 않습니다 (지원: 20x4=80 m, 10x2=40 m, 5x1=20 m). 가장 가까운 {used}로 대체합니다."
+      fix: "정확한 looks 제어가 필요하면 engine.interferogram을 isce2_topsstack으로 바꾸거나 engine.target_pixel_m을 80/40/20 중 하나로 두세요."
+    HYP3-004:
+      cause: "스택의 burst 수 {n_bursts}개가 HyP3 multi-burst 작업 한도({max_bursts}개)를 넘거나 참조·보조 burst 수가 다릅니다."
+      fix: "AOI를 줄여 burst 수를 {max_bursts}개 이하로 만들거나 engine.interferogram=isce2_topsstack(로컬 처리)을 사용하세요."
+    HYP3-005:
+      cause: "예상 크레딧 {needed}이(가) 잔여 크레딧 {remaining}보다 많습니다 (작업 {n_jobs}개)."
+      fix: "쌍 수를 줄이거나(selection.max_temporal_baseline_days 축소), 다음 달 초기화를 기다리거나, ASF User Services(uso@asf.alaska.edu)에 추가 크레딧을 요청하세요. 확인 후 강행하려면 hyp3.ignore_credits=true."
+    HYP3-006:
+      cause: "HyP3 작업 {n_pending}개가 {timeout_s}초 안에 끝나지 않았습니다 (제출은 완료됨)."
+      fix: "같은 명령을 다시 실행하면 제출된 작업 ID를 재사용해 폴링부터 이어갑니다. 대기 시간을 늘리려면 hyp3.poll_timeout_s를 키우세요."
+    HYP3-007:
+      cause: "쌍 {pair}: 날짜 {date}의 burst {burst_id}에 해당하는 granule 이름이 candidates.json에 없습니다."
+      fix: "wintersar search를 다시 실행해 candidates.json의 notes.granules(날짜→burst ID→granule)를 채우거나, hyp3.jobs 파라미터로 granule을 직접 지정하세요."
+    HYP3-008:
+      cause: "쌍 {pair}의 산출물에 권장 파일이 없습니다: {missing}. 시계열 단계의 일부 보정(언래핑 오류·수역 마스크)이 제한됩니다."
+      fix: "HyP3 제품 버전이 바뀌었을 수 있습니다. ADR-0020의 파일 목록과 비교하고 필요하면 어댑터의 권장 파일 목록을 갱신하세요."
+    HYP3-009:
+      cause: "산출물 {n_products}개의 지리 범위가 서로 달라 공통 범위로 잘라낸 *_clip.tif를 생성했습니다 (MintPy는 동일 크기 입력을 요구)."
+      fix: "조치 불필요. 원본은 그대로 두었으며 MintPy 템플릿은 *_clip.tif 패턴을 사용합니다."
+    HYP3-010:
+      cause: "산출물 폴더 이름 '{name}'이(가) HyP3 burst InSAR 명명 규칙과 다릅니다."
+      fix: "MintPy prep_hyp3는 이름 패턴으로 제품 유형을 판별합니다. 폴더를 수동으로 바꾸지 말고 다시 내려받으세요."
+    HYP3-011:
+      cause: "제출할 간섭도 쌍이 없습니다 (candidates.json의 pairs가 비었거나 모든 쌍에 granule이 없음)."
+      fix: "wintersar precheck 결과를 확인하고 selection 설정(기선 임계값)을 완화하거나 다른 스택을 고르세요."
+    HYP3-012:
+      cause: "쌍 {pair}의 HyP3 작업 {job_id}은(는) 성공했지만 다운로드 보관 기간이 만료되었습니다."
+      fix: "같은 명령을 다시 실행하면 해당 쌍을 재제출합니다 (크레딧이 다시 소모됩니다)."
+    HYP3-013:
+      cause: "HyP3 산출물 {n_products}개의 지리 범위에 공통 교집합이 없습니다 (서로 다른 burst/궤도 산출물이 섞임)."
+      fix: "candidates.json의 스택이 한 트랙·같은 burst 집합인지 확인하세요 (wintersar precheck SEL-01/04). 섞인 산출물 폴더를 지우고 다시 실행하세요."
+    estimate: "HyP3 크레딧 견적: 작업 {n_jobs}개 × {credits_per_job} = {credits} 크레딧 (looks {looks}, burst {n_bursts}개, 월 무료 {monthly_free})"
+    stage_note: "HyP3는 정합·간섭도·멀티룩·언래핑을 한 작업으로 수행하므로 interferogram 단계가 igrams와 unw를 모두 산출하고 로컬 unwrap 단계는 건너뜁니다."
+  mintpy:
+    MP-001:
+      cause: "MintPy 단계 '{step}'이(가) 실패했습니다 (종료 코드 {returncode}). 로그: {log}"
+      fix: "로그 마지막 오류 줄을 확인하세요. 입력 경로 오류면 템플릿의 mintpy.load.* 패턴을, 수치 오류면 참조점(mintpy.reference.lalo)과 네트워크 연결성을 점검한 뒤 wintersar run --from timeseries 로 재실행하세요."
+    MP-002:
+      cause: "MintPy가 메모리 부족으로 중단되었습니다 (maxMemory {max_memory_gb} GB, worker {num_worker}개)."
+      fix: "compute.memory_gb를 실제 여유 메모리로 낮추거나 compute.cores를 줄이세요 (PERF-09 자동값: worker=코어-1, maxMemory=RAM×0.8). 대안: mintpy.multilook.xstep/ystep으로 입력을 줄이기."
+    MP-003:
+      cause: "MintPy load_data가 입력 파일을 찾지 못했습니다: 패턴 {pattern}"
+      fix: "interferogram 단계 산출물 폴더에 *_unw_phase.tif, *_corr.tif, *_dem.tif, *_lv_theta.tif, *_lv_phi.tif 가 있는지 확인하고, 없으면 wintersar run --force interferogram 으로 다시 내려받으세요."
+    MP-004:
+      cause: "'{stage}' 단계에 필요한 MintPy 작업 폴더(mintpy_workdir 아티팩트)가 없습니다."
+      fix: "timeseries 단계를 먼저 실행하세요: wintersar run --until timeseries"
+    MP-005:
+      cause: "smallbaselineApp.py는 있으나 버전 문자열을 해석하지 못했습니다: '{output}'"
+      fix: "smallbaselineApp.py --version 출력이 'MintPy version X.Y.Z, date ...' 형식인지 확인하세요. 지원 범위 {constraint}."
+    MP-006:
+      cause: "참조점이 auto 입니다. MintPy가 코히어런스 높은 임의 픽셀을 고르며, 결과 재현성과 검증 비교가 어려워집니다."
+      fix: "wintersar refpoint 로 추천 지점을 받아 timeseries.reference_point: [lat, lon] 으로 고정하세요 (Yunjun et al. 2019 §4.3 기준)."
+    MP-007:
+      cause: "MintPy 단계 '{step}'은(는) 정상 종료했지만 기대 산출물 {path}이(가) 없습니다."
+      fix: "단계 로그({log})에서 'skip' 메시지를 확인하세요. 입력이 이미 처리됐다고 판단해 건너뛰었다면 작업 폴더를 지우고 wintersar run --force timeseries 로 재실행하세요."
+    template_header: "wintersar가 생성한 MintPy 템플릿. 직접 수정하면 파이프라인 캐시(PERF-03)와 어긋납니다 — config.yaml을 수정하세요."
+  aux:
+    AUX-001:
+      cause: "궤도 파일 다운로드에 실패했습니다: {mission} {date} — {error}"
+      fix: "네트워크·CDSE 계정(~/.netrc dataspace.copernicus.eu)을 확인하세요. 없으면 RESORB(restituted)로 재시도하거나 HyP3 경로를 사용하세요 (HyP3는 궤도를 자체 취득)."
+    AUX-002:
+      cause: "오프라인 모드(WINTERSAR_OFFLINE)인데 캐시에 없는 보조 데이터입니다: {namespace}/{key}"
+      fix: "온라인 상태에서 한 번 실행해 캐시(~/.cache/wintersar)를 채운 뒤 오프라인으로 재실행하세요."
+    cache_hit: "보조 데이터 캐시 적중: {namespace} {n_hits}개, 신규 {n_fetched}개"

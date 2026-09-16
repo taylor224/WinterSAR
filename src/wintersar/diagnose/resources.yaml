@@ -1,0 +1,85 @@
+# Resource model coefficients for wintersar.diagnose.resources.estimate (plan §5.5, ADR-0036).
+#
+# STATUS: every time/memory/disk coefficient below is an INITIAL GUESS used only to order
+# stages and size the unwrap scheduler before any measurement exists. None of them is a
+# measured value (rule 11.8: no performance numbers without bench_result.json).
+# `wintersar bench` refits them from bench_result.json; until then Resources.notes carries
+# {"coefficients": "initial_guess"} so reports never present them as measured.
+#
+# Verified facts (kept separate from guesses):
+#   * hyp3_credits: https://hyp3-docs.asf.alaska.edu/using/credits/ (fetched 2026-09-16)
+#   * defaults.memory_mb_per_mpixel: pipeline/config.py UnwrapCfg.memory_mb_per_mpixel
+#     default 100.0 (itself an initial value, docs/open-questions.md #8)
+#   * bytes_per_pixel_float32 = 4, complex64 = 8 (numpy dtype itemsize)
+
+version: 1
+status: initial_guess
+
+defaults:
+  memory_mb_per_mpixel: 100.0        # source: src/wintersar/pipeline/config.py (UnwrapCfg)
+  bytes_per_pixel_float32: 4         # numpy float32 itemsize
+  bytes_per_pixel_complex64: 8       # numpy complex64 itemsize
+
+# Per engine / stage:
+#   time_s_per_mpixel   seconds per 1e6 pixels per pair (or per stack when parallel: single)
+#   time_fixed_s        fixed start-up seconds per job
+#   mem_mb_per_mpixel   MB per 1e6 pixels per concurrent job
+#   mem_fixed_gb        GB fixed per job
+#   disk_bytes_per_pixel bytes written per pixel per pair
+#   parallel            pairs (one job per pair, runs concurrently) | single (one job per stack)
+#   basis               why this number: guess | config_default | dtype
+stages:
+  default:
+    fetch:        {time_s_per_mpixel: 0,   time_fixed_s: 60,  mem_mb_per_mpixel: 0,   mem_fixed_gb: 0.5, disk_bytes_per_pixel: 8,  parallel: pairs,  basis: guess}
+    coregister:   {time_s_per_mpixel: 40,  time_fixed_s: 30,  mem_mb_per_mpixel: 150, mem_fixed_gb: 1.0, disk_bytes_per_pixel: 8,  parallel: pairs,  basis: guess}
+    interferogram: {time_s_per_mpixel: 10, time_fixed_s: 10,  mem_mb_per_mpixel: 80,  mem_fixed_gb: 0.5, disk_bytes_per_pixel: 12, parallel: pairs,  basis: guess}
+    multilook:    {time_s_per_mpixel: 2,   time_fixed_s: 5,   mem_mb_per_mpixel: 40,  mem_fixed_gb: 0.2, disk_bytes_per_pixel: 8,  parallel: pairs,  basis: guess}
+    unwrap:       {time_s_per_mpixel: 120, time_fixed_s: 5,   mem_mb_per_mpixel: 100, mem_fixed_gb: 0.2, disk_bytes_per_pixel: 5,  parallel: pairs,  basis: config_default}
+    timeseries:   {time_s_per_mpixel: 20,  time_fixed_s: 30,  mem_mb_per_mpixel: 16,  mem_fixed_gb: 1.0, disk_bytes_per_pixel: 4,  parallel: single, basis: guess}
+    corrections:  {time_s_per_mpixel: 10,  time_fixed_s: 60,  mem_mb_per_mpixel: 8,   mem_fixed_gb: 1.0, disk_bytes_per_pixel: 4,  parallel: single, basis: guess}
+    geocode:      {time_s_per_mpixel: 5,   time_fixed_s: 5,   mem_mb_per_mpixel: 40,  mem_fixed_gb: 0.2, disk_bytes_per_pixel: 4,  parallel: pairs,  basis: guess}
+  snaphu:
+    unwrap:       {time_s_per_mpixel: 120, time_fixed_s: 5,   mem_mb_per_mpixel: 100, mem_fixed_gb: 0.2, disk_bytes_per_pixel: 5,  parallel: pairs,  basis: config_default}
+  tophu:
+    unwrap:       {time_s_per_mpixel: 60,  time_fixed_s: 10,  mem_mb_per_mpixel: 60,  mem_fixed_gb: 0.5, disk_bytes_per_pixel: 5,  parallel: pairs,  basis: guess}
+  isce2:
+    coregister:   {time_s_per_mpixel: 40,  time_fixed_s: 30,  mem_mb_per_mpixel: 150, mem_fixed_gb: 1.0, disk_bytes_per_pixel: 8,  parallel: pairs,  basis: guess}
+    interferogram: {time_s_per_mpixel: 10, time_fixed_s: 10,  mem_mb_per_mpixel: 80,  mem_fixed_gb: 0.5, disk_bytes_per_pixel: 12, parallel: pairs,  basis: guess}
+    multilook:    {time_s_per_mpixel: 2,   time_fixed_s: 5,   mem_mb_per_mpixel: 40,  mem_fixed_gb: 0.2, disk_bytes_per_pixel: 8,  parallel: pairs,  basis: guess}
+    geocode:      {time_s_per_mpixel: 5,   time_fixed_s: 5,   mem_mb_per_mpixel: 40,  mem_fixed_gb: 0.2, disk_bytes_per_pixel: 4,  parallel: pairs,  basis: guess}
+  mintpy:
+    timeseries:   {time_s_per_mpixel: 20,  time_fixed_s: 30,  mem_mb_per_mpixel: 16,  mem_fixed_gb: 1.0, disk_bytes_per_pixel: 4,  parallel: single, basis: guess}
+    corrections:  {time_s_per_mpixel: 10,  time_fixed_s: 60,  mem_mb_per_mpixel: 8,   mem_fixed_gb: 1.0, disk_bytes_per_pixel: 4,  parallel: single, basis: guess}
+    geocode:      {time_s_per_mpixel: 5,   time_fixed_s: 5,   mem_mb_per_mpixel: 40,  mem_fixed_gb: 0.2, disk_bytes_per_pixel: 4,  parallel: single, basis: guess}
+  fake:
+    fetch:        {time_s_per_mpixel: 0,   time_fixed_s: 0.1, mem_mb_per_mpixel: 1,   mem_fixed_gb: 0.05, disk_bytes_per_pixel: 0, parallel: single, basis: guess}
+    coregister:   {time_s_per_mpixel: 0.1, time_fixed_s: 0.1, mem_mb_per_mpixel: 1,   mem_fixed_gb: 0.05, disk_bytes_per_pixel: 0, parallel: single, basis: guess}
+    interferogram: {time_s_per_mpixel: 1,  time_fixed_s: 0.1, mem_mb_per_mpixel: 24,  mem_fixed_gb: 0.05, disk_bytes_per_pixel: 12, parallel: single, basis: guess}
+    multilook:    {time_s_per_mpixel: 0.1, time_fixed_s: 0.1, mem_mb_per_mpixel: 12,  mem_fixed_gb: 0.05, disk_bytes_per_pixel: 12, parallel: single, basis: guess}
+    unwrap:       {time_s_per_mpixel: 0.5, time_fixed_s: 0.1, mem_mb_per_mpixel: 12,  mem_fixed_gb: 0.05, disk_bytes_per_pixel: 5, parallel: single, basis: guess}
+    timeseries:   {time_s_per_mpixel: 0.5, time_fixed_s: 0.1, mem_mb_per_mpixel: 8,   mem_fixed_gb: 0.05, disk_bytes_per_pixel: 4, parallel: single, basis: guess}
+    corrections:  {time_s_per_mpixel: 0.1, time_fixed_s: 0.1, mem_mb_per_mpixel: 8,   mem_fixed_gb: 0.05, disk_bytes_per_pixel: 4, parallel: single, basis: guess}
+    geocode:      {time_s_per_mpixel: 0.1, time_fixed_s: 0.1, mem_mb_per_mpixel: 4,   mem_fixed_gb: 0.05, disk_bytes_per_pixel: 4, parallel: single, basis: guess}
+  hyp3:
+    # Remote processing: local time/memory are ~0; wall time is queue + processing on ASF's
+    # side and is NOT modelled (None). Download size per product is a guess.
+    interferogram: {time_s_per_mpixel: 0, time_fixed_s: 0, mem_mb_per_mpixel: 0, mem_fixed_gb: 0.1, disk_bytes_per_pixel: 0, parallel: pairs, basis: guess, network_gb_per_job: 0.5}
+
+# Verified: https://hyp3-docs.asf.alaska.edu/using/credits/ (fetched 2026-09-16).
+# "HyP3 Basic On Demand users are given a free allotment of 8,000 credits per month".
+# Burst InSAR rows are [min_pairs, max_pairs, credits] per job where "pairs" is the number of
+# burst pairs in one INSAR_ISCE_MULTI_BURST job (the docs table wording); looks -> pixel spacing:
+# 20x4 = 80 m, 10x2 = 40 m, 5x1 = 20 m.
+hyp3_credits:
+  source: "https://hyp3-docs.asf.alaska.edu/using/credits/"
+  fetched: "2026-09-16"
+  monthly_free_allotment: 8000
+  reset_timing: null            # not stated on the credits page -> docs/open-questions.md #23
+  looks_to_pixel_m: {"20x4": 80, "10x2": 40, "5x1": 20}
+  insar:                        # Sentinel-1 SLC InSAR (one job = one pair)
+    "20x4": 10
+    "10x2": 15
+  burst_insar:
+    "20x4": [[1, 4, 1], [5, 12, 5], [13, 15, 10]]
+    "10x2": [[1, 3, 1], [4, 9, 5], [10, 15, 10]]
+    "5x1": [[1, 1, 1], [2, 2, 5], [3, 3, 10], [4, 4, 15], [5, 5, 20], [6, 6, 25], [7, 7, 30], [8, 8, 35], [9, 9, 40], [10, 10, 45], [11, 11, 90], [12, 12, 95], [13, 13, 100], [14, 14, 105], [15, 15, 110]]

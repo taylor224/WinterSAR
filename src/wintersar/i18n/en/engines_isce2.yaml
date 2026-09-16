@@ -1,0 +1,73 @@
+# engines/isce2_topsstack · engines/runfiles · engines/burst2safe · engines/dolphin messages
+# (rule 11.6: cause -> fix order). Namespaces engines.isce2.* and engines.dolphin.*
+engines:
+  isce2:
+    ISCE2-001:
+      cause: "topsStack step '{step}' ({run_file}) failed: job #{job_index} exited with code {returncode} after {attempts} attempt(s). Command: {command}. Log: {log}"
+      fix: "Analyse the log with 'wintersar diagnose {log}'. Re-running the same command resumes at this step (completed steps are recorded in runfiles_state.json); to start the step over, delete that entry or pass isce2.regenerate_run_files=true."
+    ISCE2-002:
+      cause: "No usable DEM for topsStack ({reason})."
+      fix: "Pass isce2.dem=<file> (WGS84 ellipsoid heights, ISCE .xml sidecar next to it), or provide an AOI so wintersar fetches one through sardem. Create a missing sidecar with 'gdal2isce_xml.py -i <dem>'."
+    ISCE2-003:
+      cause: "stackSentinel.py did not generate run_files (exit code {returncode}). Log: {log}"
+      fix: "Check the log: typical causes are SAFE files that do not intersect the bbox ('No acquisition fulfills the temporal range and bbox requirement'), orbit download failures or a DEM that does not cover the bbox. Fix the input and re-run."
+    ISCE2-004:
+      cause: "burst2safe failed to assemble the SAFE product for {date} ({n_granules} burst granules, exit code {returncode}). Log: {log}"
+      fix: "Check Earthdata credentials (EARTHDATA_TOKEN or EARTHDATA_USERNAME/EARTHDATA_PASSWORD or ~/.netrc) and the network, then re-run: dates that already have a SAFE are skipped."
+    ISCE2-005:
+      cause: "burst2safe is installed but no Earthdata Login credentials were found ({env_vars} or ~/.netrc)."
+      fix: "Export EARTHDATA_TOKEN (or EARTHDATA_USERNAME and EARTHDATA_PASSWORD) or add 'machine urs.earthdata.nasa.gov' to ~/.netrc before the fetch stage."
+    ISCE2-006:
+      cause: "No processing bounding box: topsStack will process the whole common overlap of the stack (larger and slower than the AOI)."
+      fix: "Set isce2.bbox: [S, N, W, E] (stackSentinel.py -b) or provide the AOI polygon so wintersar derives it."
+    ISCE2-007:
+      cause: "No Sentinel-1 SLC input for topsStack ({reason}; slc_dir: {slc_dir})."
+      fix: "Either point isce2.slc_dir at a folder with S1*_IW_SLC*.zip / .SAFE products, or (burst products) install burst2safe and re-run wintersar search so stack.json carries notes.granules."
+    ISCE2-008:
+      cause: "An existing coregistered stack was found in {workdir}; topsStack update mode re-uses the reference geometry (reference/, geom_reference/) and only coregisters the new dates plus the last num_overlap_connections*2 dates (PERF-11)."
+      fix: "No action needed. Keep the original SAFE files of the last coregistered dates available (topsStack needs them for the ESD re-estimation)."
+    ISCE2-009:
+      cause: "topsStack step '{step}' finished but the expected product is missing: {path}"
+      fix: "Open the job logs of that step; if the step was skipped by topsStack because outputs 'already exist', delete the partial product directory and re-run with isce2.regenerate_run_files=true."
+    ISCE2-010:
+      cause: "Multilook factors chosen automatically: range {rg} x azimuth {az} (target {target_m} m, resulting pixel ~{pixel_m} m)."
+      fix: "To pin them set engine.looks: [rg, az]; topsStack applies them with -r/-z in merge_burst_igram."
+    ISCE2-011:
+      cause: "Disk cleanup policy '{policy}' removed {n} directories after step '{step}'."
+      fix: "Set engine.cleanup=none to keep every intermediate product (burst interferograms, ESD, coarse offsets)."
+    ISCE2-012:
+      cause: "Stage '{stage}' needs the '{needed}' artifact from the previous stage but it is missing."
+      fix: "Run the stages in order (wintersar run --until {stage}); do not delete the work/<stage> directories by hand."
+    ISCE2-013:
+      cause: "topsStack interferogram network set to nearest-{n} connections (-c {n}) derived from the selected pairs; extra pairs are generated and pruned later by the time-series network thresholds."
+      fix: "To control it directly set isce2.num_connections."
+    ISCE2-014:
+      cause: "No precise orbit files (*.EOF) in {orbit_dir}; topsStack will download them itself (fetchOrbit.py) during run file generation."
+      fix: "For offline runs pre-fill the orbit directory (sentineleof: 'eof --date … --mission …') or set isce2.orbit_dir to a folder that already holds the EOF files."
+    ISCE2-015:
+      cause: "Existing '{path}' was moved to '{backup}' because stackSentinel.py refuses to run when run_files/ exists."
+      fix: "No action needed; delete the backup once the new run has succeeded."
+    ISCE2-016:
+      cause: "{executable} is on PATH but 'python3 -c \"import isce\"' failed: the ISCE2 python package is not importable from this environment."
+      fix: "Activate the ISCE2 environment (conda activate isce2) and export ISCE_HOME / PYTHONPATH as the contrib/stack README describes; only ONE stack processor (topsStack) may be on PATH."
+    prep_isce_note: "MintPy inputs: prep_isce.py -f '{unw}' -m '{meta}' -b '{baselines}' -g '{geom}' (or the mintpy.load.* keys in prep_isce.json)."
+  dolphin:
+    DOL-001:
+      cause: "dolphin run exited with code {returncode}. Log: {log}"
+      fix: "Analyse the log with 'wintersar diagnose {log}'. Memory errors: lower worker_settings.block_shape or set dolphin.strides [2, 2]; input errors: check that every CSLC file exists and its name contains the date (cslc_date_fmt %Y%m%d)."
+    DOL-002:
+      cause: "No coregistered SLC (CSLC) inputs for dolphin (inputs received: {inputs})."
+      fix: "dolphin starts from the coregistered SLC stack, not from unwrapped interferograms: run the interferogram stage with engine.interferogram=isce2_topsstack (merged/SLC is discovered automatically) or set dolphin.cslc_files / dolphin.cslc_dir (+ subdataset for HDF5)."
+    DOL-003:
+      cause: "dolphin finished but no timeseries/<ref>_<date>.tif products were found in {path}. Log: {log}"
+      fix: "Check that timeseries_options.run_inversion is true and the unwrapping step produced files in unwrapped/; see the log."
+    DOL-004:
+      cause: "No reference point given: dolphin picks the centroid of the largest high-quality region, which changes between runs and hampers validation comparisons."
+      fix: "Set dolphin.reference_point_rowcol: [row, col] (dolphin uses pixel coordinates), e.g. from wintersar refpoint."
+    DOL-005:
+      cause: "Unwrap method '{requested}' is not a dolphin UnwrapMethod (snaphu, icu, phass, spurt, whirlwind); using '{used}'."
+      fix: "Set dolphin.unwrap_method to one of the supported values; tiled multi-scale unwrapping is configured through dolphin.ntiles."
+    DOL-006:
+      cause: "The dolphin run had no input_options.wavelength, so its outputs are in radians; wintersar converted them to metres with the Sentinel-1 wavelength (c / 5.405 GHz)."
+      fix: "Set dolphin.wavelength_m explicitly for non-Sentinel-1 data."
+    normalisation_note: "dolphin outputs were normalised to the MintPy convention: metres, positive = toward the satellite, zero at the first date."

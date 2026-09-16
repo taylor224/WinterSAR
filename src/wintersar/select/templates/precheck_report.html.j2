@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ labels.title }} — wintersar</title>
+<style>
+  :root { --fail:#b42318; --warn:#b54708; --info:#175cd3; --bg:#ffffff; --fg:#1d2939; --line:#e4e7ec; --muted:#667085; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0b1220; --fg:#e4e7ec; --line:#2a3446; --muted:#98a2b3; } }
+  body { font-family: -apple-system, "Segoe UI", "Noto Sans KR", sans-serif; background:var(--bg); color:var(--fg); margin:0; padding:24px 16px; line-height:1.5; }
+  main { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  h2 { font-size: 1.15rem; margin: 28px 0 8px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+  .muted { color: var(--muted); font-size: .9rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; display:block; overflow-x:auto; }
+  th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: rgba(127,127,127,.08); }
+  .sev { font-weight: 600; white-space: nowrap; }
+  .FAIL { color: var(--fail); } .WARN { color: var(--warn); } .INFO { color: var(--info); }
+  .badge { display:inline-block; padding: 2px 8px; border-radius: 10px; background: rgba(23,92,211,.12); font-weight:600; }
+  .rec { font-size: 1.1rem; }
+  td.num { text-align: right; white-space: nowrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>{{ labels.title }}</h1>
+  <p class="muted">{{ labels.generated_at }}: {{ payload.generated_at }} · wintersar</p>
+
+  <h2>{{ labels.summary }}</h2>
+  <p>{{ summary_text }}</p>
+
+  <h2>{{ labels.recommended }}</h2>
+  {% if payload.recommended %}
+  <p class="rec"><span class="badge">{{ payload.recommended }}</span></p>
+  {% else %}
+  <p>{{ labels.no_recommendation }}</p>
+  {% endif %}
+
+  <h2>{{ labels.candidates }}</h2>
+  <table>
+    <thead><tr>
+      <th>{{ labels.col_stack }}</th><th>{{ labels.col_track }}</th><th>{{ labels.col_direction }}</th>
+      <th>{{ labels.col_polarization }}</th><th>{{ labels.col_subswaths }}</th><th>{{ labels.col_n_dates }}</th>
+      <th>{{ labels.col_n_bursts }}</th><th>{{ labels.col_coverage }}</th><th>{{ labels.col_n_pairs }}</th>
+      <th>{{ labels.col_reference }}</th><th>{{ labels.col_period }}</th><th>{{ labels.col_perp }}</th><th>{{ labels.col_temporal }}</th>
+    </tr></thead>
+    <tbody>
+    {% for row in payload.candidate_table %}
+      <tr{% if row.stack_id == payload.recommended %} style="font-weight:600"{% endif %}>
+        <td>{{ row.stack_id }}</td><td class="num">{{ row.relative_orbit }}</td><td>{{ row.flight_direction }}</td>
+        <td>{{ row.polarization }}</td><td>{{ row.subswaths | join('+') or labels.unknown }}</td><td class="num">{{ row.n_dates }}</td>
+        <td class="num">{{ row.n_bursts }}</td><td class="num">{{ '%.1f' | format(row.coverage_of_aoi * 100) }}%</td><td class="num">{{ row.n_pairs }}</td>
+        <td>{{ row.reference_date or labels.unknown }}</td>
+        <td>{% if row.first_date %}{{ row.first_date }} ~ {{ row.last_date }}{% else %}{{ labels.unknown }}{% endif %}</td>
+        <td class="num">{{ fmt_range(row.perp_m) }}</td><td class="num">{{ fmt_range(row.temporal_days) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+
+  {% if alt_rows %}
+  <h2>{{ labels.alternatives }}</h2>
+  <table>
+    <thead><tr><th>{{ labels.col_stack }}</th><th>{{ labels.col_option }}</th><th>{{ labels.col_n_dates }}</th><th>{{ labels.col_n_bursts }}</th><th>{{ labels.col_coverage }}</th><th>{{ labels.col_dropped }}</th></tr></thead>
+    <tbody>
+    {% for a in alt_rows %}
+      <tr><td>{{ a.stack_id }}</td><td>{{ a.label }}</td><td class="num">{{ a.n_dates }}</td><td class="num">{{ a.n_bursts }}</td><td class="num">{{ '%.1f' | format(a.coverage * 100) }}%</td><td>{{ a.dropped }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if payload.looks %}
+  <h2>{{ labels.looks }}</h2>
+  <table>
+    <thead><tr><th>{{ labels.col_stack }}</th><th>looks (rg × az)</th><th>{{ labels.col_pixel }}</th><th>{{ labels.col_aspect }}</th></tr></thead>
+    <tbody>
+    {% for sid, lk in payload.looks.items() %}
+      <tr><td>{{ sid }}</td><td class="num">{{ lk.rg_looks }} × {{ lk.az_looks }}</td>
+          <td class="num">{{ '%.1f' | format(lk.pixel_rg_m) }} × {{ '%.1f' | format(lk.pixel_az_m) }}</td>
+          <td class="num">{{ '%.2f' | format(lk.aspect_ratio) }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if payload.resources %}
+  <h2>{{ labels.resources }}</h2>
+  <table>
+    <thead><tr><th>{{ labels.col_stack }}</th><th>{{ labels.res_n_jobs }}</th><th>{{ labels.res_credits }}</th><th>{{ labels.res_wall_time }}</th><th>{{ labels.res_disk }}</th><th>{{ labels.res_network }}</th></tr></thead>
+    <tbody>
+    {% for sid, r in payload.resources.items() %}
+      <tr><td>{{ sid }}</td>
+          <td class="num">{{ r.n_jobs if r.n_jobs is not none else labels.unknown }}</td>
+          <td class="num">{{ r.credits if r.credits is not none else labels.unknown }}</td>
+          <td class="num">{{ r.wall_time_s if r.wall_time_s is not none else labels.unknown }}</td>
+          <td class="num">{{ r.disk_gb if r.disk_gb is not none else labels.unknown }}</td>
+          <td class="num">{{ r.network_gb if r.network_gb is not none else labels.unknown }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  <h2>{{ labels.findings }}</h2>
+  {% if payload.findings_rendered %}
+  <table>
+    <thead><tr><th>{{ labels.col_severity }}</th><th>{{ labels.col_rule }}</th><th>{{ labels.col_scope }}</th><th>{{ labels.cause }}</th><th>{{ labels.fix }}</th></tr></thead>
+    <tbody>
+    {% for f in payload.findings_rendered %}
+      <tr><td class="sev {{ f.severity }}">{{ f.severity_label }}</td><td>{{ f.rule_id }}</td><td>{{ f.scope or '' }}</td><td>{{ f.cause }}</td><td>{{ f.fix }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>{{ labels.no_findings }}</p>
+  {% endif %}
+</main>
+</body>
+</html>

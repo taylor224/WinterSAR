@@ -1,0 +1,52 @@
+# select/search · metadata · baseline · auth messages (rule 11.6: cause -> fix order)
+select_search:
+  KB-AUTH-001:
+    cause: "Earthdata Login credentials are not usable ({reason})."
+    cause_missing: "No Earthdata Login credentials (environment variable {env_var} unset, no {host} entry in ~/.netrc). Searching works, downloads will fail."
+    cause_invalid_token: "The Earthdata token in {env_var} was rejected (expired or malformed): {error}"
+    cause_netrc_error: "Login with the ~/.netrc account for {host} failed: {error}"
+    cause_network: "Could not reach the Earthdata Login server ({host}): {error}"
+    fix: "Create an account at https://urs.earthdata.nasa.gov, then either (1) generate a token at https://urs.earthdata.nasa.gov/user_tokens and export it as {env_var}, or (2) add 'machine {host} login <ID> password <PW>' to ~/.netrc. SLC BURST downloads need the asf-urs cookie, so the .netrc (username/password) route is recommended."
+    fix_invalid_token: "Generate a new token at https://urs.earthdata.nasa.gov/user_tokens and update {env_var}, or switch to ~/.netrc."
+    fix_network: "Check network/proxy settings and retry. Service status: https://status.earthdata.nasa.gov"
+  SEL-SEARCH-01:
+    cause: "Search result: {product_type} {n_records} products · {n_dates} dates · tracks {tracks} · {n_bursts} bursts/scenes ({n_dropped} outside the AOI dropped)."
+    fix: "If this is not what you expected, check the AOI coordinates (lon, lat order), time range, polarization and orbit direction."
+  SEL-SEARCH-02:
+    cause: "No Sentinel-1 SLC-BURST products cover the AOI/time range; fell back to full IW SLC scenes ({n_slc} products)."
+    fix: "The SLC route downloads much more data and frame boundaries shift between dates, so burst-level overlap is not guaranteed. If possible widen the time range and re-check BURST availability."
+  SEL-SEARCH-03:
+    cause: "No Sentinel-1 {product_type} products for the AOI/time range ({start} to {end})."
+    fix: "Check the AOI coordinates (lon, lat order), time range, polarization ({polarization}), orbit direction ({orbit_direction}) and track ({relative_orbit})."
+  SEL-SEARCH-04:
+    cause: "The CMR search finished incomplete ({n_records} products received, pages may be missing)."
+    fix: "Re-run the search in a moment. If it keeps happening, split the time range."
+  SEL-SEARCH-05:
+    cause: "asf_search raised an error ({error_type}): {error}"
+    fix: "Check the network connection and the AOI WKT, then retry. CMR status: https://status.earthdata.nasa.gov"
+  SEL-SEARCH-06:
+    cause: "Perpendicular baseline unavailable for {n_missing} dates (no state vectors or not in the stack): {dates}"
+    fix: "Those dates are skipped by SEL-06. Put precise orbit (POEORB) EOF files in orbit_dir and recompute with method='orbit'."
+  SEL-SEARCH-07:
+    cause: "Could not read the AOI file ({path}): {error}"
+    fix: "Provide GeoJSON (Feature/FeatureCollection/Geometry, WGS84 lon/lat) or a WKT POLYGON text file."
+  SEL-SEARCH-08:
+    cause: "{n_orbit} dates had no baseline from the asf_search stack API and were computed from orbit state vectors (source: {source})."
+    fix: "Self-computed values were validated against the stack API to within 1 m (ADR-0011). Recompute with method='asf' if you need confirmation."
+  aoi:
+    invalid: "Cannot parse the AOI file: {error}"
+    empty: "The AOI geometry is empty: {path}"
+    unsupported: "Unsupported AOI geometry type: {geom_type}"
+  metadata:
+    unknown_platform: "Unknown platform value: {value}"
+    unknown_mode: "Unknown beam mode value: {value}"
+    no_product_entry: "No {subswath}/{polarization} product entry in the burst metadata XML: {path}"
+    bad_xml: "Cannot read XML ({path}): {error}"
+  baseline:
+    method_unknown: "Unknown baseline method: {method} (asf | orbit | auto)"
+    no_state_vectors: "No state vectors, cannot compute a baseline: {granule}"
+    no_zero_doppler: "No zero-Doppler time found inside the orbit arc: {granule}"
+    too_few_state_vectors: "Fewer than two state vectors ({n})"
+  candidates:
+    saved: "Saved candidates: {path} ({n_records} records)"
+    bad_file: "Malformed candidates.json ({path}): {error}"

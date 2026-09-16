@@ -1,0 +1,33 @@
+# S 사이트의 합성 버전 (플랜 §5.9 / §6.3 항목 5): 네트워크 없이 매 PR에서 실행되는 회귀 감지용.
+# fake engine, 6 dates x 96x96 픽셀 — 이 머신 클래스에서 60초 이내를 목표로 한다 (max_wall_time_s).
+name: S_synthetic
+size: S
+description: "Synthetic S site (CI): fake engine end-to-end, 6 dates, 96x96 px, 3 repeats"
+synthetic: true
+network: false
+runner: pipeline
+repeats: 3
+max_wall_time_s: 60
+config:
+  engine:
+    interferogram: fake
+  timeseries:
+    engine: fake
+  unwrap:
+    method: auto
+    coherence_threshold: 0.3
+  compute:
+    cores: 2
+    memory_gb: 4
+param_overrides:
+  interferogram:
+    n_dates: 6
+    shape: [96, 96]
+    atmosphere_std_rad: 0.3
+    coherence_base: 0.8
+    water_fraction: 0.05
+stages: [fetch, coregister, interferogram, multilook, unwrap, timeseries, corrections, geocode]
+metrics: [closure_rms, unwrap_error_fraction]
+regression_threshold: 0.15
+notes:
+  purpose: "CI regression gate; compare with the committed baseline via --compare"

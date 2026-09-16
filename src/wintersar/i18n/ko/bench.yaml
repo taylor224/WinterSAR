@@ -1,0 +1,51 @@
+# bench 모듈 메시지 (플랜 §5.9 / §6.3). 진단은 원인 → 조치 순서.
+bench:
+  run:
+    start: "벤치마크 시작: 사이트 {site} ({size}) · 반복 {repeats}회 · 실행기 {runner}"
+    repeat_done: "반복 {i}/{n} 완료: {wall_time_s:.1f}초 · peak RSS {peak_rss_gb:.2f} GB"
+    done: "벤치마크 결과 저장: {path}"
+    git: "git {git_sha} · wintersar {version}"
+  table:
+    title: "단계별 측정값 (반복 {repeats}회 중앙값)"
+    stage: "단계"
+    wall: "wall (초)"
+    cpu: "CPU (초)"
+    rss: "peak RSS (GB)"
+    disk: "디스크 피크 (GB)"
+    net: "네트워크 (MB)"
+    metric: "지표"
+    before: "기준선"
+    after: "현재"
+    delta: "변화"
+    total: "합계"
+  metrics:
+    closure_rms: "폐합 위상 RMS (rad)"
+    unwrap_error_fraction: "언래핑 오류 비율"
+    gt_rmse: "대조군 RMSE (m)"
+  compare:
+    title: "기준선 대비 비교 (회귀 임계 {threshold:.0f}%)"
+    baseline: "기준선: {site} · git {git_sha} · {created_at}"
+    current: "현재: {site} · git {git_sha} · {created_at}"
+    ok: "회귀 없음: 모든 단계의 wall time이 기준선 대비 +{threshold:.0f}% 이내입니다."
+    regressions: "회귀 {n}건: {stages}"
+  BENCH-001:
+    cause: "'{stage}' 단계가 기준선보다 {pct:.0f}% 느립니다 ({before:.2f}초 → {after:.2f}초, 임계 {threshold:.0f}%)."
+    fix: "해당 단계의 최근 변경을 확인하고 같은 머신에서 재실행해 잡음을 배제하세요. 의도한 변경이면 기준선 bench_result.json을 갱신하세요."
+  BENCH-002:
+    cause: "사이트 '{site}'는 network: true 이지만 네트워크 실행이 허용되지 않았습니다."
+    fix: "실데이터 사이트는 '--allow-network'로 실행하세요. CI에서는 합성 사이트(S_synthetic.yaml)만 사용합니다."
+  BENCH-003:
+    cause: "기준선 파일 {path}을(를) 읽을 수 없습니다 ({error})."
+    fix: "'wintersar bench --site ... --out baseline.json'으로 기준선을 먼저 만들고 그 경로를 --compare에 넘기세요."
+  BENCH-004:
+    cause: "사이트 정의 '{site}'에 채워지지 않은 자리표시자 또는 오류가 있습니다: {placeholders}"
+    fix: "benchmarks/sites/*.yaml 템플릿을 복사해 AOI GeoJSON 경로·기간·대조군 CSV 경로를 채운 뒤 실행하세요."
+  BENCH-005:
+    cause: "사이트 '{site}' 반복 {repeat}회차가 '{stage}' 단계에서 실패했습니다: {error}"
+    fix: "작업 디렉터리의 로그를 'wintersar diagnose'로 분석하세요. --workdir를 지정하면 실행 디렉터리가 보존됩니다."
+  BENCH-006:
+    cause: "지표 '{metric}'을(를) 사이트 '{site}'에서 계산할 수 없습니다 (입력 산출물 또는 대조군 없음)."
+    fix: "unwrap_error_fraction은 합성 사이트(진실 위상 포함)에서만, gt_rmse는 ground_truth CSV가 있을 때만 계산됩니다. 필요 없으면 site.metrics에서 제거하세요."
+  BENCH-007:
+    cause: "사이트 '{site}'의 총 wall time {wall_time_s:.1f}초가 예산 {budget_s:.0f}초를 넘었습니다."
+    fix: "CI 사이트는 n_dates·shape를 줄이거나 max_wall_time_s를 조정하세요."

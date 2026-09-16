@@ -1,0 +1,77 @@
+# SNAPHU failure knowledge base (plan §5.5, ADR-0035).
+# Patterns are copied from the SNAPHU C sources vendored by snaphu-py
+# (submodule ext/snaphu -> https://github.com/gmgunter/snaphu, src/*.c).
+# Parameter names in fix texts / retry hints follow snaphu-py's unwrap() keyword arguments
+# (https://github.com/isce-framework/snaphu-py/blob/main/src/snaphu/_unwrap.py) and the
+# SNAPHU command line help text in src/snaphu.h (OPTIONSHELPFULL).
+
+- id: KB-SNAPHU-001
+  engine: snaphu
+  stage: unwrap
+  pattern: 'Exceeded maximum number of secondary nodes|Decrease TILECOSTTHRESH and/or increase MINREGIONSIZE'
+  severity: FAIL
+  cause:
+    ko: "SNAPHU 타일 모드에서 타일을 조립할 때 신뢰 영역(secondary network) 노드 수가 내부 한도를 넘었습니다. TILECOSTTHRESH가 높아 신뢰 영역이 지나치게 잘게 나뉘었거나 MINREGIONSIZE가 너무 작습니다."
+    en: "While assembling tiles, SNAPHU exceeded its internal limit on secondary-network nodes: the reliable regions are split too finely because TILECOSTTHRESH is too high and/or MINREGIONSIZE is too small."
+  fix:
+    ko: "TILECOSTTHRESH를 낮추고(예: 기본 500 → 250) MINREGIONSIZE를 높인 뒤(예: 기본 100 → 200) 언래핑을 다시 실행하세요. snaphu-py에서는 tile_cost_thresh / min_region_size 인자입니다. 타일 임시 디렉터리(--tiledir)가 남아 있으면 'snaphu --assemble'로 조립 단계만 다시 실행할 수 있습니다."
+    en: "Lower TILECOSTTHRESH (e.g. default 500 -> 250) and raise MINREGIONSIZE (e.g. default 100 -> 200), then rerun unwrapping. In snaphu-py these are the tile_cost_thresh / min_region_size arguments. If the tile scratch directory (--tiledir) still exists, 'snaphu --assemble' reruns only the assembly step."
+  refs:
+    - "https://github.com/gmgunter/snaphu/blob/main/src/snaphu_tile.c"
+    - "https://github.com/gmgunter/snaphu/blob/main/src/snaphu.h"
+    - "https://github.com/isce-framework/snaphu-py/blob/main/src/snaphu/_unwrap.py"
+  retry_hint:
+    stage: unwrap
+    action: retry
+    params: {tile_cost_thresh: 250, min_region_size: 200}
+    note: "Direction (decrease TILECOSTTHRESH, increase MINREGIONSIZE) is the SNAPHU source message; the magnitudes halve/double the SNAPHU defaults (DEF_TILECOSTTHRESH 500, DEF_MINREGIONSIZE 100 in snaphu.h) and are not measured."
+  pattern_verified: true
+  pattern_source: "https://github.com/gmgunter/snaphu/blob/main/src/snaphu_tile.c (TraceRegions: \"Exceeded maximum number of secondary nodes\\nDecrease TILECOSTTHRESH and/or increase MINREGIONSIZE\\n\")"
+
+- id: KB-SNAPHU-002
+  engine: snaphu
+  stage: unwrap
+  pattern: 'Out of memory|Unexpected or abnormal exit of child process'
+  supersedes: [KB-ENV-002]
+  severity: FAIL
+  cause:
+    ko: "SNAPHU가 메모리를 확보하지 못했습니다(malloc 실패 'Out of memory', 또는 타일 자식 프로세스가 OOM killer에 의해 종료됨). 단일 타일 메모리는 픽셀 수에 비례하므로 간섭도가 크거나 병렬 타일 수가 많으면 발생합니다."
+    en: "SNAPHU could not allocate memory (malloc failed with 'Out of memory', or a tile child process was killed by the OOM killer). Single-tile memory grows with the number of pixels, so large interferograms or too many parallel tiles trigger this."
+  fix:
+    ko: "타일 모드로 전환하거나 타일 수를 늘리고(--tile <nrow> <ncol> <rowovrlp> <colovrlp>, snaphu-py의 ntiles / tile_overlap) 동시 실행 프로세스 수(--nproc, nproc)를 줄이세요. 수역·저코히어런스 마스크로 노드 수를 줄이거나 멀티룩 배율을 높여 픽셀 수를 줄이는 것도 도움이 됩니다. wintersar unwrap 스케줄러는 unwrap.memory_mb_per_mpixel 값으로 타일 수를 자동 결정합니다."
+    en: "Switch to tile mode or increase the number of tiles (--tile <nrow> <ncol> <rowovrlp> <colovrlp>; ntiles / tile_overlap in snaphu-py) and reduce the number of concurrent processes (--nproc, nproc). Masking water / low-coherence pixels or increasing the multilook factor also reduces the node count. The wintersar unwrap scheduler derives the tile count from unwrap.memory_mb_per_mpixel."
+  refs:
+    - "https://github.com/gmgunter/snaphu/blob/main/src/snaphu_util.c"
+    - "https://github.com/gmgunter/snaphu/blob/main/src/snaphu.c"
+    - "https://github.com/isce-framework/snaphu-py/blob/main/src/snaphu/_unwrap.py"
+    - "https://github.com/torvalds/linux/blob/master/mm/oom_kill.c"
+  retry_hint:
+    stage: unwrap
+    action: tile
+    params: {ntiles: [2, 2], tile_overlap: 200, nproc: 1}
+    note: "Doubling tiles in both directions and serialising tiles is a heuristic; tile_overlap 200 px is the config default unwrap.tiles.min_overlap_px (open question #9)."
+  pattern_verified: true
+  pattern_source: "https://github.com/gmgunter/snaphu/blob/main/src/snaphu_util.c (MAlloc/CAlloc/ReAlloc: \"Out of memory\\n\"); src/snaphu.c (Unwrap: \"Unexpected or abnormal exit of child process %ld\\nAbort\\n\"); "
+
+- id: KB-SNAPHU-003
+  engine: snaphu
+  stage: unwrap
+  pattern: 'tiles too small or overlap too large for given input|minimum region size too large for given tile parameters|Minimum region size cannot exceed tile size'
+  severity: FAIL
+  cause:
+    ko: "타일 파라미터가 입력 크기와 맞지 않습니다: 타일이 너무 작거나 오버랩이 너무 커서 유효 타일 영역이 남지 않거나, MINREGIONSIZE가 타일 크기보다 큽니다."
+    en: "The tile parameters do not fit the input: the tiles are too small or the overlap too large to leave a valid tile interior, or MINREGIONSIZE exceeds the tile size."
+  fix:
+    ko: "타일 수(NTILEROW/NTILECOL, snaphu-py ntiles)를 줄이거나 오버랩(ROWOVRLP/COLOVRLP, tile_overlap)을 타일 크기보다 훨씬 작게 잡고, MINREGIONSIZE(min_region_size, 기본 100)를 타일 픽셀 수보다 작게 설정하세요. 간섭도 크기가 작으면 단일 타일(1x1)로 실행하는 것이 안전합니다."
+    en: "Reduce the number of tiles (NTILEROW/NTILECOL; ntiles in snaphu-py) or make the overlap (ROWOVRLP/COLOVRLP; tile_overlap) much smaller than the tile size, and keep MINREGIONSIZE (min_region_size, default 100) below the number of pixels per tile. For small interferograms a single tile (1x1) is the safe choice."
+  refs:
+    - "https://github.com/gmgunter/snaphu/blob/main/src/snaphu_io.c"
+    - "https://github.com/gmgunter/snaphu/blob/main/src/snaphu_tile.c"
+    - "https://github.com/isce-framework/snaphu-py/blob/main/src/snaphu/_unwrap.py"
+  retry_hint:
+    stage: unwrap
+    action: adjust_tiles
+    params: {min_region_size: 100}
+    note: "Recompute ntiles/tile_overlap from the image size before retrying; min_region_size 100 is DEF_MINREGIONSIZE in snaphu.h."
+  pattern_verified: true
+  pattern_source: "https://github.com/gmgunter/snaphu/blob/main/src/snaphu_io.c (CheckParams: \"tiles too small or overlap too large for given input\\n\", \"minimum region size too large for given tile parameters\\n\"); src/snaphu_tile.c (SetupTile/GrowConnCompsMask: \"Minimum region size cannot exceed tile size\\nAbort\\n\")"

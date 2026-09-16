@@ -1,0 +1,41 @@
+# Unwrap engine adapters (snaphu · tophu · spurt). Diagnostics are ordered cause → fix.
+engines_unwrap:
+  UNW-001:
+    cause: "Engine '{engine}' cannot run stage '{stage}' (supported stages: {stages})."
+    fix: "Check the pipeline's engine assignment; unwrap engines are only used for the 'unwrap' stage."
+  UNW-002:
+    cause: "Engine '{engine}' has no 'igrams' input artifact (inputs received: {inputs})."
+    fix: "Run the interferogram/multilook stage first, or pass an igrams.npz (wrapped, coherence, mask, pairs, dates) under the name 'igrams'."
+  UNW-003:
+    cause: "{engine} exited with status {returncode} (log: {log})."
+    fix: "Analyse the log with 'wintersar diagnose {log}'. Out of memory: increase the tile grid (rows·cols). 'secondary arcs' exceeded: lower tile_cost_thresh or raise min_region_size, then re-assemble with assemble_only."
+  UNW-004:
+    cause: "snaphu-py does not support cost='{cost}' (only defo and smooth) and no SNAPHU executable was found."
+    fix: "Set unwrap.cost to defo or smooth, or install a SNAPHU 2.0.x executable and point WINTERSAR_SNAPHU_EXE (or the snaphu_executable parameter) at it."
+  UNW-005:
+    cause: "assemble-only (ASSEMBLEONLY) needs the tile directory of a previous tiled run, but '{tile_dir}' does not exist."
+    fix: "Run once in tile mode (keep_tile_dir=true, backend=subprocess) and pass the tile_dir value from stats.json as the tile_dir parameter."
+  UNW-006:
+    cause: "Requested tile overlap {requested} px is not smaller than the tile size {tile} px; reduced to {capped} px."
+    fix: "Lower tiles.min_overlap_px or use fewer tiles (rows·cols); the overlap must be smaller than one tile side."
+  UNW-007:
+    cause: "nlooks (equivalent number of looks) was not given; using the default {nlooks}. For multilooked data the coherence statistics costs will be inaccurate."
+    fix: "Pass nlooks (e.g. range looks × azimuth looks) or looks=[rg, az] in the unwrap parameters."
+  UNW-008:
+    cause: "The largest connected-component label {max_label} exceeds 255; unw.npz stores conncomp as uint8, so labels are truncated."
+    fix: "Raise min_conncomp_frac to reduce the number of components, or use the conncomp information in stats.json when exact labels matter."
+  UNW-009:
+    cause: "Engine '{engine}' is a stack (3-D, space–time) unwrapper and does not unwrap single interferograms in 2-D."
+    fix: "Set unwrap.method to snaphu or tophu, or pass a phase-linked stack directory as the 'phase_linked_stack' artifact and call run('unwrap')."
+  UNW-010:
+    cause: "spurt input directory is missing or has the wrong layout: {path} (expected per-date *.int.tif plus temporal_coherence.tif)."
+    fix: "Pass a phase-linking output directory (e.g. from dolphin) as the 'phase_linked_stack' (kind=dir) artifact."
+  UNW-011:
+    cause: "tophu unwrap_func '{name}' is not available (choices: {available})."
+    fix: "Set tophu_unwrap_func to one of auto, snaphu, icu or phass, or install snaphu-py and choose snaphu-py."
+  UNW-012:
+    cause: "{engine} output file '{path}' has an unexpected size (expected {expected} bytes, got {actual} bytes)."
+    fix: "Check the SNAPHU LOGFILE and stderr. An empty output usually means a LINELENGTH/file-format mismatch or a run that was killed mid-way."
+  UNW-013:
+    cause: "snaphu-py is not installed; using the SNAPHU executable {path} (version {version}) through a subprocess."
+    fix: "Tiles, parallelism and masks are passed via the generated configuration file, so this is fine. For the Python API path install snaphu-py with 'conda install -c conda-forge snaphu'."

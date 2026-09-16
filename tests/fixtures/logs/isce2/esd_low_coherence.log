@@ -1,0 +1,8 @@
+wintersar engines.isce2_topsstack: run_files/run_08_estimate_azimuth_misreg (pair 20240101_20240113)
+estimateAzimuthMisreg.py -i /home/user/work/isce/ESD/20240101_20240113 -o /home/user/work/isce/misreg/azimuth/pairs/20240101_20240113/20240101_20240113.txt -t 0.85
+Traceback (most recent call last):
+  File "/home/user/tools/isce2/contrib/stack/topsStack/estimateAzimuthMisreg.py", line 141, in <module>
+    main()
+  File "/home/user/tools/isce2/contrib/stack/topsStack/estimateAzimuthMisreg.py", line 129, in main
+    raise Exception('Coherence threshold too strict. No points left for reliable ESD estimate')
+Exception: Coherence threshold too strict. No points left for reliable ESD estimate

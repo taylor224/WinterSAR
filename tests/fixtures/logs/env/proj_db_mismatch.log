@@ -1,0 +1,6 @@
+wintersar geocode: writing /home/user/work/geocode/velocity.tif (EPSG:32652)
+ERROR 1: PROJ: proj_create_from_database: /home/user/miniconda3/envs/insar/share/proj/proj.db lacks DATABASE.LAYOUT.VERSION.MAJOR / DATABASE.LAYOUT.VERSION.MINOR metadata. It comes from another PROJ installation.
+Traceback (most recent call last):
+  File "/home/user/work/wintersar/src/wintersar/io/formats.py", line 88, in write_cog
+    with rasterio.open(path, "w", **profile) as dst:
+RuntimeError: PROJ: proj_create_from_database: /home/user/miniconda3/envs/insar/share/proj/proj.db lacks DATABASE.LAYOUT.VERSION.MAJOR / DATABASE.LAYOUT.VERSION.MINOR metadata. It comes from another PROJ installation.

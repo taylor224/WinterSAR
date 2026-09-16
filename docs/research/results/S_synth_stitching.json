@@ -1,0 +1,571 @@
+{
+  "name": "S_synth_stitching",
+  "kind": "stitching",
+  "status": "ok",
+  "reason": null,
+  "missing": [],
+  "metrics": [
+    "offsets_exact",
+    "n_wrong_offsets",
+    "seam_boundaries_with_jump",
+    "seam_jump_pixels",
+    "unwrap_error_fraction",
+    "wall_s",
+    "peak_rss_mb"
+  ],
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "experiment": {
+    "name": "S_synth_stitching",
+    "kind": "stitching",
+    "description": "3x3 tiles (overlap 16 px) of a 144x144 synthetic interferogram (Gaussian bowl + 1 rad turbulent atmosphere), each tile shifted by a random integer number of cycles in [-3, 3] and perturbed with 0.3 rad Gaussian noise. coarse_ref uses the block mean of the true phase at factor 3 plus 0.5 rad noise as the low-resolution reference; overlap_consensus uses the synthetic coherence as weights.",
+    "requires": [],
+    "factor": 3,
+    "seeds": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "data": {
+      "shape": [
+        144,
+        144
+      ],
+      "rows": 3,
+      "cols": 3,
+      "overlap": 16,
+      "max_offset_cycles": 3,
+      "noise_std_rad": 0.3,
+      "ref_noise_std_rad": 0.5,
+      "atmosphere_std_rad": 1.0,
+      "coherence_base": 0.8
+    },
+    "methods": [
+      {
+        "name": "coarse_ref",
+        "params": {},
+        "label": null
+      },
+      {
+        "name": "coarse_ref",
+        "params": {
+          "ref_stat": "median"
+        },
+        "label": "coarse_ref(median)"
+      },
+      {
+        "name": "overlap_consensus",
+        "params": {},
+        "label": null
+      },
+      {
+        "name": "overlap_consensus",
+        "params": {
+          "consensus": "median"
+        },
+        "label": "overlap_consensus(median)"
+      }
+    ],
+    "metrics": [
+      "offsets_exact",
+      "n_wrong_offsets",
+      "seam_boundaries_with_jump",
+      "seam_jump_pixels",
+      "unwrap_error_fraction",
+      "wall_s",
+      "peak_rss_mb"
+    ],
+    "protocol": null,
+    "path": "~/Documents/develop/winterSARS/src/wintersar/research/experiments/S_synth_stitching.yaml",
+    "ids": [
+      "R-06",
+      "R-07",
+      "PERF-04"
+    ]
+  },
+  "environment": {
+    "wintersar": "0.1.0.dev0",
+    "python": "3.11.7",
+    "numpy": "2.4.6",
+    "os": "Darwin 25.4.0 (arm64)",
+    "timestamp": "2026-09-16T14:11:18+00:00"
+  },
+  "rows": [
+    {
+      "method": "coarse_ref",
+      "seed": 0,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.005722292000427842,
+      "cpu_s": 0.005723000000000034,
+      "peak_rss_mb": 57.212928
+    },
+    {
+      "method": "coarse_ref(median)",
+      "seed": 0,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.001271166984224692,
+      "cpu_s": 0.0012719999999999954,
+      "peak_rss_mb": 58.441728
+    },
+    {
+      "method": "overlap_consensus",
+      "seed": 0,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.0012824170116800815,
+      "cpu_s": 0.0012829999999999786,
+      "peak_rss_mb": 58.621952
+    },
+    {
+      "method": "overlap_consensus(median)",
+      "seed": 0,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.0010661249980330467,
+      "cpu_s": 0.0010669999999999846,
+      "peak_rss_mb": 58.671104
+    },
+    {
+      "method": "coarse_ref",
+      "seed": 1,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.0008201249875128269,
+      "cpu_s": 0.0008199999999999874,
+      "peak_rss_mb": 58.687488
+    },
+    {
+      "method": "coarse_ref(median)",
+      "seed": 1,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.0010791660170070827,
+      "cpu_s": 0.0010799999999999699,
+      "peak_rss_mb": 58.687488
+    },
+    {
+      "method": "overlap_consensus",
+      "seed": 1,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.001108333992306143,
+      "cpu_s": 0.0011090000000000266,
+      "peak_rss_mb": 58.687488
+    },
+    {
+      "method": "overlap_consensus(median)",
+      "seed": 1,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.0009225420071743429,
+      "cpu_s": 0.0009230000000000071,
+      "peak_rss_mb": 58.687488
+    },
+    {
+      "method": "coarse_ref",
+      "seed": 2,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.000666000007186085,
+      "cpu_s": 0.0006649999999999712,
+      "peak_rss_mb": 58.703872
+    },
+    {
+      "method": "coarse_ref(median)",
+      "seed": 2,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.0009858330013230443,
+      "cpu_s": 0.0009859999999999869,
+      "peak_rss_mb": 58.703872
+    },
+    {
+      "method": "overlap_consensus",
+      "seed": 2,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.0010262910218443722,
+      "cpu_s": 0.0010259999999999714,
+      "peak_rss_mb": 58.703872
+    },
+    {
+      "method": "overlap_consensus(median)",
+      "seed": 2,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.0008992920047603548,
+      "cpu_s": 0.0008999999999999564,
+      "peak_rss_mb": 58.73664
+    },
+    {
+      "method": "coarse_ref",
+      "seed": 3,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.0008406249980907887,
+      "cpu_s": 0.0008409999999999807,
+      "peak_rss_mb": 58.73664
+    },
+    {
+      "method": "coarse_ref(median)",
+      "seed": 3,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.0010171250032726675,
+      "cpu_s": 0.0010169999999999901,
+      "peak_rss_mb": 58.73664
+    },
+    {
+      "method": "overlap_consensus",
+      "seed": 3,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.0010630000033415854,
+      "cpu_s": 0.0010630000000000361,
+      "peak_rss_mb": 58.73664
+    },
+    {
+      "method": "overlap_consensus(median)",
+      "seed": 3,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.0009080830204766244,
+      "cpu_s": 0.0009080000000000199,
+      "peak_rss_mb": 58.73664
+    },
+    {
+      "method": "coarse_ref",
+      "seed": 4,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.0006831249920651317,
+      "cpu_s": 0.0006840000000000179,
+      "peak_rss_mb": 58.73664
+    },
+    {
+      "method": "coarse_ref(median)",
+      "seed": 4,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.0009714170009829104,
+      "cpu_s": 0.0009709999999999996,
+      "peak_rss_mb": 58.73664
+    },
+    {
+      "method": "overlap_consensus",
+      "seed": 4,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.0010195829963777214,
+      "cpu_s": 0.0010189999999999921,
+      "peak_rss_mb": 58.73664
+    },
+    {
+      "method": "overlap_consensus(median)",
+      "seed": 4,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.0008974999946076423,
+      "cpu_s": 0.0008969999999999811,
+      "peak_rss_mb": 58.73664
+    }
+  ],
+  "summary": {
+    "coarse_ref": {
+      "offsets_exact": {
+        "mean": 1.0,
+        "std": 0.0,
+        "min": 1.0,
+        "max": 1.0,
+        "n": 5.0
+      },
+      "n_wrong_offsets": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "n": 5.0
+      },
+      "seam_boundaries_with_jump": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "n": 5.0
+      },
+      "seam_jump_pixels": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "n": 5.0
+      },
+      "unwrap_error_fraction": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "n": 5.0
+      },
+      "wall_s": {
+        "mean": 0.001746433397056535,
+        "std": 0.0022239575554235647,
+        "min": 0.000666000007186085,
+        "max": 0.005722292000427842,
+        "n": 5.0
+      },
+      "peak_rss_mb": {
+        "mean": 58.4155136,
+        "std": 0.6726026122435159,
+        "min": 57.212928,
+        "max": 58.73664,
+        "n": 5.0
+      }
+    },
+    "coarse_ref(median)": {
+      "offsets_exact": {
+        "mean": 1.0,
+        "std": 0.0,
+        "min": 1.0,
+        "max": 1.0,
+        "n": 5.0
+      },
+      "n_wrong_offsets": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "n": 5.0
+      },
+      "seam_boundaries_with_jump": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "n": 5.0
+      },
+      "seam_jump_pixels": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "n": 5.0
+      },
+      "unwrap_error_fraction": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "n": 5.0
+      },
+      "wall_s": {
+        "mean": 0.0010649416013620793,
+        "std": 0.00012249764392258388,
+        "min": 0.0009714170009829104,
+        "max": 0.001271166984224692,
+        "n": 5.0
+      },
+      "peak_rss_mb": {
+        "mean": 58.6612736,
+        "std": 0.12456150832741353,
+        "min": 58.441728,
+        "max": 58.73664,
+        "n": 5.0
+      }
+    },
+    "overlap_consensus": {
+      "offsets_exact": {
+        "mean": 1.0,
+        "std": 0.0,
+        "min": 1.0,
+        "max": 1.0,
+        "n": 5.0
+      },
+      "n_wrong_offsets": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "n": 5.0
+      },
+      "seam_boundaries_with_jump": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "n": 5.0
+      },
+      "seam_jump_pixels": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "n": 5.0
+      },
+      "unwrap_error_fraction": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "n": 5.0
+      },
+      "wall_s": {
+        "mean": 0.0010999250051099807,
+        "std": 0.00010795172664429372,
+        "min": 0.0010195829963777214,
+        "max": 0.0012824170116800815,
+        "n": 5.0
+      },
+      "peak_rss_mb": {
+        "mean": 58.69731839999999,
+        "std": 0.0472018462011818,
+        "min": 58.621952,
+        "max": 58.73664,
+        "n": 5.0
+      }
+    },
+    "overlap_consensus(median)": {
+      "offsets_exact": {
+        "mean": 1.0,
+        "std": 0.0,
+        "min": 1.0,
+        "max": 1.0,
+        "n": 5.0
+      },
+      "n_wrong_offsets": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "n": 5.0
+      },
+      "seam_boundaries_with_jump": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "n": 5.0
+      },
+      "seam_jump_pixels": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "n": 5.0
+      },
+      "unwrap_error_fraction": {
+        "mean": 0.0,
+        "std": 0.0,
+        "min": 0.0,
+        "max": 0.0,
+        "n": 5.0
+      },
+      "wall_s": {
+        "mean": 0.0009387084050104022,
+        "std": 7.191321240030924e-05,
+        "min": 0.0008974999946076423,
+        "max": 0.0010661249980330467,
+        "n": 5.0
+      },
+      "peak_rss_mb": {
+        "mean": 58.7137024,
+        "std": 0.031938295709070426,
+        "min": 58.671104,
+        "max": 58.73664,
+        "n": 5.0
+      }
+    }
+  },
+  "json_path": "/private/tmp/claude-501/-Users-taylor-Documents-develop-winterSARS/7f6e0840-b238-4f4e-8582-8e87442709ba/scratchpad/results/S_synth_stitching.json",
+  "md_path": "/private/tmp/claude-501/-Users-taylor-Documents-develop-winterSARS/7f6e0840-b238-4f4e-8582-8e87442709ba/scratchpad/results/S_synth_stitching.md",
+  "docs_md_path": null
+}

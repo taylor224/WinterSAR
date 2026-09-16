@@ -105,7 +105,9 @@ def save_igram_stack(stack: IgramStack, path: Path) -> Path:
     if stack.unw is not None:
         arrays["unw"] = np.asarray(stack.unw, dtype=np.float32)
     if stack.conncomp is not None:
-        arrays["conncomp"] = np.asarray(stack.conncomp, dtype=np.uint8)
+        cc = np.asarray(stack.conncomp)
+        # SNAPHU/tophu labels are uint32; keep integer dtypes, only coerce bool/float to uint8
+        arrays["conncomp"] = cc if cc.dtype.kind in "iu" else cc.astype(np.uint8)
     for k, v in stack.truth.items():
         arrays[k] = v
     path.parent.mkdir(parents=True, exist_ok=True)

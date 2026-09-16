@@ -1,0 +1,41 @@
+# 언래핑 엔진 어댑터(snaphu · tophu · spurt) 메시지. 진단 문구는 원인(cause) → 조치(fix) 순서.
+engines_unwrap:
+  UNW-001:
+    cause: "엔진 '{engine}'은(는) 단계 '{stage}'를 실행할 수 없습니다 (지원 단계: {stages})."
+    fix: "파이프라인의 엔진 배정을 확인하세요. 언래핑 엔진은 'unwrap' 단계에서만 사용합니다."
+  UNW-002:
+    cause: "엔진 '{engine}'의 언래핑 입력 아티팩트 'igrams'가 없습니다 (받은 입력: {inputs})."
+    fix: "interferogram/multilook 단계를 먼저 실행하거나 igrams.npz(wrapped·coherence·mask·pairs·dates)를 'igrams' 이름으로 넘기세요."
+  UNW-003:
+    cause: "{engine} 실행이 종료 코드 {returncode}로 실패했습니다 (로그: {log})."
+    fix: "'wintersar diagnose {log}'로 로그를 분석하세요. 메모리 부족이면 타일 수(rows·cols)를 늘리고, 보조 arc 초과(secondary arcs)면 tile_cost_thresh를 낮추거나 min_region_size를 높인 뒤 assemble_only로 조립만 다시 하세요."
+  UNW-004:
+    cause: "snaphu-py는 cost='{cost}'를 지원하지 않고(defo·smooth만 가능), SNAPHU 실행 파일도 찾지 못했습니다."
+    fix: "unwrap.cost를 defo 또는 smooth로 바꾸거나, SNAPHU 2.0.x 실행 파일을 설치한 뒤 환경변수 WINTERSAR_SNAPHU_EXE 또는 파라미터 snaphu_executable로 경로를 지정하세요."
+  UNW-005:
+    cause: "assemble-only(ASSEMBLEONLY) 모드에는 이전 타일 실행의 디렉터리가 필요하지만 '{tile_dir}'이(가) 없습니다."
+    fix: "먼저 타일 모드(keep_tile_dir=true, backend=subprocess)로 실행한 뒤 stats.json의 tile_dir 값을 tile_dir 파라미터로 넘기세요."
+  UNW-006:
+    cause: "요청한 타일 오버랩 {requested} px이 타일 크기 {tile} px 이상이어서 {capped} px로 줄였습니다."
+    fix: "tiles.min_overlap_px를 줄이거나 타일 수(rows·cols)를 줄이세요. 오버랩은 타일 한 변보다 작아야 합니다."
+  UNW-007:
+    cause: "nlooks(등가 룩 수)가 지정되지 않아 기본값 {nlooks}을(를) 사용합니다. 멀티룩 데이터라면 코히어런스 통계 비용이 부정확해집니다."
+    fix: "unwrap 파라미터에 nlooks(예: 거리 룩 × 방위 룩) 또는 looks=[rg, az]를 넘기세요."
+  UNW-008:
+    cause: "연결 성분 라벨 최댓값 {max_label}이(가) 255를 넘어 unw.npz에는 uint8로 저장되면서 라벨이 잘립니다."
+    fix: "min_conncomp_frac를 높여 성분 수를 줄이거나, 정확한 라벨이 필요하면 stats.json의 conncomp 정보를 참고하세요."
+  UNW-009:
+    cause: "엔진 '{engine}'은(는) 스택(3D, 시공간) 언래퍼라 간섭도 한 장 단위의 2D 언래핑을 지원하지 않습니다."
+    fix: "unwrap.method를 snaphu 또는 tophu로 바꾸거나, phase-linked 스택 디렉터리를 'phase_linked_stack' 아티팩트로 넘겨 run('unwrap')을 호출하세요."
+  UNW-010:
+    cause: "spurt 입력 디렉터리가 없거나 형식이 다릅니다: {path} (필요: 날짜별 *.int.tif + temporal_coherence.tif)."
+    fix: "dolphin 등 phase linking 결과 디렉터리를 'phase_linked_stack'(kind=dir) 아티팩트로 넘기세요."
+  UNW-011:
+    cause: "tophu unwrap_func '{name}'을(를) 사용할 수 없습니다 (선택 가능: {available})."
+    fix: "tophu_unwrap_func를 auto·snaphu·icu·phass 중 하나로 바꾸거나, snaphu-py를 설치한 뒤 snaphu-py를 지정하세요."
+  UNW-012:
+    cause: "{engine} 출력 파일 '{path}'의 크기가 예상({expected} bytes)과 다릅니다 (실제 {actual} bytes)."
+    fix: "SNAPHU 로그(LOGFILE)와 stderr를 확인하세요. 출력이 비어 있으면 대개 입력 LINELENGTH·파일 형식 불일치이거나 실행 도중 종료된 것입니다."
+  UNW-013:
+    cause: "snaphu-py가 설치되어 있지 않아 SNAPHU 실행 파일 {path} (버전 {version})을 subprocess로 사용합니다."
+    fix: "타일·병렬·마스크는 생성된 설정 파일로 전달되므로 그대로 사용해도 됩니다. 파이썬 API 경로를 쓰려면 'conda install -c conda-forge snaphu'로 snaphu-py를 설치하세요."

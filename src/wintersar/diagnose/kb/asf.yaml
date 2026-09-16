@@ -1,0 +1,27 @@
+# asf_search failure knowledge base (plan §5.5, ADR-0035).
+# Patterns come from the installed asf_search 14.0.0 sources
+# (.venv/lib/python3.11/site-packages/asf_search/search/search_generator.py, exceptions.py).
+
+- id: KB-ASF-001
+  engine: asf
+  stage: search
+  pattern: 'ASFSearch4xxError|ASFSearch5xxError|HTTP (?P<status>(?:40[024-9]|4[1-9]\d|5\d\d)): |Connection Error \(Timeout\): CMR took too long to respond|CMRIncompleteError'
+  extract: [status]
+  severity: FAIL
+  cause:
+    ko: "ASF/CMR 검색 API 호출이 실패했습니다(HTTP {status}). 4xx는 잘못된 질의(잘못된 WKT, 날짜 형식, 알 수 없는 키워드)이고, 5xx·타임아웃은 CMR 서버 측 문제로 보통 일시적입니다. asf_search는 5xx를 3회까지 자동 재시도한 뒤 예외를 냅니다."
+    en: "The ASF/CMR search API call failed (HTTP {status}). 4xx means a bad query (invalid WKT, date format or unknown keyword); 5xx and timeouts are CMR server-side problems and usually transient. asf_search retries 5xx up to three times before raising."
+  fix:
+    ko: "4xx: AOI GeoJSON/WKT와 time_range 를 확인하고 'wintersar search --json'의 오류 메시지를 읽으세요. 5xx/타임아웃: 잠시 후 재시도하고, 반복되면 https://status.asf.alaska.edu 를 확인하세요. 대용량 질의는 기간을 나눠 실행하세요."
+    en: "4xx: check the AOI GeoJSON/WKT and time_range and read the error text in 'wintersar search --json'. 5xx/timeout: retry after a while and check https://status.asf.alaska.edu if it persists. Split very large queries by date range."
+  refs:
+    - ".venv/lib/python3.11/site-packages/asf_search/search/search_generator.py"
+    - ".venv/lib/python3.11/site-packages/asf_search/exceptions.py"
+    - "https://docs.asf.alaska.edu/api/keywords/"
+  retry_hint:
+    stage: search
+    action: retry_later
+    params: {}
+    note: "Retry with backoff for 5xx/timeout; for 4xx fix the query first."
+  pattern_verified: true
+  pattern_source: "asf_search/search/search_generator.py (get_page: error_message = f\"HTTP {response.status_code}: {response.json()['errors']}\" -> ASFSearch4xxError / ASFSearch5xxError; 'Connection Error (Timeout): CMR took too long to respond. ...'); asf_search/exceptions.py (class names)"

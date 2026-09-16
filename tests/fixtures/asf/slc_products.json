@@ -1,0 +1,111 @@
+{
+ "_source": "asf_search 14.0.0 real S1Product response captured 2026-09-16",
+ "_query": {
+  "intersectsWith": "POLYGON((126.90 37.50,127.00 37.50,127.00 37.60,126.90 37.60,126.90 37.50))",
+  "processingLevel": "SLC",
+  "beamMode": "IW",
+  "start": "2024-01-01T00:00:00Z",
+  "end": "2024-01-15T00:00:00Z"
+ },
+ "products": [
+  {
+   "class": "S1Product",
+   "properties": {
+    "centerLat": 37.9733,
+    "centerLon": 126.4604,
+    "stopTime": "2024-01-07T09:32:54Z",
+    "fileID": "S1A_IW_SLC__1SDV_20240107T093228_20240107T093254_051999_0648A4_0C4A-SLC",
+    "flightDirection": "ASCENDING",
+    "pathNumber": 127,
+    "processingLevel": "SLC",
+    "url": "https://datapool.asf.alaska.edu/SLC/SA/S1A_IW_SLC__1SDV_20240107T093228_20240107T093254_051999_0648A4_0C4A.zip",
+    "startTime": "2024-01-07T09:32:28Z",
+    "sceneName": "S1A_IW_SLC__1SDV_20240107T093228_20240107T093254_051999_0648A4_0C4A",
+    "browse": null,
+    "platform": "Sentinel-1A",
+    "bytes": 7290351977,
+    "md5sum": "bf063ec756bb7f03879660ea9fef2b82",
+    "frameNumber": 120,
+    "granuleType": "SENTINEL_1A_FRAME",
+    "orbit": 51999,
+    "polarization": "VV+VH",
+    "processingDate": "2024-01-07T09:32:28Z",
+    "sensor": "C-SAR",
+    "groupID": "S1A_IWDV_0119_0125_051999_127",
+    "pgeVersion": "003.71",
+    "fileName": "S1A_IW_SLC__1SDV_20240107T093228_20240107T093254_051999_0648A4_0C4A.zip",
+    "beamModeType": "IW",
+    "s3Urls": [
+     "s3://asf-ngap2w-p-s1-slc-7b420b89/S1A_IW_SLC__1SDV_20240107T093228_20240107T093254_051999_0648A4_0C4A.zip"
+    ]
+   },
+   "geometry": {
+    "coordinates": [
+     [
+      [
+       124.852715,
+       38.552593
+      ],
+      [
+       125.237999,
+       36.981518
+      ],
+      [
+       128.043503,
+       37.377445
+      ],
+      [
+       127.721252,
+       38.947269
+      ],
+      [
+       124.852715,
+       38.552593
+      ]
+     ]
+    ],
+    "type": "Polygon"
+   },
+   "baseline": {
+    "stateVectors": {
+     "positions": {
+      "prePosition": [
+       -2926262.464838,
+       4859077.629839,
+       4221582.386471
+      ],
+      "prePositionTime": "2024-01-07T09:32:37Z",
+      "postPosition": [
+       -2888359.162204,
+       4829914.293175,
+       4280569.225694
+      ],
+      "postPositionTime": "2024-01-07T09:32:47Z"
+     },
+     "velocities": {
+      "preVelocity": [
+       3776.118273,
+       -2886.39004,
+       5922.634086
+      ],
+      "preVelocityTime": "2024-01-07T09:32:37Z",
+      "postVelocity": [
+       3804.45677,
+       -2946.229457,
+       5874.622892
+      ],
+      "postVelocityTime": "2024-01-07T09:32:47Z"
+     }
+    },
+    "ascendingNodeTime": "2024-01-07T09:22:27Z"
+   },
+   "meta": {
+    "concept-id": "G2832200807-ASF",
+    "native-id": "S1A_IW_SLC__1SDV_20240107T093228_20240107T093254_051999_0648A4_0C4A-SLC",
+    "collection-concept-id": "C1214470488-ASF",
+    "provider-id": "ASF"
+   },
+   "umm": null
+  }
+ ]
+}

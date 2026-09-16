@@ -1,0 +1,16 @@
+wintersar engines.mintpy: smallbaselineApp.py /home/user/work/ts/smallbaselineApp.cfg --dostep reference_point
+
+reference_point.py inputs/ifgramStack.h5 -t /home/user/work/ts/smallbaselineApp.cfg -c avgSpatialCoh.h5
+no input reference y/x.
+reference point selection method: maxCoherence
+random select pixel with coherence > 0.85
+	based on coherence file: avgSpatialCoh.h5
+Traceback (most recent call last):
+  File "/home/user/miniconda3/envs/insar/bin/smallbaselineApp.py", line 8, in <module>
+    sys.exit(main())
+  File "/home/user/miniconda3/envs/insar/lib/python3.11/site-packages/mintpy/reference_point.py", line 118, in select_max_coherence_yx
+    raise RuntimeError(msg)
+RuntimeError: No pixel with average spatial coherence > 0.85 are found for automatic reference point selection!
+Try the following:
+  1) manually specify the reference point using mintpy.reference.yx/lalo option.
+  2) change mintpy.reference.minCoherence to a lower value.

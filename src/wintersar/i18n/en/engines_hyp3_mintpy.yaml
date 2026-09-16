@@ -1,0 +1,75 @@
+# engines/hyp3 · engines/mintpy · engines/aux_cache messages (rule 11.6: cause -> fix order)
+engines:
+  hyp3:
+    HYP3-001:
+      cause: "HyP3 job failed: pair {pair} (job {job_id}). Server message: {reason}"
+      fix: "Check the HyP3 log URL ({log_url}). For orbit/DEM problems replace the date pair; for transient errors re-run the same command — only the failed pairs are resubmitted."
+    HYP3-002:
+      cause: "HyP3 product for pair {pair} is missing required files or metadata keys: {missing}"
+      fix: "Delete the product folder ({product_dir}) and re-run; only that pair is downloaded again. If it repeats, check whether the HyP3 product version changed (ADR-0020)."
+    HYP3-003:
+      cause: "HyP3 does not support looks {requested} (supported: 20x4=80 m, 10x2=40 m, 5x1=20 m). Using the closest option {used}."
+      fix: "For exact looks control switch engine.interferogram to isce2_topsstack, or set engine.target_pixel_m to 80/40/20."
+    HYP3-004:
+      cause: "The stack has {n_bursts} bursts, above the HyP3 multi-burst job limit ({max_bursts}) or with mismatched reference/secondary counts."
+      fix: "Shrink the AOI so at most {max_bursts} bursts remain, or use engine.interferogram=isce2_topsstack (local processing)."
+    HYP3-005:
+      cause: "Estimated credits {needed} exceed the remaining credits {remaining} ({n_jobs} jobs)."
+      fix: "Reduce the number of pairs (lower selection.max_temporal_baseline_days), wait for the monthly reset, or request more credits from ASF User Services (uso@asf.alaska.edu). To proceed anyway set hyp3.ignore_credits=true."
+    HYP3-006:
+      cause: "{n_pending} HyP3 jobs did not finish within {timeout_s} s (submission completed)."
+      fix: "Re-run the same command: submitted job IDs are reused and polling resumes. Increase hyp3.poll_timeout_s to wait longer."
+    HYP3-007:
+      cause: "Pair {pair}: no granule name for burst {burst_id} on {date} in candidates.json."
+      fix: "Re-run wintersar search so candidates.json carries notes.granules (date -> burst ID -> granule), or pass granules explicitly via the hyp3.jobs parameter."
+    HYP3-008:
+      cause: "Product for pair {pair} lacks recommended files: {missing}. Some time-series corrections (unwrap-error, water mask) will be limited."
+      fix: "The HyP3 product version may have changed. Compare with the file list in ADR-0020 and update the adapter's recommended-file list if needed."
+    HYP3-009:
+      cause: "{n_products} products have different geographic extents; *_clip.tif files cropped to the common extent were written (MintPy requires identical sizes)."
+      fix: "No action needed. Originals are kept; the MintPy template uses the *_clip.tif patterns."
+    HYP3-010:
+      cause: "Product folder name '{name}' does not follow the HyP3 burst InSAR naming convention."
+      fix: "MintPy prep_hyp3 detects the product type from the name pattern. Do not rename folders by hand; download again."
+    HYP3-011:
+      cause: "No interferogram pairs to submit (candidates.json pairs empty, or no granules for any pair)."
+      fix: "Check the wintersar precheck report, relax the selection thresholds (baselines) or pick another stack."
+    HYP3-012:
+      cause: "HyP3 job {job_id} for pair {pair} succeeded but its download retention has expired."
+      fix: "Re-run the same command to resubmit that pair (credits are charged again)."
+    HYP3-013:
+      cause: "The {n_products} HyP3 products have no common geographic extent (products from different bursts/tracks are mixed)."
+      fix: "Check that the candidates.json stack is one track with one burst set (wintersar precheck SEL-01/04). Delete the mixed product folders and re-run."
+    estimate: "HyP3 credit estimate: {n_jobs} jobs × {credits_per_job} = {credits} credits (looks {looks}, {n_bursts} bursts, {monthly_free} free per month)"
+    stage_note: "HyP3 performs coregistration, interferogram, multilook and unwrapping in one job, so the interferogram stage yields both igrams and unw and the local unwrap stage is skipped."
+  mintpy:
+    MP-001:
+      cause: "MintPy step '{step}' failed (exit code {returncode}). Log: {log}"
+      fix: "Read the last error lines of the log. For path errors fix the mintpy.load.* patterns; for numerical errors check the reference point (mintpy.reference.lalo) and network connectivity, then re-run with wintersar run --from timeseries."
+    MP-002:
+      cause: "MintPy was killed by an out-of-memory condition (maxMemory {max_memory_gb} GB, {num_worker} workers)."
+      fix: "Lower compute.memory_gb to the actually free RAM or reduce compute.cores (PERF-09 auto values: workers=cores-1, maxMemory=RAM×0.8). Alternative: reduce the input with mintpy.multilook.xstep/ystep."
+    MP-003:
+      cause: "MintPy load_data found no input files for pattern {pattern}"
+      fix: "Check that the interferogram stage output folder contains *_unw_phase.tif, *_corr.tif, *_dem.tif, *_lv_theta.tif and *_lv_phi.tif; otherwise re-download with wintersar run --force interferogram."
+    MP-004:
+      cause: "The MintPy work directory (mintpy_workdir artifact) required by stage '{stage}' is missing."
+      fix: "Run the timeseries stage first: wintersar run --until timeseries"
+    MP-005:
+      cause: "smallbaselineApp.py is on PATH but its version string could not be parsed: '{output}'"
+      fix: "Check that smallbaselineApp.py --version prints 'MintPy version X.Y.Z, date ...'. Supported range {constraint}."
+    MP-006:
+      cause: "Reference point is auto: MintPy picks a random high-coherence pixel, which hurts reproducibility and validation comparisons."
+      fix: "Get a recommendation with wintersar refpoint and pin timeseries.reference_point: [lat, lon] (criteria of Yunjun et al. 2019 §4.3)."
+    MP-007:
+      cause: "MintPy step '{step}' exited normally but the expected output {path} is missing."
+      fix: "Look for 'skip' messages in the step log ({log}). If MintPy decided the input was already processed, delete the work directory and re-run with wintersar run --force timeseries."
+    template_header: "MintPy template generated by wintersar. Editing it by hand desynchronises the pipeline cache (PERF-03) — edit config.yaml instead."
+  aux:
+    AUX-001:
+      cause: "Orbit file download failed: {mission} {date} — {error}"
+      fix: "Check the network and the CDSE account (~/.netrc dataspace.copernicus.eu). Otherwise retry with restituted orbits (RESORB) or use the HyP3 path (HyP3 fetches its own orbits)."
+    AUX-002:
+      cause: "Offline mode (WINTERSAR_OFFLINE) is active but the auxiliary data is not cached: {namespace}/{key}"
+      fix: "Run once online to fill the cache (~/.cache/wintersar), then re-run offline."
+    cache_hit: "Auxiliary data cache: {namespace} {n_hits} hits, {n_fetched} fetched"
