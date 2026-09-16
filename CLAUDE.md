@@ -68,3 +68,21 @@ docs/{adr,concepts,kb,tutorials,research,plan}   benchmarks/sites   qgis_plugin 
 
 Tests live in `tests/unit/<module>/test_*.py`; integration tests (fake engine, synthetic
 data, no network) in `tests/integration/`.
+
+## Working in parallel (multiple agents on this repo at once)
+
+- Use the venv binaries directly, never `uv run`/`uv sync` (they re-lock the project and
+  race with other agents): `.venv/bin/python -m pytest tests/unit/<module>`,
+  `.venv/bin/ruff check --fix <paths>`, `.venv/bin/ruff format <paths>`,
+  `.venv/bin/mypy src/wintersar/<module>`.
+- Only touch files you own (your task lists them). **Never edit** `pyproject.toml`,
+  `tests/conftest.py`, `src/wintersar/cli.py`, `src/wintersar/io/schemas.py`,
+  `src/wintersar/engines/base.py`, `src/wintersar/pipeline/config.py`,
+  `src/wintersar/i18n/ko.yaml`, `src/wintersar/i18n/en.yaml`, `CLAUDE.md`. If you need a
+  change there (new dependency, new shared model, new config field), report it in your
+  final output under "needs_from_others" and code a local workaround.
+- Module strings go in `src/wintersar/i18n/ko/<module>.yaml` and `en/<module>.yaml`
+  (same keys in both files).
+- Module fixtures go in `tests/unit/<module>/conftest.py`; the shared `make_burst` factory
+  is importable from `tests.conftest`.
+- Do not `git commit`; the integrator commits.
