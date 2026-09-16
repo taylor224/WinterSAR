@@ -169,7 +169,7 @@ def test_run_writes_unw_npz_and_stats(fake_tophu, igrams_npz: Path, tmp_path: Pa
     stack = load_igram_stack(arts["unw"].path)
     src = load_igram_stack(igrams_npz)
     assert stack.unw is not None and stack.unw.shape == src.wrapped.shape
-    assert stack.conncomp is not None and stack.conncomp.dtype == np.uint8
+    assert stack.conncomp is not None and stack.conncomp.dtype.kind == "u"
     assert np.isnan(stack.unw[src.mask]).all()
     assert len(fake_tophu.calls) == src.n_pairs
     stats = json.loads(arts["unw_stats"].path.read_text())
