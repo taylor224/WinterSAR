@@ -1,0 +1,53 @@
+# Common messages (module messages live in i18n/en/<module>.yaml)
+common:
+  severity:
+    FAIL: "FAIL"
+    WARN: "WARN"
+    INFO: "INFO"
+  cause: "Cause"
+  fix: "Fix"
+  refs: "References"
+  none: "none"
+  yes: "yes"
+  no: "no"
+  stage: "stage"
+  cached: "cached"
+  will_run: "will run"
+  unknown: "unknown"
+
+cli:
+  done: "Done: {what}"
+  wrote: "Wrote: {path}"
+  config_not_found: "Config file not found: {path}"
+  invalid_config: "Invalid config: {error}"
+  no_findings: "No findings."
+  findings_summary: "FAIL {n_fail} · WARN {n_warn} · INFO {n_info}"
+  check_install:
+    title: "Installation check"
+    engine: "Engine"
+    status: "Status"
+    version: "Version"
+    ok: "available"
+    missing: "missing"
+    python: "Python {version}"
+    hardware: "CPU {cores} cores · RAM {memory_gb:.1f} GB · GPU {gpu}"
+
+env:
+  ENV-001:
+    cause: "Engine '{engine}' not found (no executable or python module)."
+    fix: "Install: {install_hint}"
+  ENV-002:
+    cause: "Engine '{engine}' version {found} is outside the supported range {constraint}."
+    fix: "Reinstall a supported version or update the adapter version pin."
+  ENV-003:
+    cause: "No Earthdata Login credentials (EARTHDATA_TOKEN or ~/.netrc)."
+    fix: "Create an account at https://urs.earthdata.nasa.gov and set EARTHDATA_TOKEN or ~/.netrc (machine urs.earthdata.nasa.gov)."
+  ENV-004:
+    cause: "GDAL/PROJ library mismatch (rasterio {rasterio_gdal} vs pyproj {pyproj_proj})."
+    fix: "Reinstall rasterio and pyproj together in the same conda/pixi environment."
+  ENV-005:
+    cause: "GPU (CuPy) unavailable; running on CPU."
+    fix: "For GPU acceleration: 'pip install wintersar[gpu]' and check the CUDA driver."
+  ENV-006:
+    cause: "Package '{package}' is not installed (optional)."
+    fix: "Install if needed: {install_hint}"

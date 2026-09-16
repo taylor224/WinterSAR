@@ -1,0 +1,53 @@
+# 공통 메시지 (모듈별 메시지는 i18n/ko/<module>.yaml)
+common:
+  severity:
+    FAIL: "실패"
+    WARN: "경고"
+    INFO: "정보"
+  cause: "원인"
+  fix: "조치"
+  refs: "참고"
+  none: "없음"
+  yes: "예"
+  no: "아니오"
+  stage: "단계"
+  cached: "캐시됨"
+  will_run: "실행 예정"
+  unknown: "알 수 없음"
+
+cli:
+  done: "완료: {what}"
+  wrote: "저장: {path}"
+  config_not_found: "설정 파일을 찾을 수 없습니다: {path}"
+  invalid_config: "설정 파일 오류: {error}"
+  no_findings: "발견된 문제가 없습니다."
+  findings_summary: "실패 {n_fail} · 경고 {n_warn} · 정보 {n_info}"
+  check_install:
+    title: "설치 상태 점검"
+    engine: "엔진"
+    status: "상태"
+    version: "버전"
+    ok: "사용 가능"
+    missing: "미설치"
+    python: "Python {version}"
+    hardware: "CPU {cores}코어 · 메모리 {memory_gb:.1f} GB · GPU {gpu}"
+
+env:
+  ENV-001:
+    cause: "엔진 '{engine}'을(를) 찾을 수 없습니다 (실행 파일 또는 파이썬 모듈 없음)."
+    fix: "설치 방법: {install_hint}"
+  ENV-002:
+    cause: "엔진 '{engine}' 버전 {found}이(가) 지원 범위 {constraint}를 벗어납니다."
+    fix: "지원 버전으로 재설치하거나 어댑터 버전 핀을 갱신하세요."
+  ENV-003:
+    cause: "Earthdata Login 인증 정보가 없습니다 (EARTHDATA_TOKEN 또는 ~/.netrc)."
+    fix: "https://urs.earthdata.nasa.gov 에서 계정을 만들고 EARTHDATA_TOKEN 환경변수 또는 ~/.netrc(machine urs.earthdata.nasa.gov)를 설정하세요."
+  ENV-004:
+    cause: "GDAL/PROJ 라이브러리 버전이 일치하지 않습니다 (rasterio {rasterio_gdal} vs pyproj {pyproj_proj})."
+    fix: "동일한 conda/pixi 환경에서 rasterio·pyproj를 함께 재설치하세요."
+  ENV-005:
+    cause: "GPU(CuPy)를 사용할 수 없습니다. CPU 경로로 실행합니다."
+    fix: "GPU 가속이 필요하면 'pip install wintersar[gpu]' 후 CUDA 드라이버를 확인하세요."
+  ENV-006:
+    cause: "패키지 '{package}'이(가) 설치되어 있지 않습니다 (선택 사항)."
+    fix: "필요 시 설치: {install_hint}"

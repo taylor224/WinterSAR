@@ -1,0 +1,29 @@
+site_name: wintersar
+site_description: Open-source Sentinel-1 InSAR (SBAS) toolkit — selection, precheck, pipeline, diagnosis, validation
+repo_url: https://github.com/wintersar/wintersar
+docs_dir: docs
+theme:
+  name: material
+  language: ko
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+nav:
+  - 시작: index.md
+  - 개념 (Concepts): concepts/index.md
+  - 튜토리얼 (Tutorials):
+      - HyP3 빠른 시작: tutorials/hyp3-quickstart.md
+      - ISCE2 로컬: tutorials/isce2-local.md
+      - 검증·튠: tutorials/validate-tune.md
+  - 진단 KB: kb/index.md
+  - 연구 (Research): research/index.md
+  - ADR: adr/0001-license-and-engine-boundaries.md
+  - 미확정 사항: open-questions.md
+  - 구현 계획서: plan/wintersar_implementation_plan.md
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences

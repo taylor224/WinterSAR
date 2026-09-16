@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Sync
+        run: uv sync --extra dev
+      - name: Ruff
+        run: |
+          uv run ruff check src tests
+          uv run ruff format --check src tests
+      - name: Mypy
+        run: uv run mypy
+      - name: Unit + integration (synthetic, no network)
+        run: uv run pytest -m "not network and not engine and not gpu" --cov --cov-report=xml
+      - name: Synthetic bench S (regression guard, PERF/§6.3)
+        run: uv run wintersar --json bench --site benchmarks/sites/S_synthetic.yaml --out bench_result.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bench-${{ matrix.python-version }}
+          path: bench_result.json
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t wintersar:ci .
+      - name: Smoke
+        run: docker run --rm wintersar:ci wintersar --json check-install
