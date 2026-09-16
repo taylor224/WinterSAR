@@ -109,5 +109,5 @@ def save_igram_stack(stack: IgramStack, path: Path) -> Path:
     for k, v in stack.truth.items():
         arrays[k] = v
     path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(path, **arrays)
+    np.savez_compressed(path, **arrays)  # type: ignore[arg-type]
     return path
