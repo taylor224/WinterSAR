@@ -388,7 +388,7 @@ def test_run_writes_unw_npz_and_stats(fake_snaphu, igrams_npz: Path, tmp_path: P
     src = load_igram_stack(igrams_npz)
     assert stack.unw is not None and stack.conncomp is not None
     assert stack.unw.shape == src.wrapped.shape and stack.unw.dtype == np.float32
-    assert stack.conncomp.dtype == np.uint8  # save_igram_stack semantics
+    assert stack.conncomp.dtype.kind == "u"  # integer labels kept (uint32 for >255 components)
     assert stack.pairs == src.pairs and stack.dates == src.dates
     expected_masked = src.mask | (src.coherence < 0.5)
     assert np.isnan(stack.unw[expected_masked]).all()
