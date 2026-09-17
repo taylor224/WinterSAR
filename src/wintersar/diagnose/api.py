@@ -12,6 +12,7 @@ a failure (traceback / ERROR / OOM …) emit ``KB-UNKNOWN`` with a masked excerp
 
 from __future__ import annotations
 
+import json
 import traceback
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,21 @@ LOG_SUFFIXES: frozenset[str] = frozenset(
     {".log", ".txt", ".out", ".err", ".stdout", ".stderr", ".e", ".o", ".json"}
 )
 DEFAULT_MAX_BYTES = 20_000_000
+
+#: wintersar's own run records (ADR-0032): ``work/<stage>/<hash>/manifest.json``
+#: (:class:`~wintersar.io.schemas.StageRecord`) and ``work/runs/<run_id>.json`` (run summary).
+#: Both embed the failed stage's ``extra.error`` and log excerpt, so diagnosing them re-reports
+#: a failure that the engine log already carries, under a second scope and with the raw JSON as
+#: the excerpt. They are skipped when scanning a directory. Engine JSON in a log dir
+#: (``runfiles_summary.json`` (ADR-0027), ``<stage>.findings.json``, HyP3 ``jobs.json``) is not a
+#: record and is still diagnosed; an explicitly named file is always diagnosed.
+#: Identified by their top-level keys, not by path, so a renamed/moved work dir still works.
+RECORD_MARKER_KEYS: tuple[frozenset[str], ...] = (
+    frozenset({"stage", "node_hash", "status"}),  # StageRecord (manifest.json)
+    frozenset({"ok", "records", "plan"}),  # pipeline.api.RunResult.to_dict (runs/<id>.json)
+)
+#: JSON larger than this is never probed for record markers (it is not one of ours).
+RECORD_PROBE_MAX_BYTES = 8_000_000
 
 
 #: registry / config engine names that map onto a KB engine family (``None`` = auto-detect)
@@ -82,7 +98,11 @@ def diagnose_text(
 
 
 def iter_log_files(path: Path) -> list[Path]:
-    """Log files under ``path`` (a file is returned as-is)."""
+    """Log files under ``path`` (a file is returned as-is).
+
+    wintersar's own run records are skipped (:func:`is_run_record`) so that pointing
+    ``diagnose`` at a whole work directory reports each failure once, from the engine log.
+    """
     if path.is_file():
         return [path]
     if not path.is_dir():
@@ -92,8 +112,27 @@ def iter_log_files(path: Path) -> list[Path]:
         if not p.is_file():
             continue
         if (p.suffix.lower() in LOG_SUFFIXES or p.suffix == "") and _looks_text(p):
+            if is_run_record(p):
+                continue
             out.append(p)
     return out
+
+
+def is_run_record(path: Path) -> bool:
+    """``True`` for a wintersar ``StageRecord`` manifest or run summary (not engine output)."""
+    if path.suffix.lower() != ".json":
+        return False
+    try:
+        if path.stat().st_size > RECORD_PROBE_MAX_BYTES:
+            return False
+        with path.open("rb") as fh:
+            data = json.loads(fh.read().decode("utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    keys = set(data)
+    return any(marker <= keys for marker in RECORD_MARKER_KEYS)
 
 
 def _looks_text(p: Path, probe: int = 4096) -> bool:
@@ -105,6 +144,18 @@ def _looks_text(p: Path, probe: int = 4096) -> bool:
     return b"\x00" not in chunk
 
 
+def normalise_newlines(text: str) -> str:
+    """CRLF/CR -> LF.
+
+    Engine wrappers and downloaders redraw progress with a bare ``\r``; read in binary mode
+    that is one enormous "line" for every ``^``/``$``-anchored or ``.``-based pattern. Folding
+    it into ordinary lines keeps line numbers, excerpts and regex cost sane.
+    """
+    if "\r" not in text:
+        return text
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def read_log(path: Path, max_bytes: int = DEFAULT_MAX_BYTES) -> str:
     """Read a log as text (last ``max_bytes`` when larger; undecodable bytes replaced)."""
     size = path.stat().st_size
@@ -112,7 +163,7 @@ def read_log(path: Path, max_bytes: int = DEFAULT_MAX_BYTES) -> str:
         if size > max_bytes:
             fh.seek(size - max_bytes)
         data = fh.read()
-    return data.decode("utf-8", errors="replace")
+    return normalise_newlines(data.decode("utf-8", errors="replace"))
 
 
 def diagnose_logs(
@@ -202,10 +253,14 @@ def attach_retry_hint(
 __all__ = [
     "DEFAULT_MAX_BYTES",
     "LOG_SUFFIXES",
+    "RECORD_MARKER_KEYS",
+    "RECORD_PROBE_MAX_BYTES",
     "attach_retry_hint",
     "diagnose_exception",
     "diagnose_logs",
     "diagnose_text",
+    "is_run_record",
     "iter_log_files",
+    "normalise_newlines",
     "read_log",
 ]

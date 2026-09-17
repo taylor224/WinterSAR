@@ -1,0 +1,7 @@
+wintersar pipeline: stage 'timeseries' worker start (pid 4711)
+reading stack 1024 x 2048 x 96 (float32)
+Killed
+Traceback (most recent call last):
+  File "/home/user/work/wintersar/src/wintersar/pipeline/executor.py", line 431, in _run_node
+    artifacts = adapter.run(stage, inputs, params, log_dir)
+subprocess.CalledProcessError: Command '/home/user/work/bin/invert_network.sh' died with <Signals.SIGKILL: 9>.

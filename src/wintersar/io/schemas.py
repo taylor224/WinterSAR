@@ -13,6 +13,7 @@ Conventions
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import date, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -22,6 +23,30 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Severity = Literal["FAIL", "WARN", "INFO"]
 FlightDirection = Literal["ASCENDING", "DESCENDING"]
+
+
+def _plain(value: Any) -> Any:
+    """Recursively replace numpy scalars/arrays with built-ins.
+
+    The free-form ``dict[str, Any]`` fields below (``params``, ``evidence``, ``meta``,
+    ``extra``, ``notes``) are filled by rules and engine adapters that compute with numpy.
+    Pydantic accepts such a value but every serializer downstream (``emit_json``,
+    ``cache.write_record``, the run summary) then raises ``PydanticSerializationError``,
+    turning one stray ``np.float32`` into a crash *while reporting a failure*. Normalising
+    on the way in keeps the models JSON-serialisable by construction.
+    """
+    if value is None or isinstance(value, str | bytes):
+        return value
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist) and hasattr(value, "dtype"):  # np.ndarray / np.generic
+        return _plain(tolist())
+    if isinstance(value, Mapping):
+        return {k: _plain(v) for k, v in value.items()}
+    if isinstance(value, tuple):
+        return tuple(_plain(v) for v in value)
+    if isinstance(value, list):
+        return [_plain(v) for v in value]
+    return value
 
 
 class Platform(StrEnum):
@@ -61,6 +86,11 @@ class BurstRecord(BaseModel):
     url: str
     product_type: Literal["BURST", "SLC"] = "BURST"
     extra: dict[str, Any] = Field(default_factory=dict, description="Raw provider fields")
+
+    @field_validator("extra", mode="before")
+    @classmethod
+    def _plain_values(cls, v: Any) -> Any:
+        return _plain(v)
 
     @property
     def acquisition_date(self) -> date:
@@ -109,6 +139,11 @@ class StackCandidate(BaseModel):
     product_type: Literal["BURST", "SLC"] = "BURST"
     notes: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("notes", mode="before")
+    @classmethod
+    def _plain_values(cls, v: Any) -> Any:
+        return _plain(v)
+
     @property
     def stack_id(self) -> str:
         d = "A" if self.flight_direction == "ASCENDING" else "D"
@@ -130,6 +165,11 @@ class Finding(BaseModel):
     scope: str | None = Field(
         default=None, description="stack_id / pair key / stage the finding is about"
     )
+
+    @field_validator("params", "evidence", mode="before")
+    @classmethod
+    def _plain_values(cls, v: Any) -> Any:
+        return _plain(v)
 
     @property
     def is_fail(self) -> bool:
@@ -153,6 +193,11 @@ class Resources(BaseModel):
     credits: float | None = Field(default=None, description="HyP3 credits (None for local)")
     n_jobs: int | None = None
     notes: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def _plain_values(cls, v: Any) -> Any:
+        return _plain(v)
 
     def __add__(self, other: Resources) -> Resources:
         def _add(a: float | None, b: float | None) -> float | None:
@@ -185,6 +230,11 @@ class Artifact(BaseModel):
     kind: str = Field(default="file", description="file | dir | zarr | h5 | cog | json")
     sha256: str | None = Field(default=None, description="content hash (files) or manifest hash")
     meta: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("meta", mode="before")
+    @classmethod
+    def _plain_values(cls, v: Any) -> Any:
+        return _plain(v)
 
 
 class Artifacts(BaseModel):
@@ -226,6 +276,11 @@ class StageRecord(BaseModel):
     findings: list[Finding] = Field(default_factory=list)
     log_path: Path | None = None
     extra: dict[str, Any] = Field(default_factory=dict, description="e.g. snaphu tile dir for -A")
+
+    @field_validator("params", "extra", mode="before")
+    @classmethod
+    def _plain_values(cls, v: Any) -> Any:
+        return _plain(v)
 
 
 class Plan(BaseModel):

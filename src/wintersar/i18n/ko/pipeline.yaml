@@ -2,10 +2,13 @@
 pipeline:
   PIPELINE-001:
     cause: "단계 '{stage}'(엔진 {engine})이(가) 실패했습니다: {error}"
-    fix: "로그 {log_dir}를 확인하고 'wintersar diagnose {log_dir} --engine {engine}'으로 원인을 진단한 뒤 'wintersar run --from {stage}'로 재개하세요."
+    fix: "로그 {log_dir}를 확인하고 'wintersar diagnose {log_dir} --engine {kb_engine}'으로 원인을 진단한 뒤 'wintersar run --from {stage}'로 재개하세요."
+    fix_auto: "로그 {log_dir}를 확인하고 'wintersar diagnose {log_dir}'로 원인을 진단한 뒤(엔진 {engine}에 대한 지식 베이스 항목이 없습니다) 'wintersar run --from {stage}'로 재개하세요."
   PIPELINE-002:
     cause: "단계 '{stage}'에 필요한 입력 '{artifact}'(생산 단계: {producer})의 캐시 결과가 없습니다."
     fix: "--from 없이 실행하거나 먼저 'wintersar run --until {producer}'로 상류 단계를 실행하세요."
+    cause_no_cache: "단계 '{stage}'의 캐시 결과({artifact})가 없는데 --from이 이 단계보다 뒤에서 시작합니다."
+    fix_no_cache: "--from 없이 실행하거나 먼저 'wintersar run --until {stage}'로 이 단계를 실행하세요."
   PIPELINE-003:
     cause: "단계 '{stage}'의 현재 설정과 일치하는 캐시가 없어 가장 최근 결과({node_hash}, {finished_at})를 재사용합니다 (--from)."
     fix: "상류 설정을 바꿨다면 --from 없이 실행해 해당 단계를 다시 계산하세요."
@@ -33,6 +36,15 @@ pipeline:
   PIPELINE-010:
     cause: "검증 단계를 건너뜁니다: validate.leveling_csv 또는 validate.gnss가 설정되지 않았습니다."
     fix: "대조군이 있다면 config.yaml의 validate 절에 경로를 지정하세요."
+  PIPELINE-012:
+    cause: "{key}에 지정된 대조군 파일이 존재하지 않습니다: {path}"
+    fix: "config.yaml의 validate 절에서 경로를 수정하거나 항목을 지우세요. 그대로 두면 실행 마지막에 검증 단계가 실패합니다(VAL-006)."
+  PIPELINE-013:
+    cause: "다른 실행이 이 작업 디렉터리에서 이미 단계 '{stage}'를 실행 중입니다 ({node_dir})."
+    fix: "해당 실행이 끝날 때까지 기다리거나 중지한 뒤 다시 시도하세요. 작업 디렉터리 하나에는 한 번에 하나의 실행만 가능합니다."
+  PIPELINE-014:
+    cause: "'{command}' 명령을 시작할 수 없습니다: {detail}"
+    fix: "'wintersar {command} --help'로 인자를 확인하세요 (설정 파일 경로, 단계 이름, --set 형식)."
   cli:
     plan_title: "실행 계획: {project} ({workdir})"
     run_title: "실행: {project} ({workdir})"
@@ -63,8 +75,3 @@ pipeline:
     cache_total: "총 {n}개 항목 · {size}"
     gc_summary: "삭제 {n_removed}개 ({freed}) · 유지 {n_kept}개{dry}"
     gc_dry_suffix: " [dry-run: 실제로 삭제하지 않음]"
-    help_plan: "DAG를 만들고 캐시/재실행 대상과 예상 리소스를 표로 출력합니다 (실행하지 않음)."
-    help_run: "파이프라인을 실행합니다. 캐시된 단계는 건너뛰고 변경된 단계와 그 하류만 재실행합니다 (PERF-03)."
-    help_cache: "작업 디렉터리 캐시(work/<stage>/<hash>) 조회·정리."
-    help_cache_ls: "캐시된 단계 결과 목록."
-    help_cache_gc: "단계별로 최근 N개만 남기고 오래된 캐시를 삭제합니다."

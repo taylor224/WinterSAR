@@ -158,3 +158,117 @@ def test_retry_hint_embedded_in_evidence_for_executor() -> None:
     assert hint["params"]["tile_cost_thresh"] == 250
     (u,) = diagnose_text("ERROR: brand new\n")
     assert RETRY_HINT_KEY not in u.evidence
+
+
+# --------------------------------------------------------------- wintersar's own run records
+
+SNAPHU_OOM = (
+    "snaphu -f snaphu.conf -t 2 2\n"
+    "Out of memory: Killed process 4711 (snaphu)\n"
+    "Unexpected or abnormal exit of child process 7\n"
+)
+SNAPHU_NODES = "Exceeded maximum number of secondary nodes\n"
+
+
+def _failed_workdir(tmp_path: Path) -> Path:
+    """A work dir shaped like a real failed run: engine log, StageRecord, run summary."""
+    import json
+
+    from wintersar.io.schemas import Artifacts, Plan, StageRecord
+    from wintersar.pipeline.api import RunResult
+
+    work = tmp_path / "work"
+    log_dir = work / "logs" / "unwrap"
+    log_dir.mkdir(parents=True)
+    (log_dir / "snaphu.log").write_text(SNAPHU_OOM, encoding="utf-8")
+    # engine JSON inside the log dir stays diagnosable (ADR-0027 runfiles_summary.json,
+    # <stage>.findings.json): it is not a StageRecord/run summary
+    (log_dir / "runfiles_summary.json").write_text(
+        json.dumps({"written": "2024-01-01T00:00:00+00:00", "steps": [], "stderr": SNAPHU_NODES}),
+        encoding="utf-8",
+    )
+    (log_dir / "unwrap.findings.json").write_text(json.dumps([]), encoding="utf-8")
+
+    record = StageRecord(
+        stage="unwrap",
+        node_hash="c25d412d897d0b6c",
+        engine="snaphu",
+        status="failed",
+        log_path=log_dir / "snaphu.log",
+        extra={"error": "RuntimeError: snaphu failed", "log_excerpt": SNAPHU_OOM},
+    )
+    node_dir = work / "unwrap" / record.node_hash
+    node_dir.mkdir(parents=True)
+    (node_dir / "manifest.json").write_text(
+        json.dumps(record.model_dump(mode="json"), default=str), encoding="utf-8"
+    )
+    runs = work / "runs"
+    runs.mkdir()
+    result = RunResult(
+        records=[record],
+        artifacts=Artifacts(),
+        findings=[],
+        plan=Plan(stages=[record], to_run=[record.node_hash]),
+        ok=False,
+        error="RuntimeError: snaphu failed",
+        failed_stage="unwrap",
+        run_id="20240101-000000",
+    )
+    (runs / "20240101-000000.json").write_text(
+        json.dumps(result.to_dict(), default=str), encoding="utf-8"
+    )
+    return work
+
+
+def test_iter_log_files_skips_wintersar_run_records(tmp_path: Path) -> None:
+    """``diagnose <workdir>`` reports each failure once, from the engine log.
+
+    ``work/<stage>/<hash>/manifest.json`` and ``work/runs/<id>.json`` embed the failed
+    stage's error and log excerpt, so diagnosing them re-reported the same failure under a
+    second scope with raw JSON as the excerpt. Engine JSON in a log dir is not a record.
+    """
+    work = _failed_workdir(tmp_path)
+    found = {str(p.relative_to(work)) for p in iter_log_files(work)}
+    assert found == {
+        "logs/unwrap/snaphu.log",
+        "logs/unwrap/runfiles_summary.json",
+        "logs/unwrap/unwrap.findings.json",
+    }
+
+
+def test_diagnose_workdir_reports_each_failure_once(tmp_path: Path) -> None:
+    work = _failed_workdir(tmp_path)
+    findings = diagnose_logs(work)
+    assert {(f.rule_id, f.scope) for f in findings} == {
+        ("KB-SNAPHU-002", "logs/unwrap/snaphu.log"),
+        ("KB-SNAPHU-001", "logs/unwrap/runfiles_summary.json"),
+    }
+
+
+def test_explicitly_named_record_is_still_diagnosed(tmp_path: Path) -> None:
+    """Skipping applies to a directory scan only; naming the file asks for it."""
+    work = _failed_workdir(tmp_path)
+    manifest = work / "unwrap" / "c25d412d897d0b6c" / "manifest.json"
+    assert iter_log_files(manifest) == [manifest]
+    (f,) = diagnose_logs(manifest)
+    assert f.rule_id == "KB-SNAPHU-002"
+
+
+def test_is_run_record_only_for_our_json(tmp_path: Path) -> None:
+    from wintersar.diagnose.api import RECORD_PROBE_MAX_BYTES, is_run_record
+
+    work = _failed_workdir(tmp_path)
+    assert is_run_record(work / "unwrap" / "c25d412d897d0b6c" / "manifest.json")
+    assert is_run_record(work / "runs" / "20240101-000000.json")
+    assert not is_run_record(work / "logs" / "unwrap" / "runfiles_summary.json")
+    assert not is_run_record(work / "logs" / "unwrap" / "unwrap.findings.json")
+    assert not is_run_record(work / "logs" / "unwrap" / "snaphu.log")
+    # a manifest.json that is not ours (no marker keys) is diagnosed like any other JSON
+    other = tmp_path / "manifest.json"
+    other.write_text('{"name": "not ours", "error": "ERROR: boom"}', encoding="utf-8")
+    assert not is_run_record(other)
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json", encoding="utf-8")
+    assert not is_run_record(broken)
+    assert not is_run_record(tmp_path / "missing.json")
+    assert RECORD_PROBE_MAX_BYTES > 0

@@ -9,7 +9,9 @@ just run (resolved by the executor). A node whose inputs are unresolved is *to r
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field, replace
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -29,6 +31,7 @@ from wintersar.pipeline.stages import (
     stage_window,
 )
 from wintersar.util.hashing import hash_params
+from wintersar.util.masking import mask_text
 
 NodeStatus = Literal["cached", "to_run", "skipped", "blocked"]
 SkipReason = Literal[
@@ -42,14 +45,39 @@ PRIVATE_PREFIX = "_"
 
 
 def canonicalise(obj: Any) -> Any:
-    """Sort mapping keys recursively and turn tuples into lists (stable JSON)."""
+    """Sort mapping keys recursively and turn tuples into lists (stable JSON).
+
+    Dates become ISO strings so that a ``--set search.time_range.start=2024-01-01`` override
+    (parsed by PyYAML into :class:`datetime.date`) is the same value as the one the config
+    contributes (``Config.stage_params`` dumps with ``mode="json"``).
+    """
     if isinstance(obj, dict):
         return {str(k): canonicalise(obj[k]) for k in sorted(obj, key=str)}
     if isinstance(obj, list | tuple):
         return [canonicalise(x) for x in obj]
     if isinstance(obj, Path):
         return str(obj)
+    if isinstance(obj, datetime | date):
+        return obj.isoformat()
     return obj
+
+
+def hash_normalise(obj: Any) -> Any:
+    """Canonicalise *for hashing only*: integral floats collapse onto ints.
+
+    ``--set unwrap.nproc_per_igram=1.0`` and a config ``1`` are the same parameter, so they
+    must produce the same node hash. Engines still receive the value the config/override
+    gave (this runs on the hash payload, not on ``Node.params``).
+    """
+    if isinstance(obj, dict):
+        return {str(k): hash_normalise(obj[k]) for k in sorted(obj, key=str)}
+    if isinstance(obj, list | tuple):
+        return [hash_normalise(x) for x in obj]
+    if isinstance(obj, bool):
+        return obj
+    if isinstance(obj, float) and math.isfinite(obj) and float(obj).is_integer():
+        return int(obj)
+    return canonicalise(obj)
 
 
 def deep_merge(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
@@ -94,7 +122,7 @@ def node_hash(
     """``hash(stage, canonical params, input artifact hashes, engine, engine version)``."""
     payload = {
         "stage": stage,
-        "params": canonicalise(strip_private(params)),
+        "params": hash_normalise(strip_private(params)),
         "inputs": {k: input_hashes[k] for k in sorted(input_hashes)},
         "engine": engine,
         "engine_version": engine_version,
@@ -267,6 +295,8 @@ class Dag:
                         scope=stage,
                     )
                 )
+            if stage == "validate" and node.skip_reason is None:
+                node.findings.extend(self._ground_truth_findings())
             return node
         assert engine is not None
         eng = self.engine(engine)
@@ -322,6 +352,31 @@ class Dag:
                 )
             )
         return node
+
+    def _ground_truth_findings(self) -> list[Finding]:
+        """WARN at plan time when a configured ground-truth file does not exist.
+
+        ``wintersar.validate`` only discovers this while the last stage runs (VAL-006), i.e.
+        after the whole DAG has executed.
+        """
+        vcfg = self.cfg.validation
+        gnss = vcfg.gnss.path if vcfg.gnss is not None else None
+        findings: list[Finding] = []
+        for key, path in (("validate.leveling_csv", vcfg.leveling_csv), ("validate.gnss", gnss)):
+            if path is None or Path(path).exists():
+                continue
+            findings.append(
+                Finding(
+                    rule_id="PIPELINE-012",
+                    severity="WARN",
+                    message_key="pipeline.PIPELINE-012.cause",
+                    fix_key="pipeline.PIPELINE-012.fix",
+                    params={"key": key, "path": mask_text(str(path))},
+                    evidence={"key": key, "path": mask_text(str(path))},
+                    scope="validate",
+                )
+            )
+        return findings
 
     def _link_producers(self) -> None:
         """input artifact name -> latest upstream (non-skipped) stage producing it."""
@@ -401,6 +456,24 @@ class Dag:
         )
 
     @staticmethod
+    def no_cached_result(node: Node) -> Finding:
+        """``--from`` skips this stage but nothing in the cache can stand in for it.
+
+        A dedicated cause/fix pair: reusing ``_missing_input`` printed the circular "stage
+        'fetch' needs input 'slc_manifest' (produced by fetch)" (ADR-0033 "--from").
+        """
+        artifact = ",".join(node.spec.outputs)
+        return Finding(
+            rule_id="PIPELINE-002",
+            severity="FAIL",
+            message_key="pipeline.PIPELINE-002.cause_no_cache",
+            fix_key="pipeline.PIPELINE-002.fix_no_cache",
+            params={"stage": node.stage, "artifact": artifact},
+            evidence={"stage": node.stage, "artifact": artifact, "reason": "no_cached_result"},
+            scope=node.stage,
+        )
+
+    @staticmethod
     def _missing_input(node: Node, name: str, skipper: Node | None) -> Finding:
         producer = skipper.stage if skipper is not None else "?"
         return Finding(
@@ -437,10 +510,7 @@ class Dag:
             if record is None and stage_index(node.stage) < start:
                 record = cache.latest_record(self.workdir, node.stage)
                 if record is None:
-                    node.findings.append(self._missing_input(node, "*", None))
-                    node.findings[-1].params.update(
-                        {"artifact": ",".join(node.spec.outputs), "producer": node.stage}
-                    )
+                    node.findings.append(self.no_cached_result(node))
                     continue
                 node.fallback = True
                 node.forced = False

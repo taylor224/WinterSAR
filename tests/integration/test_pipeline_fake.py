@@ -13,6 +13,7 @@ import pytest
 
 from tests.unit.pipeline._support import SMALL, EngineSpy, spy_fake_engine, write_fake_config
 from wintersar.engines.fake import FakeEngine
+from wintersar.i18n import t
 from wintersar.io.schemas import Artifacts, Finding, Resources
 from wintersar.pipeline import api, cache
 from wintersar.pipeline import executor as execmod
@@ -430,3 +431,73 @@ def test_executor_raises_pipeline_error_with_records(cfg, small) -> None:
     assert [r.stage for r in err.records][-1] == "unwrap"
     assert "igrams" in err.artifacts
     assert any(f.rule_id == "PIPELINE-001" for f in err.findings)
+
+
+# ---------------------------------------------------------------------- concurrency / output
+
+
+def test_a_second_run_never_touches_a_node_directory_in_use(cfg, small, spy) -> None:
+    """ADR-0032 + node lock: two runs on one workdir resolve the same node hash.
+
+    Without the lock the second ``prepare_node_dir(clean=True)`` deletes the first run's
+    in-flight ``out/`` and both manifests race, so the first run hashes a half-written file
+    and fails downstream with a misleading error.
+    """
+    dag = Dag(cfg)
+    dag.build(small, until="fetch")
+    node_dir = cache.stage_dir(cfg.workdir, "fetch", dag.node("fetch").node_hash or "")
+    out, _ = cache.prepare_node_dir(node_dir)
+    inflight = out / "slc_manifest.json"
+    inflight.write_text("half written", encoding="utf-8")  # the other run is still writing
+    with cache.node_lock(node_dir):
+        result = api.run(cfg, param_overrides=small, until="fetch")
+    assert not result.ok and result.failed_stage == "fetch"
+    assert spy.stages == []  # the engine never ran
+    assert inflight.read_text(encoding="utf-8") == "half written"  # nothing was cleaned
+    busy = next(f for f in result.findings if f.rule_id == "PIPELINE-013")
+    assert busy.severity == "FAIL" and busy.scope == "fetch"
+    record = next(r for r in result.records if r.stage == "fetch")
+    assert record.status == "failed" and record.extra["busy"] is True
+    # once the other run releases the directory the stage executes normally
+    result = api.run(cfg, param_overrides=small, until="fetch")
+    assert result.ok and spy.stages == ["fetch"]
+
+
+def test_dag_findings_are_reported_once_per_run(cfg, small, spy) -> None:
+    """``run`` merges the plan's findings with the executor's; both walk the same DAG."""
+    result = api.run(cfg, param_overrides=small)
+    assert result.ok
+    ids = [f.rule_id for f in result.findings]
+    assert ids.count("PIPELINE-010") == 1, ids
+    keys = [
+        (f.rule_id, f.severity, f.scope, f.message_key, tuple(sorted(f.params.items())))
+        for f in result.findings
+    ]
+    assert len(keys) == len(set(keys)), keys
+    plan_ids = [f.rule_id for f in api.plan(cfg, param_overrides=small).findings]
+    assert plan_ids.count("PIPELINE-010") == 1  # the plan alone never repeated it
+
+
+def test_fully_cached_plan_reports_zero_cost(cfg, small, spy) -> None:
+    """Nothing left to run means no additional cost — not 'unknown' (plan §4.5)."""
+    fresh = api.plan(cfg, param_overrides=small)
+    assert fresh.resources.wall_time_s is not None  # a fresh plan estimates the work
+    api.run(cfg, param_overrides=small)
+    cached = api.plan(cfg, param_overrides=small)
+    assert cached.to_run == []
+    assert cached.resources.wall_time_s == 0.0
+    assert cached.resources.peak_rss_gb == 0.0
+    assert cached.resources.disk_gb == 0.0
+    assert cached.resources.network_gb == 0.0
+
+
+def test_failure_fix_text_never_suggests_an_unknown_diagnose_engine(cfg, small) -> None:
+    """``wintersar diagnose --engine fake`` exits 2, so the fix text must not propose it."""
+    result = api.run(cfg, param_overrides={**small, "unwrap": {"fail_stage": "unwrap"}})
+    generic = next(f for f in result.findings if f.rule_id == "PIPELINE-001")
+    assert generic.fix_key == "pipeline.PIPELINE-001.fix_auto"
+    assert generic.params["kb_engine"] == ""
+    for lang in ("ko", "en"):
+        fix = t(generic.fix_key, lang, **generic.params)
+        assert "--engine" not in fix, fix
+        assert "wintersar diagnose" in fix

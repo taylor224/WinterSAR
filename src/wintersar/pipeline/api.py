@@ -103,7 +103,7 @@ def run(
         result = RunResult(
             records=list(the_plan.stages),
             artifacts=_cached_artifacts(dag),
-            findings=list(the_plan.findings),
+            findings=dedupe_findings(list(the_plan.findings)),
             plan=the_plan,
             ok=plan_ok,
             dry_run=dry_run,
@@ -122,7 +122,7 @@ def run(
         result = RunResult(
             records=list(exc.records),
             artifacts=exc.artifacts,
-            findings=[*the_plan.findings, *exc.findings],
+            findings=dedupe_findings([*the_plan.findings, *exc.findings]),
             plan=the_plan,
             ok=False,
             error=str(exc),
@@ -133,13 +133,33 @@ def run(
         result = RunResult(
             records=records,
             artifacts=artifacts,
-            findings=[*the_plan.findings, *findings],
+            findings=dedupe_findings([*the_plan.findings, *findings]),
             plan=the_plan,
             ok=True,
             run_id=executor.run_id,
         )
     _write_run_summary(dag.workdir, result)
     return result
+
+
+def dedupe_findings(findings: list[Finding]) -> list[Finding]:
+    """Drop repeats of the same (rule, severity, scope, message, params).
+
+    ``run`` concatenates the plan's findings with the executor's, and the executor
+    re-resolves the very same DAG nodes, so every DAG-level finding (PIPELINE-010, …) was
+    reported twice.
+    """
+    seen: set[str] = set()
+    out: list[Finding] = []
+    for f in findings:
+        key = repr(
+            (f.rule_id, f.severity, f.scope, f.message_key, sorted(f.params.items(), key=str))
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(f)
+    return out
 
 
 def _cached_artifacts(dag: Dag) -> Artifacts:

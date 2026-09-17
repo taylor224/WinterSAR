@@ -100,7 +100,7 @@ geocode` 는 MintPy 어댑터가 `smallbaselineApp.py --dostep` 으로 단계별
 실행 중단·실패 시:
 
 ```bash
-wintersar diagnose work/logs/ --engine hyp3      # KB-HYP3-001(크레딧) / 002(입력 검증) / 003(DEM) / 004(접근 권한)
+wintersar diagnose work/ --engine hyp3           # KB-HYP3-001(크레딧) / 002(입력 검증) / 003(DEM) / 004(접근 권한)
 wintersar run --config config.yaml --from timeseries   # 상류는 캐시에서, 시계열부터 재개
 ```
 
@@ -138,6 +138,6 @@ The HyP3 path needs an Earthdata Login (with HyP3 access), `~/.netrc` or `EARTHD
 `timeseries.engine: mintpy`), then `search` -> `precheck` (read the `SEL-xx` findings, pin the
 recommended track) -> `plan` (credit estimate from `hyp3_costs.yaml`, never hard-coded) -> `run`.
 HyP3 performs coregistration, interferogram and unwrapping in the cloud (local `unwrap` is skipped);
-MintPy runs `timeseries -> corrections -> geocode`. On failure use `wintersar diagnose work/logs
+MintPy runs `timeseries -> corrections -> geocode`. On failure use `wintersar diagnose work/
 --engine hyp3` and resume with `run --from <stage>`; parameter changes re-run only downstream stages.
 Finish with `refpoint` and `validate` against levelling/GNSS CSVs.

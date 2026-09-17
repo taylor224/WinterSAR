@@ -2,7 +2,8 @@
 
 :func:`run_unwrap` is what the pipeline (and ``wintersar unwrap run``) calls:
 
-1. load the interferogram stack (``igrams.npz``, :mod:`wintersar.io.igrams`),
+1. load the interferogram stack (``igrams.npz`` or an engine directory,
+   :mod:`wintersar.unwrap.inputs`),
 2. build the :class:`~wintersar.pipeline.config.UnwrapCfg` from ``params``,
 3. :func:`~wintersar.unwrap.scheduler.choose_strategy` → :class:`UnwrapPlan`,
 4. unwrap every interferogram in a process pool (``n_parallel`` workers; a thread pool
@@ -13,9 +14,13 @@
    peak RSS, tile scratch directories for SNAPHU assemble-only re-use).
 
 ``params`` keys: ``method``, ``cost``, ``init``, ``coherence_threshold``, ``tiles``,
-``memory_mb_per_mpixel``, ``nproc_per_igram``, ``mask`` (the ``unwrap`` config section)
-plus executor private keys (``_out_dir``, ``_cores``, ``_memory_gb``, ``_n_parallel``,
-``_tile_offset_cycles`` — the last one is a test hook for the seam detector).
+``memory_mb_per_mpixel``, ``nproc_per_igram``, ``save_cost_file``, ``mask`` (the ``unwrap``
+config section) plus executor private keys (``_out_dir``, ``_cores``, ``_memory_gb``,
+``_n_parallel``, ``_tile_offset_cycles`` — the last one is a test hook for the seam
+detector). The pipeline executor passes the config section **nested**
+(``params["unwrap"]["cost"]``, ``canonical_params`` in :mod:`wintersar.pipeline.dag`) while
+the CLI and the tests pass it flat; :func:`flatten_params` accepts both (top level wins,
+the same rule as :func:`wintersar.engines._unwrap_common.unwrap_cfg`).
 
 The ``.npz`` interchange loads whole arrays per worker; the chunked Zarr store (PERF-08)
 replaces it for real stacks.
@@ -29,7 +34,14 @@ import multiprocessing as mp
 import shutil
 import threading
 import time
-from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from collections.abc import Mapping
+from concurrent.futures import (
+    Executor,
+    Future,
+    ProcessPoolExecutor,
+    ThreadPoolExecutor,
+    as_completed,
+)
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
@@ -40,10 +52,16 @@ from numpy.typing import NDArray
 
 from wintersar.engines.base import EngineNotAvailableError
 from wintersar.i18n import t
-from wintersar.io.igrams import IgramStack, load_igram_stack
+from wintersar.io.igrams import IgramStack
 from wintersar.io.schemas import Artifact, Artifacts, Finding, Severity
 from wintersar.pipeline.config import MaskCfg, TilesCfg, UnwrapCfg
 from wintersar.unwrap import backends
+from wintersar.unwrap.inputs import (
+    NPZ_FORMAT,
+    UnwrapInputError,
+    load_igrams,
+    write_worker_stack,
+)
 from wintersar.unwrap.masks import apply_mask, combine_masks, mask_stats, masked_conncomp
 from wintersar.unwrap.scheduler import REASON_PREFIX, UnwrapPlan, choose_strategy, fringe_density
 from wintersar.unwrap.tiling import boundary_jumps, merge_labels, merge_tiles, tile_grid
@@ -55,24 +73,21 @@ __all__ = [
     "STATS_FILE",
     "UNW_FILE",
     "UnwrapFailedError",
+    "UnwrapInputError",
     "cfg_from_params",
+    "flatten_params",
     "resolve_plan",
     "run_unwrap",
     "stack_fringe_density",
 ]
 
-PARAM_KEYS: tuple[str, ...] = (
-    "method",
-    "cost",
-    "init",
-    "coherence_threshold",
-    "tiles",
-    "memory_mb_per_mpixel",
-    "nproc_per_igram",
-    "mask",
-)
+#: every ``UnwrapCfg`` field (derived, so a new config field is never silently ignored)
+PARAM_KEYS: tuple[str, ...] = tuple(UnwrapCfg.model_fields)
+#: the config section name the pipeline executor nests the parameters under
+SECTION = "unwrap"
 STATS_FILE = "stats.json"
 UNW_FILE = "unw.npz"
+INPUT_DIR = "input"
 PARTS_DIR = "parts"
 TILES_DIR = "tiles"
 LOG_FILE = "unwrap.log"
@@ -102,15 +117,32 @@ def _parse_tiles(value: Any) -> Any:
     return value
 
 
-def cfg_from_params(params: dict[str, Any]) -> UnwrapCfg:
+def flatten_params(params: Mapping[str, Any]) -> dict[str, Any]:
+    """Merge the nested ``unwrap`` config section into the top level (top level wins).
+
+    ``Config.stage_params("unwrap")`` — and therefore the executor — yields
+    ``{"unwrap": {...}}``; ``wintersar unwrap run`` and the tests pass the flat form. Same
+    precedence rule as :func:`wintersar.engines._unwrap_common.unwrap_cfg`, so the adapters
+    and the scheduler always see the same values. Private keys pass through untouched.
+    """
+    nested = params.get(SECTION)
+    out: dict[str, Any] = dict(nested) if isinstance(nested, Mapping) else {}
+    out.update({k: v for k, v in params.items() if k != SECTION})
+    return out
+
+
+def cfg_from_params(params: Mapping[str, Any]) -> UnwrapCfg:
     """``UnwrapCfg`` from the stage parameter mapping (unknown/private keys ignored).
 
-    Test backends (``truth``/``identity``) are not valid ``unwrap.method`` values; they
-    are planned as ``auto`` and substituted afterwards by :func:`resolve_plan`.
+    Accepts the flat and the nested (``{"unwrap": {...}}``) form via
+    :func:`flatten_params`. Test backends (``truth``/``identity``) are not valid
+    ``unwrap.method`` values; they are planned as ``auto`` and substituted afterwards by
+    :func:`resolve_plan`.
     """
+    flat = flatten_params(params)
     picked: dict[str, Any] = {}
     for key in PARAM_KEYS:
-        value = params.get(key)
+        value = flat.get(key)
         if value is None:
             continue
         picked[key] = value
@@ -172,6 +204,11 @@ def resolve_plan(
     test_backend = backends.is_test_backend(requested)
     if available is None and cfg.method == "auto" and not test_backend:
         available = backends.available_backends()
+    if available is not None:
+        # the plan unwraps one interferogram at a time, so a stack-only (3-D space-time)
+        # engine such as spurt can never serve it — dropping it here makes ``auto`` fall
+        # through to ``method_none_available`` instead of planning a run that must fail.
+        available = backends.two_d_backends(available)
     plan = choose_strategy(shape, n_igrams, machine, cfg, fringe, available)
     if test_backend:
         reasons = [k for k in plan.reason_keys if not k.startswith(REASON_PREFIX + "method_")]
@@ -313,6 +350,30 @@ def _unwrap_one(job: _Job) -> _JobResult:
     return _JobResult(job.index, job.pair, str(unw_path), str(cc_path), stats)
 
 
+def _abort(ex: Executor, futures: dict[Future[_JobResult], _Job]) -> None:
+    """Drop the queued jobs and kill the workers (Ctrl-C / SIGINT must not be queued behind
+    the whole stack).
+
+    ``Executor.__exit__`` only calls ``shutdown(wait=True)``, which lets every already
+    submitted interferogram run to completion; a ``KeyboardInterrupt`` would then surface
+    hours later. ``cancel_futures`` (3.9+) discards what has not started and, for the
+    process pool, the running children are terminated as well.
+
+    Order matters: the executor cancels the pending work items itself first — cancelling
+    the futures by hand and *then* terminating makes the pool's manager thread trip over
+    an already-cancelled future (``InvalidStateError`` printed from a daemon thread).
+    """
+    with contextlib.suppress(Exception):
+        ex.shutdown(wait=False, cancel_futures=True)
+    processes = getattr(ex, "_processes", None)  # ProcessPoolExecutor internals
+    if isinstance(processes, dict):
+        for proc in list(processes.values()):
+            with contextlib.suppress(Exception):
+                proc.terminate()
+    for fut in futures:
+        fut.cancel()
+
+
 def _execute(
     jobs: list[_Job], n_parallel: int, use_threads: bool
 ) -> tuple[list[_JobResult], list[tuple[str, str]]]:
@@ -333,12 +394,16 @@ def _execute(
         executor = ProcessPoolExecutor(max_workers=n_parallel, mp_context=mp.get_context("spawn"))
     with executor as ex:
         futures = {ex.submit(_unwrap_one, job): job for job in jobs}
-        for fut in as_completed(futures):
-            job = futures[fut]
-            try:
-                results.append(fut.result())
-            except Exception as e:
-                failures.append((job.pair, f"{type(e).__name__}: {e}"))
+        try:
+            for fut in as_completed(futures):
+                job = futures[fut]
+                try:
+                    results.append(fut.result())
+                except Exception as e:
+                    failures.append((job.pair, f"{type(e).__name__}: {e}"))
+        except BaseException:  # KeyboardInterrupt / SystemExit / cancellation
+            _abort(ex, futures)
+            raise
     results.sort(key=lambda r: r.index)
     return results, failures
 
@@ -404,13 +469,17 @@ def _backend_params(
 ) -> dict[str, Any]:
     """Parameters handed to ``Unwrapper.unwrap`` (user keys + plan-derived keys).
 
+    ``params`` must already be flat (:func:`flatten_params`): the adapters merge their own
+    ``unwrap`` section with top level winning, so the resolved ``cfg`` values below have to
+    be at the top level or the adapter would silently run with the ``UnwrapCfg`` defaults.
+
     Key names follow snaphu-py (``ntiles``, ``tile_overlap``, ``nproc``, ``cost``,
     ``init``; source: https://github.com/isce-framework/snaphu-py/blob/main/src/snaphu/_unwrap.py)
     and tophu (``ntiles``; source:
     https://github.com/isce-framework/tophu/blob/main/src/tophu/_multiscale.py). Adapters
     ignore what they do not use.
     """
-    out: dict[str, Any] = {k: v for k, v in params.items() if k not in ("tiles", "mask")}
+    out: dict[str, Any] = {k: v for k, v in params.items() if k not in ("tiles", "mask", SECTION)}
     out.update(
         {
             "method": plan.method,
@@ -441,6 +510,25 @@ def _finding(rule_id: str, severity: Severity, scope: str | None = None, **param
     )
 
 
+def _unavailable_detail(
+    unwrapper: backends.Unwrapper, error: EngineNotAvailableError
+) -> tuple[str, list[Finding]]:
+    """``(detail, install findings)`` for ``UNW-001``.
+
+    ``str(EngineNotAvailableError)`` embeds a Python list repr (``['ENV-001']``), which has
+    no place in user-facing text: the rule ids go into ``{detail}`` and the engine's own
+    ``ENV-00x`` findings are reported next to ``UNW-001`` so the reader gets the
+    install hint in their language.
+    """
+    check = getattr(unwrapper, "check_install", None)
+    install: list[Finding] = []
+    if callable(check):
+        with contextlib.suppress(Exception):  # probing must never mask the real error
+            install = [f for f in check() if f.is_fail]
+    rules = ", ".join(dict.fromkeys(f.rule_id for f in install))
+    return rules or mask_text(str(error)), install
+
+
 def _write_stats(path: Path, stats: dict[str, Any]) -> Path:
     path.write_text(
         json.dumps(mask_mapping(stats), ensure_ascii=False, indent=2, default=str),
@@ -456,7 +544,7 @@ def run_unwrap(
     log_dir: Path,
     machine: MachineSpec,
 ) -> Artifacts:
-    """Run the unwrap stage on ``igrams`` (an ``igrams.npz`` artifact). See module doc."""
+    """Run the unwrap stage on the ``igrams`` artifact (npz or engine dir). See module doc."""
     t_start = time.perf_counter()
     out_dir = Path(out_dir)
     log_dir = Path(log_dir)
@@ -468,7 +556,33 @@ def run_unwrap(
         with log_path.open("a", encoding="utf-8") as fh:
             fh.write(f"{datetime.now().isoformat(timespec='seconds')} {mask_text(msg)}\n")
 
-    stack = load_igram_stack(Path(igrams.path))
+    params = flatten_params(params)
+    stats_path = out_dir / STATS_FILE
+    try:
+        stack, igram_format = load_igrams(igrams)
+    except UnwrapInputError as e:
+        finding = _finding("UNW-005", "FAIL", **mask_mapping(e.params))
+        log(f"UNW-005 {e}")
+        _write_stats(
+            stats_path,
+            {
+                "status": "failed",
+                "params": {k: v for k, v in params.items() if not k.startswith("_")},
+                "igrams": mask_mapping(e.params),
+                "findings": [finding.model_dump(mode="json")],
+                "log": str(log_path),
+            },
+        )
+        e.findings = [finding]
+        raise
+    # the workers re-open the stack per interferogram, so a directory input is converted
+    # once to the ``.npz`` interchange in a scratch directory (removed after the run)
+    input_dir = out_dir / INPUT_DIR
+    igram_path = Path(igrams.path)
+    if igram_format != NPZ_FORMAT:
+        igram_path = write_worker_stack(stack, input_dir / "igrams.npz")
+        log(f"converted {igram_format} input {igrams.path} -> {igram_path}")
+
     cfg = cfg_from_params(params)
     requested = str(params.get("method") or cfg.method)
     machine = _machine_from_params(machine, params)
@@ -485,7 +599,6 @@ def run_unwrap(
     )
     log(f"plan {json.dumps(plan.to_dict(), default=str)}")
     findings: list[Finding] = []
-    stats_path = out_dir / STATS_FILE
     base_stats: dict[str, Any] = {
         "plan": plan.to_dict(),
         "reasons": plan.explain(),
@@ -495,6 +608,8 @@ def run_unwrap(
         "fringe_density": fringe,
         "machine": {"cores": machine.cores, "memory_gb": machine.memory_gb, "gpu": machine.gpu},
         "params": {k: v for k, v in params.items() if not k.startswith("_")},
+        "cfg": cfg.model_dump(mode="json"),
+        "igrams": {"path": str(igrams.path), "format": igram_format, "kind": igrams.kind},
         "log": str(log_path),
     }
 
@@ -502,8 +617,18 @@ def run_unwrap(
     try:
         backends.require_available(unwrapper)
     except EngineNotAvailableError as e:
-        findings.append(_finding("UNW-001", "FAIL", method=plan.method, detail=str(e)))
-        log(f"UNW-001 {e}")
+        detail, install_findings = _unavailable_detail(unwrapper, e)
+        findings.append(
+            _finding(
+                "UNW-001",
+                "FAIL",
+                method=plan.method,
+                detail=detail,
+                install_hint=str(getattr(unwrapper, "install_hint", "") or "-"),
+            )
+        )
+        findings.extend(install_findings)
+        log(f"UNW-001 {plan.method}: {detail}")
         _write_stats(
             stats_path,
             base_stats
@@ -533,7 +658,7 @@ def run_unwrap(
         _Job(
             index=i,
             pair=pair,
-            igram_path=str(igrams.path),
+            igram_path=str(igram_path),
             method=plan.method,
             plan=plan.to_dict(),
             coherence_threshold=cfg.coherence_threshold,
@@ -584,6 +709,7 @@ def run_unwrap(
         if r.stats.get("tile_dir"):
             tile_dirs[r.pair] = str(r.stats["tile_dir"])
     shutil.rmtree(parts_dir, ignore_errors=True)
+    shutil.rmtree(input_dir, ignore_errors=True)  # converted engine input (scratch only)
     unw_path = out_dir / UNW_FILE
     np.savez_compressed(
         unw_path,

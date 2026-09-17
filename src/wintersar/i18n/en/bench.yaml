@@ -44,7 +44,7 @@ bench:
     cause: "Site '{site}' repeat {repeat} failed at stage '{stage}': {error}"
     fix: "Analyse the logs in the work directory with 'wintersar diagnose'. Pass --workdir to keep the run directories."
   BENCH-006:
-    cause: "Metric '{metric}' could not be computed for site '{site}' (no input artifact or ground truth)."
+    cause: "Metric '{metric}' could not be computed for site '{site}' (no input artifact, no ground truth, or an error: {reason})."
     fix: "unwrap_error_fraction needs a synthetic site (truth phase); gt_rmse needs a ground_truth CSV. Remove the metric from site.metrics if it is not needed."
   BENCH-007:
     cause: "Total wall time {wall_time_s:.1f} s of site '{site}' exceeds the budget of {budget_s:.0f} s."

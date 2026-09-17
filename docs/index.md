@@ -63,8 +63,18 @@ wintersar --json run --config config.yaml          # QGIS 플러그인이 읽는
 ```
 
 산출물은 `work/<stage>/<hash>/out/`, 실행 요약은 `work/runs/<run_id>.json`
-([ADR-0032](adr/0032-workdir-layout-and-manifest.md)). 실패를 재현해 보려면
-`--set interferogram.fail_stage=unwrap` 을 주면 `run` 이 `diagnose` 를 자동으로 붙여 Finding 을 보여 줍니다.
+([ADR-0032](adr/0032-workdir-layout-and-manifest.md)). 로그는 `work/<stage>/<hash>/logs/` 에 있고
+(`work/logs/` 라는 디렉터리는 없습니다), `run` 은 실패하면 그 디렉터리로 `diagnose` 를 자동으로 붙입니다.
+
+`--set` 의 형식은 `--set <단계>.<키>=<값>` 이고 **그 단계의 파라미터에만** 얹힙니다(다른 단계로 전파되지
+않습니다). 그래서 fake 엔진의 실패 주입은 실패시킬 단계 이름으로 써야 합니다:
+
+```bash
+wintersar run --config config.yaml --set unwrap.fail_stage=unwrap   # unwrap 에서 실패 → PIPELINE-001 + KB Finding
+```
+
+`--set interferogram.fail_stage=unwrap` 처럼 다른 단계에 얹으면 `unwrap` 단계는 그 키를 보지 못해 아무것도
+실패하지 않고(종료 코드 0), interferogram 해시만 바뀌어 하류가 통째로 재실행됩니다.
 
 ## 실데이터 흐름 (요약)
 
@@ -73,7 +83,7 @@ wintersar search   --config config.yaml            # ASF burst 검색 → work/s
 wintersar precheck work/select/candidates.json --config config.yaml   # SEL-01…13 → precheck_report.{md,html,json}
 wintersar plan     --config config.yaml
 wintersar run      --config config.yaml [--until unwrap] [--from timeseries] [--force STAGE]
-wintersar diagnose work/logs/ [--engine isce2|snaphu|mintpy|hyp3]
+wintersar diagnose work/ [--engine isce2|snaphu|mintpy|hyp3]   # 또는 work/<stage>/<hash>/logs
 ```
 
 ```bash
@@ -86,7 +96,9 @@ wintersar research stitch     --tiles tiles.npz --out merged.npz --method coarse
 wintersar unwrap plan --shape 4000 6000 --n 30      # 언래핑 스케줄러 dry run
 ```
 
-모든 명령은 `--json`(안정된 봉투 `{"ok","command","data","findings"}`)과 `--lang ko|en` 을 받습니다.
+`--json`(안정된 봉투 `{"ok","command","data","findings"}`)과 `--lang ko|en` 은 **전역 옵션**이라 하위 명령
+**앞에** 씁니다 — `wintersar --json run --config config.yaml`. 하위 명령 뒤에 쓰면
+(`wintersar run --json`) `No such option: --json` 으로 종료 코드 2 가 납니다.
 `wintersar --help` 가 현재 트리에 실제로 있는 명령의 목록입니다.
 
 ## 어디서부터 읽을까
@@ -108,5 +120,6 @@ only the stages downstream of a changed parameter, an unwrapping scheduler that 
 budget, a log-parsing diagnosis knowledge base `KB-xx` (cause -> fix), ground-truth validation and a
 thin QGIS plugin over the CLI's `--json` envelope. Install with `uv sync --extra dev`; run the
 network-free synthetic pipeline with `wintersar init config.yaml`, set `engine.interferogram: fake`
-and `timeseries.engine: fake`, then `wintersar plan` / `wintersar run`. Every command accepts
-`--json` and `--lang ko|en`; messages are Korean by default with English available.
+and `timeseries.engine: fake`, then `wintersar plan` / `wintersar run`. `--json` and `--lang ko|en`
+are global options and go *before* the sub-command (`wintersar --json run --config config.yaml`);
+messages are Korean by default with English available.

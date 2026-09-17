@@ -150,3 +150,75 @@ def test_duplicate_ids_rejected(tmp_path: Path) -> None:
     (d / "b.yaml").write_text(yaml.safe_dump([entry]), encoding="utf-8")
     with pytest.raises(ValueError, match="duplicate"):
         kb_loader.load_kb(d)
+
+
+def test_every_kb_id_has_a_log_fixture() -> None:
+    """Every entry needs a regression guard, so a typo in its regex fails a test.
+
+    Without this the four entries added after the plan's §5.5 seed list (KB-ENV-002,
+    KB-HYP3-004, KB-ISCE2-005, KB-MINTPY-004) could be broken with a one-character typo and
+    the whole suite stayed green. ``tests/unit/diagnose/test_fixtures.py`` is parametrised
+    over the manifest, so a row there is the guard; this test only keeps the gap closed when
+    entry N+1 is added.
+    """
+    from tests.unit.diagnose.conftest import load_manifest
+
+    covered = {kb_id for case in load_manifest() for kb_id in case["expect"]}
+    missing = sorted(e.id for e in load_kb() if e.id not in covered)
+    assert missing == [], (
+        "add a masked log excerpt under tests/fixtures/logs/ and a manifest row "
+        f"(`expect: [<id>]`) for: {missing}"
+    )
+
+
+#: one upstream line per *alternative* of the multi-alternative entries, quoted from the
+#: ``pattern_source`` of the entry (rule 11.3). A log fixture can only exercise one branch, so
+#: without this a typo in any other branch is invisible.
+UPSTREAM_LINES: dict[str, tuple[str, ...]] = {
+    "KB-ENV-002": (
+        # linux mm/oom_kill.c __oom_kill_process()
+        "Out of memory: Killed process 4711 (snaphu) total-vm:8388608kB",
+        # signal.strsignal(SIGKILL): 'Killed' (Linux) / 'Killed: 9' (macOS)
+        "Killed",
+        "Killed: 9",
+        "MemoryError",  # Python builtin
+        "OSError: [Errno 12] Cannot allocate memory",  # os.strerror(errno.ENOMEM)
+        # CPython subprocess.CalledProcessError.__str__
+        "subprocess.CalledProcessError: Command '/usr/bin/snaphu' died with <Signals.SIGKILL: 9>.",
+    ),
+    "KB-HYP3-004": (
+        # hyp3 lib/dynamo/dynamo/exceptions.py
+        "NotStartedApplicationError: user must request access before submitting jobs",
+        "PendingApplicationError: user's request for access is pending review",
+        "RejectedApplicationError: user's request for access has been rejected",
+    ),
+    "KB-ISCE2-005": (
+        # isce2 contrib/stack/topsStack/stackSentinel.py get_dates()
+        "No acquisition fulfills the temporal range and bbox requirement.",
+    ),
+    "KB-MINTPY-004": (
+        # mintpy src/mintpy/reference_point.py read_reference_input()
+        "ValueError: input reference point is OUT of data coverage!",
+        "input reference point is in masked OUT area defined by maskTempCoh.h5!",
+    ),
+}
+
+
+@pytest.mark.parametrize("kb_id", sorted(UPSTREAM_LINES), ids=lambda v: str(v))
+def test_every_documented_upstream_string_matches(kb_id: str) -> None:
+    entry = kb_index()[kb_id]
+    unmatched = [line for line in UPSTREAM_LINES[kb_id] if entry.regex.search(line) is None]
+    assert unmatched == [], f"{kb_id} no longer matches its pattern_source strings: {unmatched}"
+
+
+def test_env_002_oom_strings_agree_with_this_interpreter() -> None:
+    """The two KB-ENV-002 branches the running Python can confirm (rule 11.3)."""
+    import errno
+    import os
+    import signal
+
+    entry = kb_index()["KB-ENV-002"]
+    assert signal.strsignal(signal.SIGKILL) in UPSTREAM_LINES["KB-ENV-002"]
+    assert os.strerror(errno.ENOMEM) == "Cannot allocate memory"
+    assert entry.regex.search(signal.strsignal(signal.SIGKILL) or "")
+    assert entry.regex.search(os.strerror(errno.ENOMEM))

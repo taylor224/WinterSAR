@@ -16,6 +16,7 @@ from wintersar.validate.los import (
     azimuth_to_heading,
     default_heading,
     enu_to_los,
+    heading_for_orbit,
     heading_to_azimuth,
     los_to_vertical,
     los_unit_vector,
@@ -116,4 +117,21 @@ def test_default_heading():
     assert default_heading("ASCENDING") == S1_HEADING_ASC_DEG
     assert default_heading("asc") == S1_HEADING_ASC_DEG
     assert default_heading("DESCENDING") == S1_HEADING_DESC_DEG
+    assert default_heading(None) == S1_HEADING_DESC_DEG
+
+
+def test_heading_for_orbit_keeps_unknown_unknown():
+    """An unknown orbit direction must not become the descending default: that flips the sign
+    of the east/north GNSS terms for an ascending stack."""
+    assert heading_for_orbit("ASCENDING") == S1_HEADING_ASC_DEG
+    assert heading_for_orbit("asc") == S1_HEADING_ASC_DEG
+    assert heading_for_orbit("DESCENDING") == S1_HEADING_DESC_DEG
+    assert heading_for_orbit("desc") == S1_HEADING_DESC_DEG
+    assert heading_for_orbit(None) is None
+    assert heading_for_orbit("auto") is None and heading_for_orbit("") is None
+    east = 0.01
+    asc = enu_to_los(east, 0.0, 0.0, INC, S1_HEADING_ASC_DEG)
+    desc = enu_to_los(east, 0.0, 0.0, INC, S1_HEADING_DESC_DEG)
+    assert float(asc) == pytest.approx(-float(desc)) and float(asc) < 0.0
+    # default_heading stays the explicit "give me a number anyway" helper
     assert default_heading(None) == S1_HEADING_DESC_DEG

@@ -194,7 +194,15 @@ def run_cmd(
     findings: list[Finding] = []
     try:
         arts = run_unwrap(artifact, params, out, log_dir or out / "logs", machine)
-    except (UnwrapFailedError, EngineNotAvailableError, KeyError, TypeError, ValueError) as e:
+    # OSError: a missing/unreadable stack must still leave a --json envelope, never a traceback
+    except (
+        UnwrapFailedError,
+        EngineNotAvailableError,
+        KeyError,
+        TypeError,
+        ValueError,
+        OSError,
+    ) as e:
         stats_path = out / STATS_FILE
         if stats_path.exists():
             raw = json.loads(stats_path.read_text(encoding="utf-8"))

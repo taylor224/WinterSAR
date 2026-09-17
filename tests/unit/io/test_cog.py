@@ -91,6 +91,30 @@ def test_write_cog_rejects_bad_arguments(tmp_path: Path) -> None:
         cog.write_cog(np.zeros((2, 2, 2, 2), np.float32), TR, "EPSG:4326", tmp_path / "x.tif")
 
 
+def test_write_cog_rejects_unwritable_dtype_extent_and_nodata(tmp_path: Path) -> None:
+    """Dtypes/extents GDAL cannot take, and a nodata the band cannot hold, are caught here
+    instead of surfacing as a raw rasterio TypeError / CPLE_AppDefinedError."""
+    with pytest.raises(ValueError, match="empty"):
+        cog.write_cog(np.zeros((0, 0), np.float32), TR, "EPSG:4326", tmp_path / "e.tif")
+    with pytest.raises(ValueError, match="GeoTIFF band"):
+        cog.write_cog(
+            np.zeros((8, 8), "datetime64[D]"), TR, "EPSG:4326", tmp_path / "c.tif", nodata=None
+        )
+    with pytest.raises(ValueError, match="outside the range"):
+        cog.write_cog(np.zeros((8, 8), np.uint8), TR, "EPSG:4326", tmp_path / "n.tif", nodata=300)
+    # bool / float16 are cast losslessly instead of raising
+    b = cog.write_cog(
+        np.eye(8, dtype=bool), TR, "EPSG:4326", tmp_path / "b.tif", nodata=None, blocksize=128
+    )
+    h = cog.write_cog(
+        np.eye(8, dtype=np.float16), TR, "EPSG:4326", tmp_path / "h.tif", blocksize=128
+    )
+    with rasterio.open(b) as src:
+        assert src.dtypes[0] == "uint8" and src.read(1)[0, 0] == 1
+    with rasterio.open(h) as src:
+        assert src.dtypes[0] == "float32" and np.isnan(src.nodata)
+
+
 def test_overview_factors_rule() -> None:
     assert cog._overview_factors(300, 400, 128) == [2, 4]
     assert cog._overview_factors(300, 400, 256) == [2]
@@ -155,6 +179,33 @@ def test_fit_velocity_recovers_linear_trend() -> None:
     fit = cog.fit_velocity(ts)
     assert fit.shape == (20, 24)
     np.testing.assert_allclose(fit, ts.velocity_m_per_yr, atol=5e-3)
+
+
+def test_fit_velocity_keeps_nodata_pixels_nan(tmp_path: Path) -> None:
+    """A pixel without enough finite epochs must stay NaN: 0.0 would be exported as valid
+    'stable ground' (nodata is NaN, so a zero never triggers it)."""
+    ts = make_timeseries(shape=(8, 8), n_dates=6)
+    disp = np.asarray(ts.displacement_m).copy()
+    disp[:, 1, 1] = np.nan  # fully masked pixel
+    disp[1:, 2, 2] = np.nan  # a single valid epoch
+    disp[4:, 3, 3] = np.nan  # four valid epochs -> still a fit
+    ts.displacement_m = disp
+    fit = cog.fit_velocity(ts)
+    assert np.isnan(fit[1, 1]) and np.isnan(fit[2, 2])
+    assert np.isfinite(fit[3, 3])
+    assert fit[3, 3] == pytest.approx(float(ts.velocity_m_per_yr[3, 3]), abs=5e-3)
+    assert np.isfinite(fit[0, 0])
+
+    ts.velocity_m_per_yr = None
+    p = cog.export_velocity_cog(ts, tmp_path / "vel.tif", blocksize=128)
+    with rasterio.open(p) as src:
+        band = src.read(1)
+        assert np.isnan(src.nodata)
+        assert np.isnan(band[1, 1]) and np.isnan(band[2, 2])
+
+    all_nan = make_timeseries(shape=(4, 4), n_dates=4)
+    all_nan.displacement_m = np.full_like(np.asarray(all_nan.displacement_m), np.nan)
+    assert np.isnan(cog.fit_velocity(all_nan)).all()
 
 
 def test_export_all_and_mask(tmp_path: Path) -> None:

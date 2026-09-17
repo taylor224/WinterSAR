@@ -73,8 +73,18 @@ def check_install(
         list[str] | None,
         typer.Option("--engine", "-e", help="Only check these engines (default: all)."),
     ] = None,
+    strict: Annotated[
+        bool,
+        typer.Option("--strict", help="Exit 1 when a FAIL finding exists (default: always 0)."),
+    ] = False,
 ) -> None:
-    """Report engine availability, versions, credentials and hardware (PERF-12)."""
+    """Report engine availability, versions, credentials and hardware (PERF-12).
+
+    Like the other *report* commands (``search``, ``diagnose``, ``validate``) this exits 0
+    as long as the report could be produced; the envelope's ``ok`` is false when a FAIL
+    finding (e.g. a missing engine) is present. ``--strict`` turns that into exit 1 so a
+    script can gate on it without parsing the envelope.
+    """
     from wintersar.engines.base import list_engines
     from wintersar.util import sysinfo
 
@@ -98,7 +108,9 @@ def check_install(
                 "license": cls.license_note,
             }
         )
-    findings.extend(_check_credentials())
+    # Engines that need Earthdata (hyp3) already report ENV-003; do not say it twice.
+    if not any(f.rule_id == "ENV-003" for f in findings):
+        findings.extend(_check_credentials())
     findings.extend(_check_geo_libs())
     findings.extend(_check_optional_packages())
     if not spec.gpu:
@@ -119,8 +131,11 @@ def check_install(
         "gpu_name": spec.gpu_name,
         "engines": rows,
     }
+    ok = not any(f.is_fail for f in findings)
     if state.json:
-        emit_json("check-install", data, findings, ok=not any(f.is_fail for f in findings))
+        emit_json("check-install", data, findings, ok=ok)
+        if strict and not ok:
+            raise typer.Exit(code=1)
         return
     from rich.table import Table
 
@@ -156,6 +171,8 @@ def check_install(
         )
     console.print(table)
     print_findings(findings)
+    if strict and not ok:
+        raise typer.Exit(code=1)
 
 
 def _check_optional_packages() -> list[Finding]:
@@ -244,9 +261,28 @@ def init(
 ) -> None:
     """Write an example ``config.yaml`` (plan §4.4)."""
     from wintersar.pipeline.config import EXAMPLE_CONFIG
+    from wintersar.util.masking import mask_text
 
     if path.exists() and not force:
-        err_console.print(f"[red]{path} exists (use --force)[/]")
+        masked = mask_text(str(path))
+        if state.json:
+            emit_json(
+                "init",
+                {"path": masked},
+                [
+                    Finding(
+                        rule_id="CLI-002",
+                        severity="FAIL",
+                        message_key="cli.CLI-002.cause",
+                        fix_key="cli.CLI-002.fix",
+                        params={"path": masked},
+                    )
+                ],
+                ok=False,
+            )
+        else:
+            err_console.print(f"[red]{t('cli.CLI-002.cause', path=masked)}[/]")
+            err_console.print(t("cli.CLI-002.fix", path=masked))
         raise typer.Exit(code=1)
     path.write_text(EXAMPLE_CONFIG, encoding="utf-8")
     if state.json:
@@ -279,8 +315,54 @@ def _mount_module_clis() -> None:
 _mount_module_clis()
 
 
+def _invoked_command() -> str:
+    """Best-effort command name for the error envelope (``wintersar --json plan …`` → 'plan')."""
+    skip_value = False
+    for arg in sys.argv[1:]:
+        if skip_value:
+            skip_value = False
+            continue
+        if arg.startswith("-"):
+            skip_value = arg == "--lang"
+            continue
+        return arg
+    return "wintersar"
+
+
+def _report_unexpected(exc: BaseException) -> None:
+    """Turn an exception that escaped a sub-command into the normal output contract.
+
+    Typer re-raises unexpected exceptions instead of converting them to an exit code
+    (``Typer.__call__``), so without this the process ends in a traceback: no ``--json``
+    envelope at all, and unmasked home paths in the stderr frames (rule 11.11).
+    # source: .venv/lib/python3.11/site-packages/typer/main.py (Typer.__call__)
+    """
+    from wintersar.util.masking import mask_text
+
+    detail = mask_text(f"{type(exc).__name__}: {exc}")
+    finding = Finding(
+        rule_id="CLI-001",
+        severity="FAIL",
+        message_key="cli.CLI-001.cause",
+        fix_key="cli.CLI-001.fix",
+        params={"error": detail},
+        evidence={"error": detail},
+    )
+    if state.json:
+        emit_json(_invoked_command(), {"error": detail}, [finding], ok=False)
+    else:
+        err_console.print(f"[red]{t('cli.CLI-001.cause', error=detail)}[/]")
+        err_console.print(t("cli.CLI-001.fix", error=detail))
+
+
 def main() -> None:
-    app()
+    try:
+        app()
+    except Exception as exc:
+        if state.verbose:
+            raise
+        _report_unexpected(exc)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

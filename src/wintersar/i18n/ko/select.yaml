@@ -89,6 +89,8 @@ select:
     col_n_bursts: "burst 수"
     col_coverage: "AOI 커버리지"
     col_n_pairs: "쌍 수"
+    col_pairs_dropped: "제외된 쌍(B⊥)"
+    col_components: "네트워크 연결성분"
     col_reference: "참조일"
     col_perp: "|B⊥| (m) 최소/중앙/최대"
     col_temporal: "시간 기선(일) 최소/중앙/최대"
@@ -111,6 +113,7 @@ select:
     res_disk: "디스크(GB)"
     res_network: "네트워크(GB)"
     unknown: "미정"
+    network_split: "{n}개(네트워크 분리됨; 최대 성분 밖 날짜: {dates})"
     rule_table: "규칙 표"
   cli:
     search_done: "검색 완료: {n} 건 ({product_type}) → {path}"

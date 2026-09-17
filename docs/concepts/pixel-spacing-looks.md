@@ -26,7 +26,7 @@ ground range spacing = slant range spacing / sin(입사각 θ)
 - `SEL-09` WARN 은 스택 안에서 픽셀 간격이 날짜마다 다를 때(허용 편차 `selection.pixel_spacing_tolerance`,
   기본 1 %) — 서로 다른 처리 설정의 씬이 섞였다는 신호입니다.
 - 픽셀 간격·IPF 버전은 검색 시점에 없을 수 있어(ADR-0010) 명목값으로 대체될 수 있습니다; 리포트에 출처를
-  표시합니다(open-questions #21).
+  표시합니다(open-questions #27).
 - 직접 지정하려면 `engine.looks: [10, 3]` 처럼 `[rg, az]` 를 씁니다. HyP3 는 제공하는 looks 옵션 범위
   안에서만 고를 수 있습니다(ADR-0020).
 

@@ -19,7 +19,12 @@ SPEC = ParserSpec(
         re.compile(r"\bisce\.(?:topsinsar|insar|stripmapinsar)\b"),
         re.compile(r"\bisceobj\b|\bisce\b"),
         re.compile(r"stackSentinel\.py|topsApp\.py|SentinelWrapper\.py|run_files|topsStack"),
-        re.compile(r"\bIW[123]\b.*\bburst\b|\bburst\b.*\bIW[123]\b", re.IGNORECASE),
+        # bounded gap instead of ``.*``: ``score_engines`` runs this on every file and an
+        # unbounded wildcard backtracks quadratically over a carriage-return progress line
+        re.compile(
+            r"\bIW[123]\b[^\n\r]{0,200}\bburst\b|\bburst\b[^\n\r]{0,200}\bIW[123]\b",
+            re.IGNORECASE,
+        ),
         re.compile(r"ESD|azimuth misregistration|geo2rdr|rdr2geo|topo\.py", re.IGNORECASE),
     ),
     event_patterns=(

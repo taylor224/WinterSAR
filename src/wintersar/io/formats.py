@@ -480,6 +480,10 @@ def _is_float(s: str) -> bool:
 # ============================================================================ time series
 # Synthetic grid for .npz stacks without coordinates: pixel spacing of the HyP3 default
 # 20x4 looks (80 m, source: burst_insar_product_guide) around the tests' Seoul AOI centre.
+# This is a *display* grid only: it carries no incidence/heading, so it cannot be projected to
+# LOS. Anything that compares a coordinate-less .npz with ground truth must go through
+# wintersar.validate.api.load_timeseries instead (AOI north-west corner, engine.target_pixel_m,
+# heading from the orbit direction) — the two grids are deliberately different origins.
 SYNTHETIC_CENTER_LATLON: tuple[float, float] = (37.55, 126.95)
 SYNTHETIC_PIXEL_M: float = 80.0
 _M_PER_DEG_LAT = 111_320.0  # metres per degree of latitude (spherical Earth approximation)

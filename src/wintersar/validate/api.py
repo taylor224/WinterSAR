@@ -3,7 +3,9 @@
 * :func:`load_timeseries` — :class:`~wintersar.io.timeseries.TimeSeries` from a file. ``.h5``
   (MintPy, via h5py) is delegated to ``wintersar.io.formats.load_timeseries`` when that module
   is importable; the fake-engine ``.npz`` (``dates``, ``displacement_m``, ``velocity_m_per_yr``)
-  is read here with a synthesised lat/lon grid and optional geometry overrides.
+  is read here with a synthesised lat/lon grid and optional geometry overrides. That reader
+  understands every key ``io.formats.write_timeseries_npz`` writes (``attrs`` JSON,
+  ``reference_latlon``, …), so the interchange file keeps its metadata either way.
 * :func:`validate_timeseries` — CSV ground truth → LOS → comparison → report files.
 * :func:`run_validate` — pipeline stage entry point
   (``fn(cfg, inputs, params, out_dir, log_dir) -> (Artifacts, list[Finding])``,
@@ -24,13 +26,12 @@ from numpy.typing import NDArray
 
 from wintersar.io.schemas import Artifact, Artifacts, Finding, GroundTruthRecord
 from wintersar.io.timeseries import TimeSeries
-from wintersar.util.masking import mask_text
+from wintersar.util.masking import mask_mapping, mask_text
 from wintersar.validate.closure import ClosureResult
 from wintersar.validate.ground_truth import GroundTruthError, load_csv, make_finding
 from wintersar.validate.los import (
-    S1_HEADING_DESC_DEG,
     S1_INCIDENCE_MID_DEG,
-    default_heading,
+    heading_for_orbit,
 )
 from wintersar.validate.metrics import (
     DEFAULT_MAX_GAP_DAYS,
@@ -65,7 +66,10 @@ NPZ_OPTIONAL = (
     "coherence",
     "dem_m",
     "conncomp",
+    "reference_latlon",
 )
+# Scalars the fake engine / interchange writers may add next to the arrays.
+NPZ_SCALARS = ("lat0", "lon0", "pixel_m", "heading_deg")
 
 
 class ValidateError(ValueError):
@@ -112,14 +116,26 @@ def load_timeseries_npz(
     pixel_m: float | None = None,
     heading_deg: float | None = None,
     incidence_deg: float | None = None,
+    default_heading_deg: float | None = None,
 ) -> TimeSeries:
-    """Read the fake-engine / interchange ``.npz`` (keys as written by
-    ``wintersar.engines.fake.FakeEngine._stage_timeseries``: ``dates``, ``displacement_m``,
-    ``velocity_m_per_yr``; optional ``lat``, ``lon``, ``incidence_deg``, ``coherence``,
-    ``dem_m``, ``conncomp`` and scalar attrs ``lat0``, ``lon0``, ``pixel_m``, ``heading_deg``).
+    """Read the fake-engine / interchange ``.npz``.
+
+    Keys as written by ``wintersar.engines.fake.FakeEngine._stage_timeseries`` (``dates``,
+    ``displacement_m``, ``velocity_m_per_yr``) and by
+    ``wintersar.io.formats.write_timeseries_npz`` (adds ``lat``, ``lon``, ``incidence_deg``,
+    ``heading_deg``, ``coherence``, ``dem_m``, ``conncomp``, ``reference_latlon`` and an
+    ``attrs`` JSON string); plus the scalars ``lat0``, ``lon0``, ``pixel_m``, ``heading_deg``.
+    Everything ``io.formats.read_timeseries_npz`` understands is read here too, so that the
+    same file carries the same metadata whichever module opens it.
+    # source: src/wintersar/io/formats.py::write_timeseries_npz / read_timeseries_npz
+
+    ``heading_deg`` overrides whatever the file says (CLI ``--heading``);
+    ``default_heading_deg`` only fills a heading the file does not have and flags the result
+    ``attrs['synthetic_heading']``. Without either the heading stays ``None``: guessing one
+    flips the sign of the GNSS east/north terms for the opposite orbit direction, so
+    :func:`wintersar.validate.ground_truth.to_los` raises ``VAL-008`` instead.
     """
     p = Path(path)
-    attrs: dict[str, Any] = {"source": mask_text(str(p))}
     with np.load(p, allow_pickle=False) as z:
         missing = [k for k in NPZ_REQUIRED if k not in z.files]
         if missing:
@@ -131,9 +147,11 @@ def load_timeseries_npz(
         dates = _parse_dates(z["dates"])
         disp = np.asarray(z["displacement_m"], dtype=np.float32)
         opt: dict[str, NDArray[Any]] = {k: z[k] for k in NPZ_OPTIONAL if k in z.files}
-        scalars = {
-            k: float(z[k]) for k in ("lat0", "lon0", "pixel_m", "heading_deg") if k in z.files
-        }
+        scalars = {k: float(z[k]) for k in NPZ_SCALARS if k in z.files}
+        attrs_raw = str(z["attrs"]) if "attrs" in z.files else ""
+    stored = _stored_attrs(attrs_raw)
+    attrs: dict[str, Any] = dict(stored)
+    attrs["source"] = mask_text(str(p))  # rule 11.11: the writer stored the raw path
     shape = (int(disp.shape[1]), int(disp.shape[2]))
     if "lat" in opt and "lon" in opt:
         lat, lon = (
@@ -157,22 +175,55 @@ def load_timeseries_npz(
     else:
         inc = S1_INCIDENCE_MID_DEG
         attrs["synthetic_incidence"] = True
-    heading = (
-        heading_deg if heading_deg is not None else scalars.get("heading_deg", S1_HEADING_DESC_DEG)
-    )
+    heading: float | None
+    stored_heading = stored.get("heading_deg")
+    if heading_deg is not None:
+        heading = float(heading_deg)
+    elif "heading_deg" in scalars:
+        heading = scalars["heading_deg"]
+    elif isinstance(stored_heading, int | float):
+        heading = float(stored_heading)
+    elif default_heading_deg is not None:
+        heading = float(default_heading_deg)
+        attrs["synthetic_heading"] = True
+    else:
+        heading = None
+    ref: tuple[float, float] | None = None
+    if "reference_latlon" in opt:
+        r = np.asarray(opt["reference_latlon"], dtype=np.float64).ravel()
+        if r.size >= 2 and np.isfinite(r[:2]).all():
+            ref = (float(r[0]), float(r[1]))
     return TimeSeries(
         dates=dates,
         displacement_m=disp,
         lat=lat,
         lon=lon,
         incidence_deg=inc,
-        heading_deg=float(heading),
+        heading_deg=heading,
         coherence=opt.get("coherence"),
         velocity_m_per_yr=opt.get("velocity_m_per_yr"),
+        reference_latlon=ref,
         dem_m=opt.get("dem_m"),
         conncomp=opt.get("conncomp"),
         attrs=attrs,
     )
+
+
+def _stored_attrs(raw: str) -> dict[str, Any]:
+    """``attrs`` JSON string written by ``io.formats.write_timeseries_npz`` (masked, rule 11.11).
+
+    An unreadable string is kept verbatim under ``attrs_raw`` exactly like the io reader does.
+    """
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {"attrs_raw": mask_text(raw)}
+    if not isinstance(data, dict):
+        return {"attrs_raw": mask_text(raw)}
+    masked = mask_mapping(data)
+    return dict(masked) if isinstance(masked, dict) else {}
 
 
 def _formats_loader() -> Callable[[Path], Any] | None:
@@ -181,7 +232,9 @@ def _formats_loader() -> Callable[[Path], Any] | None:
     # source: src/wintersar/io/formats.py::load_timeseries(path, **kwargs) -> TimeSeries
     #   dispatches .npz -> read_timeseries_npz, .h5/.hdf5/.he5 -> read_timeseries_h5 (MintPy,
     #   h5py) and raises ValueError for other suffixes. validate keeps its own .npz reader
-    #   because it accepts explicit lat0/lon0/pixel_m/heading/incidence overrides.
+    #   because it accepts explicit lat0/lon0/pixel_m/heading/incidence overrides and places a
+    #   coordinate-less stack on the AOI/engine grid the pipeline uses, while io.formats uses a
+    #   centred display grid (io/formats.py::synthetic_latlon_grid) it cannot project to LOS.
     """
     try:
         mod = importlib.import_module("wintersar.io.formats")
@@ -194,8 +247,9 @@ def _formats_loader() -> Callable[[Path], Any] | None:
 def load_timeseries(path: Path | str, **geometry: Any) -> TimeSeries:
     """Load a time series; prefers ``wintersar.io.formats.load_timeseries`` (lazy import).
 
-    ``geometry`` (``lat0_deg``, ``lon0_deg``, ``pixel_m``, ``heading_deg``, ``incidence_deg``)
-    only applies to the ``.npz`` fallback.
+    ``geometry`` (``lat0_deg``, ``lon0_deg``, ``pixel_m``, ``heading_deg``,
+    ``default_heading_deg``, ``incidence_deg``) only applies to the ``.npz`` reader; ``.h5``
+    and friends carry their own geometry.
     """
     p = Path(path)
     if not p.exists():
@@ -334,6 +388,25 @@ def _aoi_origin(aoi_path: Path | None) -> tuple[float, float] | None:
     return max(lats), min(lons)
 
 
+def _report_lang(cfg: Config) -> str:
+    """Language of the stage's report files.
+
+    The repo convention is ``project.language`` (``pipeline.stages.select_precheck_stage``
+    writes its report the same way), while console messages follow ``--lang``. An explicit
+    ``wintersar --lang en run`` should win, but :class:`wintersar.util.clistate.CliState` has
+    no way to say that the language *was* chosen: ``state.lang`` always holds
+    ``WINTERSAR_LANG`` or the ``ko`` default and the root callback exports it unconditionally.
+    So this honours an optional ``lang_explicit`` flag if the shared state ever grows one, and
+    falls back to the config otherwise (reported to the cli/clistate owner).
+    """
+    from wintersar.util.clistate import state
+
+    lang = getattr(state, "lang", None)
+    if getattr(state, "lang_explicit", False) and lang in ("ko", "en"):
+        return str(lang)
+    return str(cfg.project.language)
+
+
 def run_validate(
     cfg: Config,
     inputs: Artifacts,
@@ -369,16 +442,18 @@ def run_validate(
             max_gap_days=DEFAULT_MAX_GAP_DAYS,
             findings=[f],
         )
-        paths = write_report(empty, out_dir, cfg.project.language, plots=False)
+        paths = write_report(empty, out_dir, _report_lang(cfg), plots=False)
         log.write_text("no timeseries artifact\n", encoding="utf-8")
         return _artifacts(paths, empty), findings
     origin = _aoi_origin(cfg.aoi)
-    geometry: dict[str, Any] = {
-        "pixel_m": float(cfg.engine.target_pixel_m),
-        "heading_deg": default_heading(
-            None if cfg.data.orbit_direction == "auto" else cfg.data.orbit_direction
-        ),
-    }
+    geometry: dict[str, Any] = {"pixel_m": float(cfg.engine.target_pixel_m)}
+    # ``orbit_direction: auto`` means "not decided yet": pass no heading at all rather than
+    # the descending default, which would silently invert the GNSS east/north terms of an
+    # ascending stack. The value is a *fallback*, so a time series that carries its own
+    # (measured) heading keeps it.
+    heading = heading_for_orbit(cfg.data.orbit_direction)
+    if heading is not None:
+        geometry["default_heading_deg"] = heading
     if origin is not None:
         geometry["lat0_deg"], geometry["lon0_deg"] = origin
     try:
@@ -387,7 +462,7 @@ def run_validate(
             leveling,
             gnss,
             out_dir,
-            cfg.project.language,
+            _report_lang(cfg),
             radius_m=radius,
             plots=True,
             geometry=geometry,
@@ -423,6 +498,7 @@ def _artifacts(paths: dict[str, Path], result: ComparisonResult) -> Artifacts:
 
 
 __all__ = [
+    "NPZ_SCALARS",
     "SYNTHETIC_LAT0_DEG",
     "SYNTHETIC_LON0_DEG",
     "SYNTHETIC_PIXEL_M",

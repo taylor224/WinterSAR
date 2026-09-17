@@ -139,6 +139,13 @@ MINTPY_LOAD_PATTERNS: dict[str, str] = {
 }
 ISCE_RASTER_READER = "wintersar.io.formats.read_isce_raster"  # owned by the io module
 DEFAULT_NUM_CONNECTIONS = 3  # wintersar selection.sequential_connections default (config.py)
+#: config sections of the canonical stage parameters (``Config.stage_params``) that carry
+#: adapter options; :func:`flatten_stage_params` expands them into flat keys.
+ENGINE_SECTION = "engine"
+DATA_SECTION = "data"
+ISCE2_SECTION = "isce2"
+_SECTION_KEYS = (ENGINE_SECTION, DATA_SECTION, ISCE2_SECTION)
+PAIR_RE = re.compile(r"\d{8}_\d{8}")  # merged/interferograms/<ref>_<sec>
 SLC_MANIFEST = "slc_manifest.json"
 COREG_MANIFEST = "coreg_manifest.json"
 IGRAMS_MANIFEST = "igrams_manifest.json"
@@ -402,6 +409,32 @@ def list_safe_products(slc_dir: Path) -> list[Path]:
     return []
 
 
+def flatten_stage_params(params: Mapping[str, Any]) -> dict[str, Any]:
+    """Flatten the canonical stage mapping into one dict of adapter options.
+
+    ``Config.stage_params`` keeps the config **sections nested** and
+    :func:`wintersar.pipeline.dag.canonical_params` merges CLI overrides on top of them, so
+    the executor hands ``coregister``/``interferogram``/``multilook`` a
+    ``{"engine": {..., "isce2": {...}}}`` mapping and ``fetch`` a ``{"data": {...}}`` one,
+    while tests and :func:`wintersar.pipeline.api` callers may pass the flat form.
+    Precedence, lowest first: ``data`` → ``engine`` → ``engine.isce2`` → ``isce2`` →
+    top-level keys (an explicit ``--set <stage>.looks=[5,1]`` override wins over the section).
+    """
+    merged: dict[str, Any] = {}
+    for section in (DATA_SECTION, ENGINE_SECTION):
+        block = params.get(section)
+        if isinstance(block, Mapping):
+            merged.update({str(k): v for k, v in block.items() if k != ISCE2_SECTION})
+            nested = block.get(ISCE2_SECTION)
+            if isinstance(nested, Mapping):
+                merged.update({str(k): v for k, v in nested.items()})
+    sub = params.get(ISCE2_SECTION)
+    if isinstance(sub, Mapping):
+        merged.update({str(k): v for k, v in sub.items()})
+    merged.update({k: v for k, v in params.items() if k not in _SECTION_KEYS})
+    return merged
+
+
 def load_stack(inputs: Artifacts, params: Mapping[str, Any]) -> StackCandidate | None:
     """``stack.json`` (precheck output) from ``inputs['stack']`` or ``params['stack']``."""
     path: Path | None = None
@@ -457,6 +490,25 @@ def bbox_snwe(
     return None
 
 
+def num_connections_from_pairs(
+    pairs: Sequence[str],
+    dates: Sequence[date | str] = (),
+    default: int = DEFAULT_NUM_CONNECTIONS,
+) -> int:
+    """Smallest nearest-N that covers every ``<ref>_<sec>`` pair key (SEL network → ``-c``).
+
+    ``dates`` extends the acquisition order with dates that no pair references (they still
+    shift the neighbour index in ``selectNeighborPairs``).
+    """
+    keys = [m.group(0) for m in (PAIR_RE.fullmatch(str(k)) for k in pairs) if m is not None]
+    if not keys:
+        return default
+    days = {d for k in keys for d in k.split("_")} | {_ymd(d) for d in dates}
+    order = {d: i for i, d in enumerate(sorted(days))}
+    spans = [order[b] - order[a] for a, b in (k.split("_") for k in keys)]
+    return max(1, max(spans)) if spans else default
+
+
 def derive_num_connections(
     stack: StackCandidate | None, default: int = DEFAULT_NUM_CONNECTIONS
 ) -> int:
@@ -464,13 +516,9 @@ def derive_num_connections(
     ``(date[i], date[j])`` for ``j`` up to ``i + num_connections``)."""
     if stack is None or not stack.pairs or not stack.dates:
         return default
-    order = {d: i for i, d in enumerate(sorted(stack.dates))}
-    spans = [
-        order[p.secondary] - order[p.reference]
-        for p in stack.pairs
-        if p.reference in order and p.secondary in order
-    ]
-    return max(1, max(spans)) if spans else default
+    return num_connections_from_pairs(
+        [p.key for p in stack.pairs], list(stack.dates), default=default
+    )
 
 
 def resolve_looks(
@@ -502,9 +550,7 @@ def merged_pairs(workdir: Path) -> list[str]:
     root = Path(workdir) / "merged" / "interferograms"
     if not root.is_dir():
         return []
-    return sorted(
-        p.name for p in root.iterdir() if p.is_dir() and re.fullmatch(r"\d{8}_\d{8}", p.name)
-    )
+    return sorted(p.name for p in root.iterdir() if p.is_dir() and PAIR_RE.fullmatch(p.name))
 
 
 def _dates_from_pairs(pairs: Sequence[str]) -> list[str]:
@@ -647,10 +693,7 @@ class Isce2TopsStackEngine(Engine):
             raise ValueError(msg)
         if self._runner is _subprocess_runner and stage != "multilook":
             self.require_available()  # EngineNotAvailableError (ENV-001)
-        merged = dict(params)
-        sub = params.get("isce2")
-        if isinstance(sub, Mapping):
-            merged.update(sub)
+        merged = flatten_stage_params(params)
         out = Path(params.get("_out_dir") or Path(log_dir).parent)
         out.mkdir(parents=True, exist_ok=True)
         log_dir = Path(log_dir)
@@ -787,6 +830,27 @@ class Isce2TopsStackEngine(Engine):
             )
         )
 
+    @staticmethod
+    def _num_connections(manifest: Mapping[str, Any], stack: StackCandidate | None) -> int:
+        """``-c/--num_connections`` covering the selected network (SEL rules).
+
+        The executor only forwards ``StageSpec('coregister').inputs`` (``slc_manifest``), so the
+        precheck ``stack`` is usually absent here; ``fetch`` stored the selected pair keys in
+        ``slc_manifest.json`` for exactly this reason.
+        """
+        if stack is not None:
+            return derive_num_connections(stack)
+        pairs = manifest.get("pairs")
+        dates = manifest.get("dates")
+        return num_connections_from_pairs(
+            [str(x) for x in pairs]
+            if isinstance(pairs, Sequence) and not isinstance(pairs, str)
+            else (),
+            [str(d) for d in dates]
+            if isinstance(dates, Sequence) and not isinstance(dates, str)
+            else (),
+        )
+
     def _b2s_runner(self) -> burst2safe.Runner | None:
         return None if self._runner is _subprocess_runner else self._runner
 
@@ -873,7 +937,7 @@ class Isce2TopsStackEngine(Engine):
                     pixel_m=round(float(looks_info.get("pixel_m", 0.0)), 1),
                 )
             )
-        n_conn = int(p.get("num_connections") or derive_num_connections(stack))
+        n_conn = int(p.get("num_connections") or self._num_connections(m, stack))
         if not p.get("num_connections"):
             ctx.findings.append(_finding("ISCE2-013", "INFO", "coregister", n=n_conn))
         filt_raw = p.get("filter")

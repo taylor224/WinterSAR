@@ -385,6 +385,16 @@ def perp_by_date_from_pairs(pairs: Iterable[Pair], origin: date | None = None) -
 
 def network_components(dates: Sequence[date], pairs: Iterable[Pair]) -> int:
     """Number of connected components of the pair graph over ``dates``."""
+    return len(connected_components(dates, pairs))
+
+
+def connected_components(dates: Sequence[date], pairs: Iterable[Pair]) -> list[list[date]]:
+    """Connected components of the pair graph over ``dates``, each sorted, largest first.
+
+    A stack whose network falls apart into several components cannot be inverted as one
+    time series, so the component count and the dates outside the largest component are
+    reported by :func:`network_summary` and by the precheck candidate table.
+    """
     parent: dict[date, date] = {d: d for d in dates}
 
     def find(x: date) -> date:
@@ -396,16 +406,25 @@ def network_components(dates: Sequence[date], pairs: Iterable[Pair]) -> int:
     for p in pairs:
         if p.reference in parent and p.secondary in parent:
             parent[find(p.reference)] = find(p.secondary)
-    return len({find(d) for d in parent}) if parent else 0
+    groups: dict[date, list[date]] = defaultdict(list)
+    for d in sorted(parent):
+        groups[find(d)].append(d)
+    return sorted(groups.values(), key=lambda g: (-len(g), g[0]))
 
 
 def network_summary(dates: Sequence[date], pairs: Sequence[Pair], method: str) -> dict[str, Any]:
     perps = [abs(p.perp_baseline_m) for p in pairs if p.perp_baseline_m is not None]
     temps = [p.temporal_baseline_days for p in pairs]
+    comps = connected_components(dates, pairs)
+    # Dates outside the largest component: the ones to drop (or re-connect) so that the
+    # stack inverts as a single time series.
+    disconnected = [d for g in comps[1:] for d in g]
     return {
         "method": method,
         "n_pairs": len(pairs),
-        "n_components": network_components(dates, pairs),
+        "n_components": len(comps),
+        "n_dates_disconnected": len(disconnected),
+        "dates_disconnected": [d.isoformat() for d in sorted(disconnected)],
         "n_with_baseline": len(perps),
         "temporal_days": _min_med_max(temps),
         "perp_m": _min_med_max(perps),
@@ -426,17 +445,33 @@ def with_baselines(
 ) -> StackCandidate:
     """Return a copy of ``candidate`` with baseline-bearing ``pairs``: for ``sbas`` the
     perpendicular threshold is re-applied, the reference date is re-recommended with the
-    integrated per-date baselines and the network summary is refreshed."""
+    integrated per-date baselines and the network summary is refreshed.
+
+    Re-applying the threshold is the prescribed SBAS remedy (ADR-0016) but it can leave
+    the network in several components, so the removed pairs (``n_pairs_dropped_perp`` /
+    ``pairs_dropped_perp``) and the connectivity of what remains (``n_components`` /
+    ``dates_disconnected``) are recorded in ``notes["network"]`` and shown in the
+    precheck candidate table. ``candidate.dates`` is never changed here.
+    """
     new_pairs = list(pairs)
+    dropped: list[Pair] = []
     if selection.network == "sbas":
-        new_pairs = [
-            p
-            for p in new_pairs
-            if p.perp_baseline_m is None or abs(p.perp_baseline_m) <= selection.max_perp_baseline_m
-        ]
+        kept: list[Pair] = []
+        for p in new_pairs:
+            over = (
+                p.perp_baseline_m is not None
+                and abs(p.perp_baseline_m) > selection.max_perp_baseline_m
+            )
+            (dropped if over else kept).append(p)
+        new_pairs = kept
     perp = perp_by_date_from_pairs(pairs)
     ref = recommend_reference(candidate.dates, perp) if candidate.dates else None
     notes = dict(candidate.notes)
-    notes["network"] = network_summary(candidate.dates, new_pairs, selection.network)
+    summary = network_summary(candidate.dates, new_pairs, selection.network)
+    # Pairs the SBAS perpendicular threshold removed: without this the removal is
+    # invisible (the pairs are simply gone from ``candidate.pairs``).
+    summary["n_pairs_dropped_perp"] = len(dropped)
+    summary["pairs_dropped_perp"] = [p.key for p in dropped]
+    notes["network"] = summary
     notes["perp_by_date"] = {d.isoformat(): v for d, v in sorted(perp.items())}
     return candidate.model_copy(update={"pairs": new_pairs, "reference_date": ref, "notes": notes})

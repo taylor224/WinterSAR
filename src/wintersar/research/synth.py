@@ -18,18 +18,25 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from numpy.typing import NDArray
 
 from wintersar.io.schemas import Pair
+from wintersar.unwrap.tiling import tile_grid
 
 WAVELENGTH_S1_M = 0.05546576  # C-band, 5.405 GHz
-PHASE_PER_M_LOS = -4.0 * np.pi / WAVELENGTH_S1_M  # radians per metre of LOS *range change*
+# radians per metre of LOS *displacement*, positive = towards the satellite (range
+# decrease): phase = -(4π/λ)·d_LOS, i.e. +4π/λ per metre of range increase (ADR-0040,
+# io.timeseries, HyP3: "negative values indicate movement towards the sensor")
+PHASE_PER_M_LOS = -4.0 * np.pi / WAVELENGTH_S1_M
 
 FloatArray = NDArray[np.float64]
 ComplexArray = NDArray[np.complex128]
+#: Phase-noise model of :func:`_phase_noise` — ``crlb`` is the Cramér-Rao lower bound
+#: (default, optimistic at ``looks=1``), ``exact`` the true multi-look phase distribution.
+NoiseModel = Literal["crlb", "exact"]
 
 
 def deformation_field(
@@ -117,14 +124,48 @@ def wrap(phase: FloatArray) -> FloatArray:
     return np.asarray(np.angle(np.exp(1j * phase)), dtype=np.float64)
 
 
-def _phase_noise(coh: FloatArray, rng: np.random.Generator, looks: int = 1) -> FloatArray:
-    """Circular-Gaussian phase noise whose std follows the coherence (Cramér-Rao-like).
+def _phase_noise(
+    coh: FloatArray,
+    rng: np.random.Generator,
+    looks: int = 1,
+    model: str = "crlb",
+) -> FloatArray:
+    """Interferometric phase noise (radians) for a coherence map (:data:`NoiseModel`).
 
-    std ≈ sqrt((1-γ²)/(2·L·γ²)); clipped to [0, π/√3] (uniform-phase limit).
+    ``model="crlb"`` (default): zero-mean Gaussian with the Cramér-Rao std
+    ``sqrt((1-γ²)/(2·L·γ²))``, clipped to ``[0, π/√3]`` (the uniform-phase limit). This is a
+    *lower bound*, not the real distribution: it is tight for many looks (within ~5 % of the
+    true std at ``L=16``) but optimistic at ``L=1``, where the exact single-look phase pdf
+    (Lee, Hoppel, Mango & Miller 1994, IEEE TGRS 32(5):1017-1028, doi:10.1109/36.312890)
+    gives up to ~2.2x the std (gamma 0.8: 0.92 vs 0.53 rad, gamma 0.95: 0.52 vs 0.23 rad).
+    Synthetic stacks built with ``looks=1`` are therefore optimistically clean.
+
+    ``model="exact"``: draws the real distribution instead — ``L`` independent correlated
+    circular-Gaussian pairs per pixel, ``angle(mean_L(s1 · conj(s2)))`` with
+    ``E[s1 s2*] = gamma`` — so ``looks=1`` is as noisy as real single-look data and larger
+    ``looks`` converge on the CRLB from above.
+
+    The default stays ``"crlb"``: the synthetic-noise model is a domain checkpoint and is not
+    changed before the researcher confirms (rule 11.10, ADR-0060).
     """
-    g2 = coh * coh
-    std = np.sqrt(np.clip((1.0 - g2) / (2.0 * max(looks, 1) * g2), 0.0, (np.pi**2) / 3.0))
-    return rng.standard_normal(coh.shape) * std
+    g = np.clip(np.asarray(coh, dtype=np.float64), 0.0, 1.0)
+    n_looks = max(int(looks), 1)
+    if model == "crlb":
+        g2 = g * g
+        with np.errstate(divide="ignore", invalid="ignore"):
+            var = np.where(g2 > 0, (1.0 - g2) / (2.0 * n_looks * g2), np.inf)
+        return np.asarray(
+            rng.standard_normal(g.shape) * np.sqrt(np.clip(var, 0.0, (np.pi**2) / 3.0)),
+            dtype=np.float64,
+        )
+    if model != "exact":
+        msg = f"unknown noise model {model!r} (crlb | exact)"
+        raise ValueError(msg)
+    shape = (n_looks, *g.shape)
+    s1 = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)) / np.sqrt(2.0)
+    ind = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)) / np.sqrt(2.0)
+    s2 = g * s1 + np.sqrt(np.maximum(1.0 - g * g, 0.0)) * ind
+    return np.asarray(np.angle(np.mean(s1 * np.conj(s2), axis=0)), dtype=np.float64)
 
 
 @dataclass
@@ -152,16 +193,30 @@ def make_interferogram(
     displacement_m: FloatArray | None = None,
     deformation_kind: str = "gaussian",
     deformation_amplitude_m: float = -0.05,
+    deformation_ramp: tuple[float, float] = (0.0, 0.0),
+    deformation_sigma_px: float | None = None,
     atmosphere_std_rad: float = 1.0,
     coherence_base: float = 0.8,
     looks: int = 1,
     water_fraction: float = 0.0,
     dem_error_rad: float = 0.0,
+    noise_model: NoiseModel = "crlb",
 ) -> SynthIgram:
-    """One synthetic interferogram with ground truth."""
+    """One synthetic interferogram with ground truth.
+
+    ``deformation_ramp`` / ``deformation_sigma_px`` are the ``linear`` / ``gaussian``
+    parameters of :func:`deformation_field`; ``noise_model`` selects the phase-noise
+    distribution (see :func:`_phase_noise` — ``crlb`` understates ``looks=1`` noise).
+    """
     rng = rng or np.random.default_rng(0)
     if displacement_m is None:
-        displacement_m = deformation_field(shape, deformation_kind, deformation_amplitude_m)
+        displacement_m = deformation_field(
+            shape,
+            deformation_kind,
+            deformation_amplitude_m,
+            sigma_px=deformation_sigma_px,
+            ramp=(float(deformation_ramp[0]), float(deformation_ramp[1])),
+        )
     atmo = (
         turbulent_atmosphere(shape, rng, atmosphere_std_rad)
         if atmosphere_std_rad > 0
@@ -176,7 +231,7 @@ def make_interferogram(
     mask = water_mask(shape, water_fraction) if water_fraction > 0 else np.zeros(shape, dtype=bool)
     coh = np.where(mask, 0.02, coh)
     unw_true = PHASE_PER_M_LOS * displacement_m + atmo + topo
-    noisy = unw_true + _phase_noise(coh, rng, looks)
+    noisy = unw_true + _phase_noise(coh, rng, looks, noise_model)
     return SynthIgram(
         wrapped=wrap(noisy),
         unw_true=unw_true,
@@ -184,7 +239,11 @@ def make_interferogram(
         mask=mask,
         displacement_m=displacement_m,
         atmosphere=atmo,
-        meta={"deformation_kind": deformation_kind, "looks": looks},
+        meta={
+            "deformation_kind": deformation_kind,
+            "looks": looks,
+            "noise_model": noise_model,
+        },
     )
 
 
@@ -239,8 +298,13 @@ def make_stack(
     max_temporal_days: int = 48,
     looks: int = 1,
     water_fraction: float = 0.0,
+    noise_model: NoiseModel = "crlb",
 ) -> SynthStack:
-    """SBAS-consistent synthetic stack: linear velocity bowl + per-date atmosphere."""
+    """SBAS-consistent synthetic stack: linear velocity bowl + per-date atmosphere.
+
+    ``noise_model`` is passed to :func:`_phase_noise`; the ``looks=1`` default is the
+    Cramér-Rao lower bound, so it is cleaner than real single-look data.
+    """
     rng = rng or np.random.default_rng(0)
     dates = [start + timedelta(days=repeat_days * i) for i in range(n_dates)]
     vel = deformation_field(shape, "gaussian", velocity_peak_m_per_yr)
@@ -262,7 +326,7 @@ def make_stack(
         )
         coh = np.where(mask, 0.02, coh)
         unw_true = PHASE_PER_M_LOS * ddisp + datmo
-        noisy = unw_true + _phase_noise(coh, rng, looks)
+        noisy = unw_true + _phase_noise(coh, rng, looks, noise_model)
         igrams[p.key] = SynthIgram(
             wrapped=wrap(noisy),
             unw_true=unw_true,
@@ -270,7 +334,7 @@ def make_stack(
             mask=mask,
             displacement_m=ddisp,
             atmosphere=datmo,
-            meta={"looks": looks},
+            meta={"looks": looks, "noise_model": noise_model},
         )
     return SynthStack(
         dates=dates,
@@ -502,35 +566,11 @@ def layover_mask_from_ridge(
 TileArray = tuple[FloatArray, slice, slice]
 
 
-def _tile_slices_local(
-    shape: tuple[int, int], rows: int, cols: int, overlap: int
-) -> list[tuple[slice, slice]]:
-    """Fallback partition when ``wintersar.unwrap.tiling`` is not importable: same rule as
-    ``tiling._axis_partition`` (``overlap // 2`` below the core edge, the rest above)."""
-
-    def axis(n: int, k: int) -> list[slice]:
-        edges = [round(i * n / k) for i in range(k + 1)]
-        lo, hi = overlap // 2, overlap - overlap // 2
-        return [
-            slice(
-                0 if i == 0 else max(0, edges[i] - lo),
-                n if i == k - 1 else min(n, edges[i + 1] + hi),
-            )
-            for i in range(k)
-        ]
-
-    return [(sy, sx) for sy in axis(shape[0], rows) for sx in axis(shape[1], cols)]
-
-
 def tile_slices(
     shape: tuple[int, int], rows: int, cols: int, overlap: int
 ) -> list[tuple[slice, slice]]:
-    """Row-major tile extents (with overlap) — ``wintersar.unwrap.tiling.tile_grid`` when
-    available (ADR-0046/0048 semantics), else the local equivalent."""
-    try:
-        from wintersar.unwrap.tiling import tile_grid
-    except ImportError:  # pragma: no cover - tiling is part of the same tree
-        return _tile_slices_local(shape, rows, cols, overlap)
+    """Row-major tile extents (with overlap) — the shared partition
+    ``wintersar.unwrap.tiling.tile_grid`` (ADR-0046/0048 semantics)."""
     return [(tl.slice_y, tl.slice_x) for tl in tile_grid(shape, rows, cols, overlap)]
 
 

@@ -43,6 +43,7 @@
       <th>{{ labels.col_stack }}</th><th>{{ labels.col_track }}</th><th>{{ labels.col_direction }}</th>
       <th>{{ labels.col_polarization }}</th><th>{{ labels.col_subswaths }}</th><th>{{ labels.col_n_dates }}</th>
       <th>{{ labels.col_n_bursts }}</th><th>{{ labels.col_coverage }}</th><th>{{ labels.col_n_pairs }}</th>
+      <th>{{ labels.col_pairs_dropped }}</th><th>{{ labels.col_components }}</th>
       <th>{{ labels.col_reference }}</th><th>{{ labels.col_period }}</th><th>{{ labels.col_perp }}</th><th>{{ labels.col_temporal }}</th>
     </tr></thead>
     <tbody>
@@ -51,6 +52,8 @@
         <td>{{ row.stack_id }}</td><td class="num">{{ row.relative_orbit }}</td><td>{{ row.flight_direction }}</td>
         <td>{{ row.polarization }}</td><td>{{ row.subswaths | join('+') or labels.unknown }}</td><td class="num">{{ row.n_dates }}</td>
         <td class="num">{{ row.n_bursts }}</td><td class="num">{{ '%.1f' | format(row.coverage_of_aoi * 100) }}%</td><td class="num">{{ row.n_pairs }}</td>
+        <td class="num">{{ row.n_pairs_dropped_perp | default(0) }}</td>
+        <td{% if (row.n_components | default(1)) > 1 %} class="WARN"{% endif %}>{{ components_text(row) }}</td>
         <td>{{ row.reference_date or labels.unknown }}</td>
         <td>{% if row.first_date %}{{ row.first_date }} ~ {{ row.last_date }}{% else %}{{ labels.unknown }}{% endif %}</td>
         <td class="num">{{ fmt_range(row.perp_m) }}</td><td class="num">{{ fmt_range(row.temporal_days) }}</td>

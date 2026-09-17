@@ -61,6 +61,36 @@ def _predictor(dtype: np.dtype[Any], compress: str, predictor: str) -> str | Non
     return "FLOATING_POINT" if np.issubdtype(dtype, np.floating) else "STANDARD"
 
 
+# rasterio/GDAL has no bool or float16 band type; both cast losslessly to a type it has.
+# source: .venv/lib/python3.11/site-packages/rasterio/dtypes.py::check_dtype / dtype_ranges
+CAST_DTYPES: dict[str, str] = {"bool": "uint8", "float16": "float32"}
+
+
+def _writable_array(array: NDArray[Any]) -> NDArray[Any]:
+    """``(bands, ny, nx)`` array with a dtype GDAL can write; raises ``ValueError`` otherwise."""
+    from rasterio.dtypes import check_dtype, dtype_ranges
+
+    arr = np.asarray(array)
+    if arr.ndim == 2:
+        arr = arr[None, :, :]
+    if arr.ndim != 3:
+        msg = f"array must be 2-D or 3-D, got shape {arr.shape}"
+        raise ValueError(msg)
+    if min(arr.shape) == 0:
+        msg = f"array must not be empty, got shape {arr.shape} (bands, ny, nx)"
+        raise ValueError(msg)
+    cast = CAST_DTYPES.get(arr.dtype.name)
+    if cast is not None:
+        arr = arr.astype(cast)
+    if not check_dtype(arr.dtype):
+        msg = (
+            f"dtype {arr.dtype.name} cannot be written as a GeoTIFF band; "
+            f"cast it first (GDAL types: {sorted(dtype_ranges)})"
+        )
+        raise ValueError(msg)
+    return arr
+
+
 def write_cog(
     array: NDArray[Any],
     transform: Any,
@@ -82,8 +112,11 @@ def write_cog(
     ``transform`` is an ``affine.Affine`` (or 6-tuple) mapping pixel → CRS coordinates,
     ``crs`` anything ``rasterio.crs.CRS.from_user_input`` accepts (e.g. ``"EPSG:4326"``).
     ``compress`` ∈ :data:`COMPRESSORS`; ``blocksize`` must be a multiple of 16. NaN ``nodata``
-    is only valid for float arrays. Falls back to tiled GTiff + overviews when the GDAL build
-    has no COG driver. Returns ``path`` after :func:`check_cog` passed.
+    is only valid for float arrays, any other ``nodata`` must fit the array dtype. ``bool`` and
+    ``float16`` arrays are cast losslessly (uint8 / float32); every other dtype GDAL does not
+    know, and an empty extent, raise ``ValueError`` here instead of a raw rasterio/GDAL error.
+    Falls back to tiled GTiff + overviews when the GDAL build has no COG driver. Returns
+    ``path`` after :func:`check_cog` passed.
     """
     import rasterio
     from affine import Affine
@@ -91,12 +124,7 @@ def write_cog(
 
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    arr = np.asarray(array)
-    if arr.ndim == 2:
-        arr = arr[None, :, :]
-    if arr.ndim != 3:
-        msg = f"array must be 2-D or 3-D, got shape {arr.shape}"
-        raise ValueError(msg)
+    arr = _writable_array(array)
     compress = compress.upper()
     if compress not in COMPRESSORS:
         msg = f"compress must be one of {COMPRESSORS}, got {compress!r}"
@@ -108,6 +136,14 @@ def write_cog(
     if nan_nodata and not np.issubdtype(arr.dtype, np.floating):
         msg = f"NaN nodata is only valid for float arrays (dtype {arr.dtype})"
         raise ValueError(msg)
+    if nodata is not None and not nan_nodata:
+        # source: .venv/lib/python3.11/site-packages/rasterio/dtypes.py::in_dtype_range —
+        # GDAL silently drops a nodata value the band dtype cannot hold (uint8 + 300 -> None)
+        from rasterio.dtypes import in_dtype_range
+
+        if not in_dtype_range(nodata, arr.dtype):
+            msg = f"nodata {nodata!r} is outside the range of dtype {arr.dtype.name}"
+            raise ValueError(msg)
     tr = transform if isinstance(transform, Affine) else Affine(*tuple(transform)[:6])
     crs_obj = CRS.from_user_input(crs)
     pred = _predictor(arr.dtype, compress, predictor)
@@ -288,17 +324,34 @@ def _oriented(arr: NDArray[Any], flip: bool) -> NDArray[Any]:
     return np.ascontiguousarray(arr[::-1, ...]) if flip else np.ascontiguousarray(arr)
 
 
+MIN_VELOCITY_SAMPLES = 2  # a slope needs two finite epochs (same rule as validate.metrics)
+
+
 def fit_velocity(ts: TimeSeries) -> NDArray[np.float32]:
     """Per-pixel least-squares slope of displacement vs. time (m/yr) — a plain linear fit,
-    used only when the engine did not export a velocity map (not an SBAS inversion)."""
-    years = ts.years()
+    used only when the engine did not export a velocity map (not an SBAS inversion).
+
+    The fit is per pixel over that pixel's *finite* epochs only: a pixel with fewer than
+    :data:`MIN_VELOCITY_SAMPLES` finite samples (masked / no-data) stays NaN instead of
+    collapsing to 0 m/yr, which an exported COG would show as stable ground
+    (same NaN convention as :func:`wintersar.validate.metrics.fit_velocity`).
+    """
+    years = np.asarray(ts.years(), dtype=np.float64)
     d = np.asarray(ts.displacement_m, dtype=np.float64)
-    t = years - years.mean()
-    denom = float(np.sum(t * t))
-    if denom == 0.0:
-        return np.full(ts.shape, np.nan, dtype=np.float32)
-    dm = d - np.nanmean(d, axis=0)
-    slope = np.nansum(t[:, None, None] * dm, axis=0) / denom
+    valid = np.isfinite(d)
+    n = valid.sum(axis=0)
+    yrs = np.broadcast_to(years[:, None, None], d.shape)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        safe_n = np.where(n > 0, n, 1).astype(np.float64)
+        t_mean = np.where(valid, yrs, 0.0).sum(axis=0) / safe_n
+        d_mean = np.where(valid, d, 0.0).sum(axis=0) / safe_n
+        tc = np.where(valid, yrs - t_mean[None], 0.0)
+        dc = np.where(valid, d - d_mean[None], 0.0)
+        denom = (tc * tc).sum(axis=0)
+        slope = np.where(
+            denom > 0.0, (tc * dc).sum(axis=0) / np.where(denom > 0.0, denom, 1.0), np.nan
+        )
+    slope = np.where(n >= MIN_VELOCITY_SAMPLES, slope, np.nan)
     return np.asarray(slope, dtype=np.float32)
 
 

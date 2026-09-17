@@ -24,9 +24,14 @@ jobs:
           uv run ruff format --check src tests
       - name: Mypy
         run: uv run mypy
+      # `engine`-marked tests are adapter *contract* tests driven by stubs/mocks (plan §3.3:
+      # "an engine version bump must break the adapter tests first"), so they must run here;
+      # only `engine_real` needs an actual engine installed.
       - name: Unit + integration (synthetic, no network)
-        run: uv run pytest -m "not network and not engine and not gpu" --cov --cov-report=xml
-      - name: Synthetic bench S (regression guard, PERF/§6.3)
+        run: uv run pytest -m "not network and not engine_real and not gpu" --cov --cov-report=xml
+      # Measurement only: the regression gate (--compare/--fail-on-regression against a
+      # committed baseline) waits for open question #58 (which runner class to baseline on).
+      - name: Synthetic bench S (measure + artifact; gate pending OQ #58)
         run: uv run wintersar --json bench --site benchmarks/sites/S_synthetic.yaml --out bench_result.json
       - uses: actions/upload-artifact@v4
         with:
@@ -41,3 +46,5 @@ jobs:
         run: docker build -t wintersar:ci .
       - name: Smoke
         run: docker run --rm wintersar:ci wintersar --json check-install
+      - name: Smoke (strict, fake engine only)
+        run: docker run --rm wintersar:ci wintersar --json check-install --strict --engine fake

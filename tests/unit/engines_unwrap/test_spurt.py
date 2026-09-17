@@ -138,7 +138,11 @@ def test_run_with_fake_executable(
         "_cores": 4,
     }
     arts = eng.run("unwrap", inputs, params, out / "logs")
-    assert set(arts.items) == {"unw_stack", "unw_stats"}
+    # "unw" is the StageSpec("unwrap", ...) output name that snaphu/tophu also emit, so the
+    # DAG resolves timeseries for every unwrap engine; "unw_stack" is the ADR-0025 alias.
+    assert set(arts.items) == {"unw", "unw_stack", "unw_stats"}
+    assert arts["unw"].path == arts["unw_stack"].path
+    assert arts["unw"].kind == "dir" and arts["unw"].meta["layout"] == sp.SPURT_STACK_LAYOUT
     stack_dir = arts["unw_stack"].path
     assert stack_dir == out / "emcf" and arts["unw_stack"].kind == "dir"
     argv = json.loads((stack_dir / "argv.json").read_text())

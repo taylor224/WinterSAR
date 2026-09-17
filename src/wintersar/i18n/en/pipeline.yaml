@@ -2,10 +2,13 @@
 pipeline:
   PIPELINE-001:
     cause: "Stage '{stage}' (engine {engine}) failed: {error}"
-    fix: "Inspect the log in {log_dir}, run 'wintersar diagnose {log_dir} --engine {engine}' for the cause, then resume with 'wintersar run --from {stage}'."
+    fix: "Inspect the log in {log_dir}, run 'wintersar diagnose {log_dir} --engine {kb_engine}' for the cause, then resume with 'wintersar run --from {stage}'."
+    fix_auto: "Inspect the log in {log_dir}, run 'wintersar diagnose {log_dir}' for the cause (the knowledge base has no entry for engine {engine}), then resume with 'wintersar run --from {stage}'."
   PIPELINE-002:
     cause: "Stage '{stage}' needs input '{artifact}' (produced by {producer}) but no cached result exists."
     fix: "Run without --from, or run 'wintersar run --until {producer}' first to build the upstream stages."
+    cause_no_cache: "Stage '{stage}' has no cached result ({artifact}) and --from starts after it."
+    fix_no_cache: "Run without --from, or build it first with 'wintersar run --until {stage}'."
   PIPELINE-003:
     cause: "No cache entry matches the current configuration of stage '{stage}'; reusing the most recent result ({node_hash}, {finished_at}) because of --from."
     fix: "If you changed upstream settings, run without --from so the stage is recomputed."
@@ -33,6 +36,15 @@ pipeline:
   PIPELINE-010:
     cause: "Validation stage skipped: neither validate.leveling_csv nor validate.gnss is configured."
     fix: "If you have ground truth, set its path in the validate section of config.yaml."
+  PIPELINE-012:
+    cause: "Ground-truth file configured as {key} does not exist: {path}"
+    fix: "Correct the path in the validate section of config.yaml or remove the entry; otherwise the validate stage fails at the end of the run (VAL-006)."
+  PIPELINE-013:
+    cause: "Another run is already executing stage '{stage}' in this work directory ({node_dir})."
+    fix: "Wait until that run finishes (or stop it) and retry; one work directory serves one run at a time."
+  PIPELINE-014:
+    cause: "'{command}' could not start: {detail}"
+    fix: "Check the arguments with 'wintersar {command} --help' (config path, stage names, --set syntax)."
   cli:
     plan_title: "Plan: {project} ({workdir})"
     run_title: "Run: {project} ({workdir})"
@@ -63,8 +75,3 @@ pipeline:
     cache_total: "{n} entries · {size}"
     gc_summary: "removed {n_removed} ({freed}) · kept {n_kept}{dry}"
     gc_dry_suffix: " [dry-run: nothing deleted]"
-    help_plan: "Build the DAG and print which stages are cached / will run plus estimated resources (no execution)."
-    help_run: "Run the pipeline. Cached stages are skipped; only changed stages and their downstream re-run (PERF-03)."
-    help_cache: "Inspect and prune the work-directory cache (work/<stage>/<hash>)."
-    help_cache_ls: "List cached stage results."
-    help_cache_gc: "Keep only the N most recent entries per stage and delete the rest."

@@ -191,3 +191,30 @@ def test_run_reports_missing_backend(synth_stack_npz: Path, tmp_path: Path):
     assert res.exit_code == 1
     payload = json.loads(res.stdout)
     assert payload["ok"] is False
+
+
+def test_run_missing_stack_emits_a_json_envelope_not_a_traceback(tmp_path: Path):
+    """A missing igrams.npz is a UNW-005 finding, never a raw FileNotFoundError."""
+    missing = tmp_path / "missing.npz"
+    res = runner.invoke(
+        app,
+        ["--json", "unwrap", "run", str(missing), "--out", str(tmp_path / "out")],
+    )
+    assert res.exit_code == 1
+    assert res.exception is None or isinstance(res.exception, SystemExit)
+    payload = json.loads(res.stdout)
+    assert payload["ok"] is False
+    assert [f["rule_id"] for f in payload["findings"]] == ["UNW-005"]
+    assert payload["findings"][0]["params"]["detail"] == "interferogram stack not found"
+    stats = json.loads((tmp_path / "out" / "stats.json").read_text(encoding="utf-8"))
+    assert stats["status"] == "failed"
+
+
+def test_run_missing_stack_prints_cause_and_fix(tmp_path: Path):
+    res = runner.invoke(
+        app,
+        ["--lang", "en", "unwrap", "run", str(tmp_path / "gone.npz"), "--out", str(tmp_path / "o")],
+    )
+    assert res.exit_code == 1
+    text = res.output.replace("\n", " ")
+    assert "cannot be read" in text and "UNW-005" in text

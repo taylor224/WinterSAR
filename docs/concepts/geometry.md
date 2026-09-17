@@ -81,3 +81,24 @@ DEM은 `wintersar.select.dem.get_dem(aoi_wkt, cache_dir)`로 받는다(Copernicu
 - Vollrath, Mullissa & Reiche 2020, Remote Sens. 12(11):1867, doi:10.3390/rs12111867 — 레인지/애지머스 경사 분해, GEE 구현
 - ESA Sentinel-1 instrument payload (right-looking): https://sentinel.esa.int/web/sentinel/missions/sentinel-1/instrument-payload
 - HyP3 RTC 제품 가이드(레이오버·셰도우 정의): https://hyp3-docs.asf.alaska.edu/guides/rtc_product_guide/
+
+## English summary
+
+SAR looks sideways and orders the ground by echo delay (slant range), so a slope facing the sensor
+and one facing away from it are recorded very differently — this is pure range geometry, not a
+Doppler effect. With terrain slope `s`, incidence angle `θ` and the range-facing slope component
+`α_r`: `0 < α_r < θ` gives **foreshortening** (the slope is compressed; phase is usable but the
+per-pixel terrain change stresses unwrapping and the DEM residual), `α_r > θ` gives **layover** (the
+summit echoes back before the foot, several points land in one pixel; phase unusable) and
+`α_r < −(90° − θ)` gives **shadow** (no signal; phase unusable). Sentinel-1 is right-looking, so an
+ascending pass (heading ≈ −12°, looking east) lays over west-facing slopes and a descending pass
+(heading ≈ 192°, looking west) lays over east-facing ones — a north–south ridge flips flanks between
+the two. `wintersar` precheck rule `SEL-12` computes both masks from the AOI DEM and recommends the
+direction with the lower layover+shadow fraction; layover and shadow pixels are masked before
+unwrapping (`unwrap.mask.layover`, PERF-04), while high-foreshortening pixels are kept but never used
+as the reference point. On the ISCE2 path, `geom_reference/IW*/shadowMask_NN.rdr`
+(1 = layover, 2 = shadow, 3 = both) wins over the built-in mask (ADR-0019). Angle conventions are
+fixed in ADR-0017: azimuth clockwise from north, `look azimuth = heading + 90`, ground-to-sensor
+azimuth = `heading + 270`, `cos θ_loc = cos s cos θ + sin s sin θ cos(φ_sen − a)`. Code entry points:
+`wintersar.select.geometry_masks.masks_for_both_directions` / `recommend_direction` /
+`compute_from_dem_file` / `write_mask_geotiff`, with the DEM from `wintersar.select.dem.get_dem`.

@@ -139,6 +139,9 @@ def build_plan(
         eng = dag.engine(name)
         if eng is not None:
             findings.extend(eng.check_install())
+    if not to_run:
+        # nothing will execute: the additional cost is zero, not "unknown"
+        total = Resources(wall_time_s=0.0, peak_rss_gb=0.0, disk_gb=0.0, network_gb=0.0)
     plan = Plan(stages=stages, to_run=to_run, cached=cached, resources=total, findings=findings)
     plan.resources.notes["estimates"] = {
         s: r.model_dump(mode="json", exclude_none=True) for s, r in estimates.items()

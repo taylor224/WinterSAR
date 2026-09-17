@@ -31,7 +31,7 @@ Sentinel-1 IW 는 TOPS(Terrain Observation by Progressive Scans) 방식으로 �
 
 - `engine.esd: true`(기본) — ISCE2 topsStack 경로에서 ESD 를 켭니다. HyP3 는 자체 절차를 따릅니다.
 - 보조 데이터(궤도·DEM)는 콘텐츠 주소 캐시에 둡니다(`compute.cache_dir`, `PERF-02`, ADR-0022).
-- 실패하면 `wintersar diagnose <workdir>/logs --engine isce2` 가 위 KB 항목으로 원인 → 조치를 보여 줍니다.
+- 실패하면 `wintersar diagnose <workdir> --engine isce2` 가 위 KB 항목으로 원인 → 조치를 보여 줍니다.
 
 관련: [burst](burst.md), [ISCE2 로컬 튜토리얼](../tutorials/isce2-local.md), ADR-0021/0023 (엔진 어댑터).
 

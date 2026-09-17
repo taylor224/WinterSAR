@@ -22,6 +22,7 @@ import contextlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -55,6 +56,8 @@ STAGE_ORDER: tuple[str, ...] = (
     "validate",
 )
 ENV_HINT_KINDS: tuple[str, ...] = ("conda", "pixi", "uv", "venv", "python")
+#: SIGTERM -> SIGKILL grace period when stopping a run (seconds).
+TERM_GRACE_S = 5.0
 
 LineCallback = Callable[[str], None]
 
@@ -575,6 +578,101 @@ def _pump(stream: IO[str] | None, sink: list[str], on_line: LineCallback | None)
             stream.close()
 
 
+def new_process_group_kwargs() -> dict[str, Any]:
+    """``Popen`` keyword arguments that put the CLI in a process group of its own.
+
+    The CLI is only the parent of the real work: the adapters start SNAPHU,
+    ``stackSentinel.py`` run_files, ``smallbaselineApp.py``, dolphin and burst2safe with
+    ``subprocess.run``. Signalling the CLI pid alone leaves those grandchildren running
+    (they reparent to init and keep writing into the abandoned node dir), so the client
+    starts a group and :func:`terminate_process_tree` signals the whole group.
+    # source: https://docs.python.org/3.11/library/subprocess.html#subprocess.Popen
+    #   (start_new_session, CREATE_NEW_PROCESS_GROUP)
+    """
+    if sys.platform == "win32":  # pragma: no cover - POSIX CI
+        return {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+    return {"start_new_session": True}
+
+
+def _own_process_group(proc: subprocess.Popen[str]) -> int | None:
+    """``proc``'s process-group id, but only when it is *not* the caller's own group.
+
+    Returning ``None`` for a shared group is the safety net: ``killpg`` on QGIS' own group
+    would take QGIS down with the run.
+    """
+    if sys.platform == "win32" or not hasattr(os, "getpgid"):  # pragma: no cover - POSIX CI
+        return None
+    try:
+        pgid = os.getpgid(proc.pid)
+        if pgid == os.getpgid(0):
+            return None
+    except OSError:  # already reaped, or no permission
+        return None
+    return pgid
+
+
+def _killpg(pgid: int, sig: int) -> bool:
+    try:
+        os.killpg(pgid, sig)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _escalate(proc: subprocess.Popen[str], pgid: int, grace: float) -> None:
+    """Give the group ``grace`` seconds to exit on SIGTERM, then SIGKILL the survivors."""
+    with contextlib.suppress(subprocess.TimeoutExpired, OSError, ValueError):
+        proc.wait(timeout=max(grace, 0.0))
+    if _killpg(pgid, 0):  # signal 0 = "does the group still exist?"
+        _killpg(pgid, signal.SIGKILL)
+
+
+def _windows_kill_tree(proc: subprocess.Popen[str]) -> bool:  # pragma: no cover - POSIX CI
+    # source: https://learn.microsoft.com/windows-server/administration/windows-commands/taskkill
+    #   (/T terminates the process and every child it started, /F forces it)
+    with contextlib.suppress(OSError):
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+            capture_output=True,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    try:
+        proc.kill()
+    except OSError:
+        return False
+    return True
+
+
+def terminate_process_tree(
+    proc: subprocess.Popen[str], grace: float = TERM_GRACE_S, *, block: bool = True
+) -> bool:
+    """Stop the CLI **and** every engine process it started; ``True`` when signalled.
+
+    POSIX: SIGTERM to the process group, then SIGKILL to whatever is still there after
+    ``grace`` seconds (in a daemon thread when ``block`` is false, so a Cancel click does
+    not freeze the QGIS UI thread). Windows: ``taskkill /T /F``.
+    """
+    if sys.platform == "win32":  # pragma: no cover - POSIX CI
+        return _windows_kill_tree(proc)
+    pgid = _own_process_group(proc)
+    if pgid is None:  # no group of our own (already gone, or start_new_session refused)
+        if proc.poll() is not None:
+            return False
+        try:
+            proc.kill()
+        except OSError:
+            return False
+        return True
+    if not _killpg(pgid, signal.SIGTERM):
+        return False
+    if block:
+        _escalate(proc, pgid, grace)
+    else:
+        threading.Thread(target=_escalate, args=(proc, pgid, grace), daemon=True).start()
+    return True
+
+
 class WintersarClient:
     """Runs ``wintersar`` sub-commands in a separate environment and parses ``--json``."""
 
@@ -613,17 +711,18 @@ class WintersarClient:
 
     # ------------------------------------------------------------------ execution
     def cancel(self) -> bool:
-        """Kill the running command (if any); returns True when a process was signalled."""
+        """Stop the running command and its engines; True when a process was signalled.
+
+        Returns as soon as the group has been sent SIGTERM (the SIGKILL escalation runs in a
+        background thread) so the QGIS UI thread is never blocked by a Cancel click.
+        """
         with self._lock:
             proc = self._proc
             self._cancel_requested = proc is not None
         if proc is None:
             return False
-        try:
-            proc.kill()
-        except OSError:
-            return False
-        return True
+        # The engines the CLI spawned are in its process group; kill the group, not the pid.
+        return terminate_process_tree(proc, block=False)
 
     @property
     def running(self) -> bool:
@@ -657,9 +756,11 @@ class WintersarClient:
         proc_env["PYTHONIOENCODING"] = "utf-8"
         # source: .venv/lib/python3.11/site-packages/rich/console.py (NO_COLOR honoured)
         proc_env.setdefault("NO_COLOR", "1")
-        popen_kwargs: dict[str, Any] = {}
-        if sys.platform == "win32":  # no console window from inside QGIS
-            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        popen_kwargs: dict[str, Any] = new_process_group_kwargs()
+        if sys.platform == "win32":  # pragma: no cover - no console window from inside QGIS
+            popen_kwargs["creationflags"] = int(popen_kwargs.get("creationflags", 0)) | getattr(
+                subprocess, "CREATE_NO_WINDOW", 0
+            )
         try:
             proc = subprocess.Popen(
                 argv,
@@ -690,7 +791,7 @@ class WintersarClient:
             proc.wait(timeout=limit)
         except subprocess.TimeoutExpired:
             timed_out = True
-            proc.kill()
+            terminate_process_tree(proc)
             proc.wait()
         finally:
             t_out.join()

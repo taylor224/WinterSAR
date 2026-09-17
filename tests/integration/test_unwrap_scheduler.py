@@ -11,13 +11,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from tests.unit.unwrap.conftest import make_machine, make_synth_stack
+from tests.unit.unwrap.conftest import make_machine, make_synth_stack, write_isce_igram_dir
 from wintersar.engines.base import EngineNotAvailableError
 from wintersar.io.igrams import load_igram_stack, save_igram_stack
 from wintersar.io.schemas import Artifact
 from wintersar.research.synth import unwrap_error_fraction
-from wintersar.unwrap import api
-from wintersar.unwrap.api import UnwrapFailedError, run_unwrap
+from wintersar.unwrap import api, backends
+from wintersar.unwrap.api import UnwrapFailedError, UnwrapInputError, run_unwrap
 
 
 def _artifact(path: Path) -> Artifact:
@@ -236,3 +236,94 @@ def test_output_is_loadable_as_igram_stack(tmp_path: Path):
         assert [str(d) for d in z["dates"]] == [d.isoformat() for d in stack.dates]
     reloaded = load_igram_stack(npz)
     assert reloaded.n_pairs == stack.n_pairs
+
+
+def test_nested_unwrap_section_is_honoured_end_to_end(tmp_path: Path, monkeypatch):
+    """The pipeline executor passes ``{"unwrap": {...}}`` (canonical_params keeps sections
+    nested); planning *and* the backend call must use those values, not UnwrapCfg defaults."""
+    stack = make_synth_stack(n_dates=5, shape=(24, 24), seed=11, with_truth=False)
+    npz = save_igram_stack(stack, tmp_path / "igrams.npz")
+    seen: list[dict] = []
+    identity = backends.get_unwrapper("identity")
+
+    class _Recording:
+        name = "identity"
+        supports_tiles = False
+
+        def unwrap(self, igram, coh, mask, params):
+            seen.append(dict(params))
+            return identity.unwrap(igram, coh, mask, params)
+
+    monkeypatch.setattr(backends, "get_unwrapper", lambda name: _Recording())
+    nested = {
+        "unwrap": {
+            "method": "identity",
+            "cost": "smooth",
+            "init": "mst",
+            "coherence_threshold": 0.55,
+            "tiles": {"rows": 2, "cols": 2, "overlap": 0.1, "min_overlap_px": 4},
+            "nproc_per_igram": 2,
+        },
+        "_out_dir": str(tmp_path / "out"),
+    }
+    arts = run_unwrap(
+        _artifact(npz), nested, tmp_path / "out", tmp_path / "logs", make_machine(8, 16.0)
+    )
+    stats = json.loads(arts["unwrap_stats"].path.read_text(encoding="utf-8"))
+    assert stats["method"] == "identity"
+    assert stats["plan"]["rows"] == 2 and stats["plan"]["cols"] == 2
+    assert stats["plan"]["overlap_px"] == 4
+    assert stats["plan"]["nproc_per_igram"] == 2
+    assert stats["cfg"]["cost"] == "smooth" and stats["cfg"]["init"] == "mst"
+    assert stats["cfg"]["coherence_threshold"] == 0.55
+    # the backend saw the configured values (the adapters give the top level precedence)
+    assert seen and all(p["cost"] == "smooth" and p["init"] == "mst" for p in seen)
+    assert all(p["coherence_threshold"] == 0.55 for p in seen)
+    assert all(p["nproc"] == 2 for p in seen)
+    # coherence masking used the configured threshold
+    unw = np.load(arts["unw"].path)["unw"]
+    expected = (stack.coherence[0] < 0.55) | stack.mask_for(0)
+    assert np.array_equal(np.isnan(unw[0]), expected)
+
+
+def test_isce_flat_binary_directory_input(tmp_path: Path):
+    """isce2_topsstack hands the stage a directory artifact, not an igrams.npz."""
+    stack = make_synth_stack(n_dates=4, shape=(16, 14), seed=12, with_truth=False)
+    igram_dir = write_isce_igram_dir(tmp_path / "merged" / "interferograms", stack)
+    artifact = Artifact(
+        name="igrams",
+        path=igram_dir,
+        kind="dir",
+        meta={"format": "isce2_flat_binary", "n_pairs": stack.n_pairs, "pairs": stack.pairs},
+    )
+    out, logs = tmp_path / "out", tmp_path / "logs"
+    arts = run_unwrap(
+        artifact,
+        {"method": "identity", "coherence_threshold": 0.0},
+        out,
+        logs,
+        make_machine(2, 8.0),
+    )
+    stats = json.loads(arts["unwrap_stats"].path.read_text(encoding="utf-8"))
+    assert stats["status"] == "ok"
+    assert stats["igrams"]["format"] == "isce2_flat_binary"
+    assert stats["n_pairs"] == stack.n_pairs and stats["shape"] == list(stack.shape)
+    with np.load(arts["unw"].path) as z:
+        assert [str(p) for p in z["pairs"]] == stack.pairs
+        unw = z["unw"]
+    assert unw.shape == (stack.n_pairs, *stack.shape)
+    strong = stack.coherence > 0.05
+    np.testing.assert_allclose(unw[strong], stack.wrapped[strong], atol=1e-4)
+    assert not (out / "input").exists()  # converted scratch stack cleaned up
+
+
+def test_directory_input_without_a_reader_reports_unw005(tmp_path: Path):
+    igram_dir = tmp_path / "zarr_store"
+    igram_dir.mkdir()
+    artifact = Artifact(name="igrams", path=igram_dir, kind="dir", meta={"format": "zarr"})
+    with pytest.raises(UnwrapInputError) as exc:
+        run_unwrap(artifact, {}, tmp_path / "out", tmp_path / "logs", make_machine(2, 8.0))
+    assert [f.rule_id for f in exc.value.findings] == ["UNW-005"]
+    stats = json.loads((tmp_path / "out" / "stats.json").read_text(encoding="utf-8"))
+    assert stats["status"] == "failed"
+    assert [f["rule_id"] for f in stats["findings"]] == ["UNW-005"]

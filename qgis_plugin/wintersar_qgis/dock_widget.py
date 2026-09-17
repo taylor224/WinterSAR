@@ -493,6 +493,17 @@ def failed_log_dir(run_data: Mapping[str, Any] | None) -> str | None:
     return None
 
 
+def diagnose_target(run_data: Mapping[str, Any] | None, workdir: str | Path) -> str:
+    """Path to hand to ``wintersar diagnose``: the failed stage's log dir, else the workdir.
+
+    The workdir has **no** top-level ``logs/``: logs live in ``<workdir>/<stage>/<hash>/logs``
+    (ADR-0032), so the fallback is the workdir itself — ``diagnose`` walks it and collects
+    every stage log. Pointing at ``<workdir>/logs`` makes the CLI exit 2 ("path not found").
+    # source: src/wintersar/pipeline/cache.py log_dir(node_dir) = <workdir>/<stage>/<hash>/logs
+    """
+    return failed_log_dir(run_data) or str(workdir)
+
+
 def _fmt(value: Any, unit: str, digits: int = 1) -> str:
     if value is None:
         return t("qgis.run.unknown")
@@ -1490,7 +1501,7 @@ class WintersarDock:
             cfg = self._config_path()
             if cfg is None:
                 return
-            log_dir = str(resolve_workdir(cfg, self.config_data) / "logs")
+            log_dir = diagnose_target(self.last_run, resolve_workdir(cfg, self.config_data))
         self._start_job("diagnose", self._client_call("diagnose", log_dir), lambda resp: None)
 
     # ------------------------------------------------------------------ panel 4: results

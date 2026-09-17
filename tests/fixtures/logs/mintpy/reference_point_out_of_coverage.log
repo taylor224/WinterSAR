@@ -1,0 +1,11 @@
+wintersar engines.mintpy: smallbaselineApp.py /home/user/work/ts/smallbaselineApp.cfg --dostep reference_point
+reference_point.py timeseries.h5 --template /home/user/work/ts/smallbaselineApp.cfg
+mintpy.reference.lalo = 38.4210, 128.1180
+input reference point in y/x: (-17, 2043)
+input reference point is OUT of data coverage!
+Traceback (most recent call last):
+  File "/home/user/miniconda3/envs/insar/bin/reference_point.py", line 8, in <module>
+    sys.exit(main())
+  File "/home/user/miniconda3/envs/insar/lib/python3.11/site-packages/mintpy/reference_point.py", line 421, in read_reference_input
+    raise ValueError(msg)
+ValueError: input reference point is OUT of data coverage!

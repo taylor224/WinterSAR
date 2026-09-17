@@ -17,6 +17,15 @@ Conventions (same as :mod:`wintersar.io.igrams`):
 * ``UnwrapResult.stats``: JSON-serialisable dict with at least ``wall_time_s``; when SNAPHU
   tiles were used it also carries ``tile_dir`` (for assemble-only re-runs, PERF-03).
 
+Both callers put private (``_``-prefixed) keys into ``params``; the adapters must accept
+either spelling, so the resolution of all three lives here:
+
+* scratch / tile directory — ``_scratch_dir`` (per pair, from :meth:`UnwrapEngineBase.run`)
+  or ``_tile_dir`` + ``_pair`` (one stage directory, from the scheduler): :func:`scratch_dir`
+* adapter log — ``_log_path`` (run) or ``_log_dir`` (scheduler): :func:`engine_log`
+* tile-level workers — ``nproc`` (the scheduler's planned value) or ``nproc_per_igram``
+  (the raw ``UnwrapCfg`` field): :func:`resolve_nproc`
+
 Nothing in this module re-implements SNAPHU/MCF (rule 11.3); it only prepares inputs,
 maps parameters and post-processes outputs.
 """
@@ -27,6 +36,7 @@ import json
 import math
 import re
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -177,6 +187,25 @@ def resolve_nlooks(
         except (TypeError, ValueError):
             pass
     return 1.0, "default"
+
+
+def resolve_nproc(cfg: Mapping[str, Any]) -> int:
+    """Tile-level worker processes for one interferogram (SNAPHU ``NPROC``), at least 1.
+
+    Precedence: ``nproc`` — what :func:`wintersar.unwrap.api._backend_params` sends, i.e. the
+    *planned* value, which the scheduler may raise above the config field (ADR-0047) — then
+    ``nproc_per_igram`` (the raw ``UnwrapCfg`` field, used when an adapter is driven
+    directly through :meth:`UnwrapEngineBase.run`), then 1.
+    """
+    for key in ("nproc", "nproc_per_igram"):
+        value = cfg.get(key)
+        if value is None:
+            continue
+        try:
+            return max(int(value), 1)
+        except (TypeError, ValueError):
+            continue
+    return 1
 
 
 @dataclass(frozen=True)
@@ -375,6 +404,44 @@ class EngineLog:
 
     def finding(self, f: Finding) -> None:
         self.write(f"{f.rule_id} {t(f.message_key, **f.params)}", level=f.severity)
+
+
+def engine_log(cfg: Mapping[str, Any], engine_name: str) -> EngineLog | None:
+    """Adapter log for one ``unwrap()`` call, or ``None`` when the caller asked for none.
+
+    Precedence: ``_log_path`` (a complete path, what :meth:`UnwrapEngineBase.run` passes)
+    then ``_log_dir``/``<engine>.log`` (the scheduler passes the stage log directory, so
+    that adapter findings and engine stdout land where ``wintersar diagnose`` looks).
+    """
+    raw = cfg.get("_log_path")
+    if raw:
+        return EngineLog(Path(str(raw)))
+    log_dir = cfg.get("_log_dir")
+    if log_dir:
+        return EngineLog(Path(str(log_dir)) / f"{engine_name}.log")
+    return None
+
+
+def scratch_dir(cfg: Mapping[str, Any], prefix: str) -> tuple[Path, bool]:
+    """Directory for one interferogram's scratch/tile files, as ``(path, is_temp)``.
+
+    Precedence: ``_scratch_dir`` / ``scratch_dir`` (already per pair, what
+    :meth:`UnwrapEngineBase.run` passes) then ``_tile_dir``/``_pair`` (the scheduler passes
+    one directory for the whole stage, so the pair key keeps concurrent pairs apart) then a
+    fresh :func:`tempfile.mkdtemp`. Only the last is temporary (``is_temp=True``); the
+    others outlive the call and may be reported as ``stats["tile_dir"]`` (PERF-03).
+    """
+    raw = cfg.get("_scratch_dir") or cfg.get("scratch_dir")
+    if not raw:
+        tile_dir = cfg.get("_tile_dir")
+        if tile_dir:
+            pair = cfg.get("_pair")
+            raw = str(Path(str(tile_dir)) / str(pair)) if pair else str(tile_dir)
+    if not raw:
+        return Path(tempfile.mkdtemp(prefix=prefix)), True
+    path = Path(str(raw))
+    path.mkdir(parents=True, exist_ok=True)
+    return path, False
 
 
 def out_dir_from(params: Mapping[str, Any], log_dir: Path) -> Path:

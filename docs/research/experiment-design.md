@@ -18,14 +18,17 @@
 | 변형 | 가우시안 침하 그릇, 선형 램프, 여러 변형원의 합(`deformation_sources`); Okada는 훅만(#60) | `amplitude_m`, `sigma_px`, `ramp` |
 | 대기 | 파워법칙 스펙트럼(β = 8/3) 난류 위상(`turbulent_atmosphere`) | `std_rad` |
 | DEM 오차 | 높이 오차 `dh` × 높이-위상 계수 `-4π/λ · B⊥/(R sin θ)` → **B⊥에 비례**(`dem_error_phase`) | `std_m`, `bperp_m` |
-| 잡음 | 코히어런스 맵 기반 원형 가우시안 위상 잡음(`_phase_noise`, CRLB형 표준편차) | `coherence_base`, `looks` |
+| 잡음 | `noise_model: crlb`(기본) 코히어런스 기반 원형 가우시안, 표준편차 = 크라메르-라오 **하한** `sqrt((1−γ²)/(2Lγ²))` — `looks=1`에서 실제보다 최대 ~2.2배 낙관적; `noise_model: exact` 는 실제 위상 분포(`angle(mean_L(s1·conj(s2)))`)를 표본 추출(`_phase_noise`) | `coherence_base`, `looks`, `noise_model` |
 | SHP 영역 | 영역별 Rayleigh 진폭(스케일 상이)의 진폭 스택(`shp_amplitude_stack`) | `region_kind`, `region_scales` |
 | 마스크 | 수역(왼쪽 띠), 능선 레이오버(센서를 향한 사면 경사 > 입사각, ADR-0017 규약) | `water_fraction`, `height_m`, `sigma_px` |
 | SLC 스택 | 알려진 공분산 `A²·Γ∘e^{j(φ_i−φ_j)}`의 표본 `s = D·chol(Γ)·w`(`make_slc_stack`) | `tau_dates`, `coherence_floor` |
 | 타일 진값 | `tile_grid` 익스텐트 + 타일별 정수 2π 오프셋 주입(+잡음)(`make_tiled_truth`) | `rows`, `cols`, `overlap`, `max_offset_cycles` |
 
-합성 3종(Phase 6 DoD): (a) 가우시안 침하 + 약한 대기, (b) 급경사 램프(고프린지),
-(c) 강한 대기 + 저코히어런스 얼룩. 실험 YAML의 `data` 블록으로 지정한다.
+합성 3종(Phase 6 DoD)과 그 YAML: (a) 가우시안 침하 + 약한 대기 →
+`S_synth_repr_phase`(합성 SLC 스택), (b) 급경사 램프(고프린지) → `S_synth_steep_ramp`
+(`deformation_kind: linear` + `deformation_ramp`, 3.8 px당 1 프린지), (c) 강한 대기 +
+저코히어런스 → `S_synth_strong_atmosphere`(`atmosphere_std_rad: 3.0`,
+`coherence_base: 0.6`, `noise_model: exact`). 실험 YAML의 `data` 블록으로 지정한다.
 
 ## 3. 방법
 
@@ -45,7 +48,7 @@
 | `offsets_exact`, `n_wrong_offsets` | 주입 오프셋과의 일치(타일 0 기준 상대) | 이 모듈 |
 | `closure_rms_rad` | `φ_ij + φ_jk − φ_ik`(MintPy 부호) RMS | `validate.closure`(ADR-0042) |
 | 대조군 RMSE | `validate.metrics.compare` 훅 | R-10 |
-| `wall_s`, `cpu_s`, `peak_rss_mb` | `ResourceTimer`(psutil RSS 표본 최대) | 규칙 11.8: JSON에만 |
+| `wall_s`, `cpu_s`, `peak_rss_mb` | `ResourceTimer`(psutil RSS 표본 최대) | 규칙 11.8: JSON에만 — `experiments.PERF_METRICS` 가 렌더된 표에서 제외한다(실험 러너는 `bench_result.json` 스키마를 만들지 않는다) |
 
 ## 5. 프로토콜
 

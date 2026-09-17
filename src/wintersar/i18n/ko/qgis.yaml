@@ -36,7 +36,7 @@ qgis:
       fix: "필요하면 같은 설정으로 다시 실행하세요. 완료된 단계는 캐시에서 재사용됩니다."
     CLI_ERROR:
       cause: "'{command}'이(가) 종료 코드 {exit_code}로 실패했습니다."
-      fix: "아래 로그를 읽고, 파이프라인 실패라면 'wintersar diagnose <workdir>/logs'(진단 버튼)를 실행하세요."
+      fix: "아래 로그를 읽고, 파이프라인 실패라면 '진단' 버튼(실패한 단계의 <workdir>/<단계>/<해시>/logs, 없으면 <workdir> 전체를 훑습니다)을 누르세요."
   status:
     idle: "대기"
     running: "실행 중: {command}"

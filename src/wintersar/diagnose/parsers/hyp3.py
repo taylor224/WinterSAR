@@ -26,6 +26,7 @@ SPEC = ParserSpec(
     ),
     event_patterns=(
         ("error", re.compile(r"<Response \[[45]\d{2}\]>")),
-        ("error", re.compile(r"\bstatus_code\W{1,3}FAILED\b|\bjob .* FAILED\b")),
+        # bounded gap instead of ``.*`` (quadratic on a carriage-return progress line)
+        ("error", re.compile(r"\bstatus_code\W{1,3}FAILED\b|\bjob [^\n\r]{0,200} FAILED\b")),
     ),
 )

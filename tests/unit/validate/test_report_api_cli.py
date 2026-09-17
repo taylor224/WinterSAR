@@ -24,6 +24,7 @@ from wintersar.validate.report import (
     render_markdown,
     write_report,
 )
+from wintersar.validate.sweep import DEFAULT_OBJECTIVES
 
 runner = CliRunner()
 
@@ -470,3 +471,135 @@ def test_cli_sweep_on_fake_pipeline(tmp_path, cache_dir, leveling_csv):
         ).exit_code
         == 2
     )
+
+
+def test_npz_heading_is_never_invented(tmp_path, ts_npz, ts_npz_bare, gnss_csv):
+    """A fake-engine .npz carries no heading; guessing one silently inverts GNSS east/north."""
+    from wintersar.validate.ground_truth import GroundTruthError, load_csv
+
+    bare = api.load_timeseries(ts_npz_bare)
+    assert bare.heading_deg is None and "synthetic_heading" not in bare.attrs
+    with pytest.raises(GroundTruthError) as exc:  # VAL-008 instead of a wrong-sign comparison
+        compare(bare, load_csv(gnss_csv))
+    assert exc.value.finding.rule_id == "VAL-008"
+    assert exc.value.finding.params["what"] == "heading_deg"
+    # a caller-supplied fallback fills it and says so in attrs
+    filled = api.load_timeseries(ts_npz_bare, default_heading_deg=-12.0)
+    assert filled.heading_deg == -12.0 and filled.attrs["synthetic_heading"] is True
+    # what the file knows wins over the fallback, an explicit override wins over the file
+    assert api.load_timeseries(ts_npz, default_heading_deg=-12.0).heading_deg == 192.0
+    assert "synthetic_heading" not in api.load_timeseries(ts_npz, default_heading_deg=-12.0).attrs
+    assert api.load_timeseries(ts_npz, heading_deg=-12.0).heading_deg == -12.0
+
+
+def test_npz_round_trip_with_io_formats_keeps_metadata(tmp_path, synth_ts):
+    """The interchange .npz must mean the same thing to io.formats and to validate (#44)."""
+    from wintersar.io import formats
+
+    synth_ts.reference_latlon = (37.51, 127.01)
+    synth_ts.attrs = {**synth_ts.attrs, "engine": "dolphin", "units": "m", "source": str(tmp_path)}
+    p = formats.write_timeseries_npz(synth_ts, tmp_path / "interchange.npz")
+    io_ts = formats.read_timeseries_npz(p)
+    val_ts = api.load_timeseries(p)
+    assert val_ts.reference_latlon == io_ts.reference_latlon == (37.51, 127.01)
+    assert val_ts.attrs["engine"] == "dolphin" and val_ts.attrs["units"] == "m"
+    assert val_ts.heading_deg == io_ts.heading_deg == synth_ts.heading_deg
+    np.testing.assert_allclose(val_ts.lat2d(), io_ts.lat2d())
+    assert val_ts.incidence2d()[0, 0] == pytest.approx(synth_ts.incidence_deg)
+    assert str(Path.home()) not in json.dumps(val_ts.attrs, default=str)  # rule 11.11
+    assert val_ts.attrs["source"].endswith("interchange.npz")
+
+
+def test_run_validate_stage_heading_follows_orbit_direction(
+    tmp_path, cache_dir, ts_npz_bare, gnss_csv
+):
+    """data.orbit_direction=auto must not hand the stage a descending heading (VAL-008 >
+    a silently inverted GNSS comparison); asc/desc fills it as a flagged fallback."""
+    inputs = Artifacts().add(Artifact(name="timeseries", path=ts_npz_bare, kind="npz"))
+    gnss = {"gnss": {"source": "csv", "path": str(gnss_csv)}}
+    auto = write_fake_config(tmp_path, validate=gnss)
+    assert auto.data.orbit_direction == "auto"
+    with pytest.raises(StageFailureError) as exc:
+        api.run_validate(auto, inputs, {}, tmp_path / "out", tmp_path / "logs")
+    assert exc.value.findings[0].rule_id == "VAL-008"
+    (tmp_path / "desc").mkdir()
+    desc = write_fake_config(tmp_path / "desc", validate=gnss, data={"orbit_direction": "desc"})
+    _arts, findings = api.run_validate(desc, inputs, {}, tmp_path / "out2", tmp_path / "logs2")
+    assert any(f.rule_id == "VAL-017" and f.severity == "WARN" for f in findings)
+
+
+def test_cli_closure_missing_inputs_name_the_right_file(tmp_path, igram_stack):
+    ig = save_igram_stack(igram_stack, tmp_path / "igrams.npz")
+    missing = tmp_path / "missing.npz"
+    res = runner.invoke(app, ["--lang", "en", "closure", "--igrams", str(missing)])
+    assert res.exit_code == 2 and "Interferogram stack not found" in res.output
+    res2 = runner.invoke(
+        app, ["--lang", "en", "closure", "--igrams", str(ig), "--unw", str(missing)]
+    )
+    assert res2.exit_code == 2 and "Unwrapped stack not found" in res2.output
+
+
+def test_commands_are_module_level_and_registered():
+    """Same shape as pipeline/research/select/unwrap: module-level *_cmd + a thin register()."""
+    import typer
+
+    from wintersar.validate import cli as vcli
+
+    names = ("validate_cmd", "refpoint_cmd", "sweep_cmd", "closure_cmd")
+    assert all(callable(getattr(vcli, n)) for n in names)
+    sub = typer.Typer()
+    vcli.register(sub)
+    assert {c.name for c in sub.registered_commands} == {
+        "validate",
+        "refpoint",
+        "sweep",
+        "closure",
+    }
+
+
+def test_cli_sweep_without_ground_truth_still_ranks(tmp_path, cache_dir):
+    """Finding 83: gt_rmse is None for every row, so it is dropped from the objectives
+    (VAL-018 INFO) instead of silently emptying the Pareto front."""
+    cfg = write_fake_config(tmp_path)
+    grid = tmp_path / "sweep.yaml"
+    grid.write_text("grid:\n  unwrap.coherence_threshold: [0.3, 0.5]\n", encoding="utf-8")
+    args = [
+        "--json",
+        "sweep",
+        "--config",
+        str(cfg.config_path),
+        "--grid",
+        str(grid),
+        "--out",
+        str(tmp_path / "sweep_out"),
+        "--set",
+        "interferogram.n_dates=5",
+        "--set",
+        "interferogram.shape=[24,24]",
+    ]
+    payload = _json(runner.invoke(app, args))
+    assert payload["data"]["objectives"] == list(DEFAULT_OBJECTIVES)
+    assert payload["data"]["pareto"], "no ground truth must not empty the front"
+    info = [f for f in payload["findings"] if f["rule_id"] == "VAL-018"]
+    assert len(info) == 1 and info[0]["severity"] == "INFO"
+    assert info[0]["params"]["dropped"] == "gt_rmse"
+    assert info[0]["params"]["used"] == "closure_rms, wall_time_s"
+    md = (tmp_path / "sweep_out" / "sweep.md").read_text(encoding="utf-8")
+    assert "gt_rmse" in md.splitlines()[-1]  # the note says which objective was ignored
+
+
+def test_run_validate_report_language(tmp_path, cache_dir, ts_npz, leveling_csv, monkeypatch):
+    """Stage reports follow project.language (repo convention), and an explicit CLI --lang
+    wins as soon as the shared CliState can flag one (see the module note on _report_lang)."""
+    from wintersar.util.clistate import state
+
+    cfg = write_fake_config(tmp_path, validate={"leveling_csv": str(leveling_csv)})
+    assert cfg.project.language == "ko"
+    inputs = Artifacts().add(Artifact(name="timeseries", path=ts_npz, kind="npz"))
+    monkeypatch.setattr(state, "lang", "en")
+    arts, _ = api.run_validate(cfg, inputs, {}, tmp_path / "ko", tmp_path / "log")
+    assert "검증" in arts["validation_report"].path.read_text(encoding="utf-8").splitlines()[0]
+    monkeypatch.setattr(state, "lang_explicit", True, raising=False)
+    arts2, _ = api.run_validate(cfg, inputs, {}, tmp_path / "en", tmp_path / "log")
+    first = arts2["validation_report"].path.read_text(encoding="utf-8").splitlines()[0]
+    assert "validation report" in first

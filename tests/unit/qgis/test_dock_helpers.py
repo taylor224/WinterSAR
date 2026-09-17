@@ -331,6 +331,19 @@ def _run_data() -> dict[str, Any]:
     }
 
 
+def test_diagnose_target_falls_back_to_the_workdir_not_workdir_logs(tmp_path: Path) -> None:
+    """``<workdir>/logs`` does not exist (ADR-0032) — diagnose must get the workdir itself."""
+    workdir = tmp_path / "work"
+    (workdir / "unwrap" / "abc" / "logs").mkdir(parents=True)
+    # a failed stage wins: its own node log dir
+    assert dw.diagnose_target(_run_data(), workdir) == "/w/unwrap/abc/logs"
+    # nothing failed (or no run yet): the workdir, which `wintersar diagnose` walks
+    target = dw.diagnose_target(None, workdir)
+    assert target == str(workdir)
+    assert Path(target).is_dir()
+    assert not (workdir / "logs").exists()
+
+
 def test_stage_rows_failed_log_dir_and_resources_line() -> None:
     rows = dw.stage_rows(_run_data())
     assert [(r["stage"], r["status"]) for r in rows] == [("fetch", "cached"), ("unwrap", "failed")]

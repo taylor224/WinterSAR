@@ -39,7 +39,7 @@ unwrap:
     outputs: "Outputs: {unw} · {stats}"
   UNW-001:
     cause: "Unwrap backend '{method}' is not available ({detail})."
-    fix: "Run wintersar check-install, or set unwrap.method to an installed engine (snaphu, tophu)."
+    fix: "Install it ({install_hint}), check the state with wintersar check-install, or set unwrap.method to an installed engine (snaphu, tophu)."
   UNW-002:
     cause: "One tile needs an estimated {tile_mb:.0f} MB, more than the memory budget {budget_mb:.0f} MB (tiles {rows}×{cols})."
     fix: "Increase multilooking (engine.looks), raise compute.memory_gb, or split finer with unwrap.tiles."
@@ -49,3 +49,6 @@ unwrap:
   UNW-004:
     cause: "Unwrapping of interferogram {pair} failed: {error}"
     fix: "Analyse the log {log} with wintersar diagnose. Out of memory → more tiles; secondary-arc overflow → raise the coherence threshold."
+  UNW-005:
+    cause: "The interferogram stack cannot be read: {path} (format {format}) — {detail}."
+    fix: "Check that the interferogram stage finished and that unwrap is given its 'igrams' artifact (igrams.npz, an ISCE2 merged/interferograms directory or a HyP3 product directory)."

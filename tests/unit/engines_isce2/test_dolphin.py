@@ -256,3 +256,50 @@ def test_run_failure_and_missing_inputs(tmp_path: Path, monkeypatch: pytest.Monk
         eng.run("timeseries", Artifacts(), _params(tmp_path, cslc_files=cslc), tmp_path / "logs2")
     f = next(x for x in ei2.value.findings if x.is_fail)
     assert f.rule_id == "DOL-001" and f.params["returncode"] == 1 and Path(f.params["log"]).exists()
+
+
+def test_run_reads_the_nested_timeseries_dolphin_section(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``timeseries.dolphin.*`` arrives nested inside the canonical stage mapping (ADR-0034)."""
+    from wintersar.pipeline.config import Config
+    from wintersar.pipeline.dag import canonical_params
+
+    monkeypatch.setattr(dl, "find_executable", lambda: "/opt/dolphin/bin/dolphin")
+    monkeypatch.setattr(dl, "executable_version", lambda *_a, **_k: "0.42.7")
+    slc = tmp_path / "cslc"
+    for d in DATES:
+        (slc / d).mkdir(parents=True)
+        (slc / d / f"{d}.slc.full.vrt").write_text("<VRTDataset/>", encoding="utf-8")
+    cfg = Config.model_validate(
+        {
+            "project": {"name": "t", "workdir": "./work"},
+            "aoi": "aoi.geojson",
+            "time_range": {"start": "2024-01-01", "end": "2024-06-30"},
+            "timeseries": {
+                "engine": "dolphin",
+                "dolphin": {"cslc_dir": str(slc), "ministack_size": 5, "max_bandwidth": 3},
+            },
+        }
+    )
+    out = tmp_path / "work" / "timeseries" / "node"
+    out.mkdir(parents=True)
+    params = canonical_params(cfg, "timeseries", None)
+    assert "cslc_dir" not in params and params["timeseries"]["dolphin"]["cslc_dir"] == str(slc)
+    params.update({"_out_dir": str(out), "_workdir": str(tmp_path / "work"), "_cores": 2})
+
+    flat = dl.flatten_stage_params(params)
+    assert flat["cslc_dir"] == str(slc) and flat["coherence_threshold"] == 0.7
+    assert dl.flatten_stage_params({**params, "ministack_size": 9})["ministack_size"] == 9
+    assert dl.flatten_stage_params({"cslc_dir": "/x"}) == {"cslc_dir": "/x"}  # flat shape kept
+
+    runner = FakeDolphin()
+    eng = dl.DolphinEngine(runner=runner)
+    arts = eng.run("timeseries", Artifacts(), params, tmp_path / "logs")
+    assert runner.calls  # dolphin was invoked: no DOL-002 'no CSLC inputs'
+    assert runner.config_seen["cslc_file_list"] == [
+        str(slc / d / f"{d}.slc.full.vrt") for d in DATES
+    ]
+    assert runner.config_seen["phase_linking"]["ministack_size"] == 5
+    assert runner.config_seen["interferogram_network"]["max_bandwidth"] == 3
+    assert "timeseries" in arts and [f.rule_id for f in eng.findings if f.is_fail] == []

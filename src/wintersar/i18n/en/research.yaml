@@ -25,6 +25,7 @@ research:
     std: "std"
     status: "status"
     generated_from: "Generated from `{json}` (tables only — interpretation belongs in ADRs / research notes, rule 11.8)"
+    perf_in_json: "Timing / memory ({metrics}) stay in the results JSON: rule 11.8 allows performance numbers in prose or tables only with a bench_result.json behind them."
     status_skipped: "Status: skipped — {reason}"
     missing_packages: "Missing packages: {missing}"
     protocol: "Protocol"
@@ -57,3 +58,9 @@ research:
   RES-008:
     cause: "Experiment YAML error: {detail}"
     fix: "Compare the name/kind(repr_phase|stitching|seq_estimator_ab)/methods/seeds/factor/metrics keys with the bundled examples (src/wintersar/research/experiments/*.yaml)."
+  RES-009:
+    cause: "Method '{method}': the stack grid stack.shape[1:] = {value} must equal the interferogram shape {expected}."
+    fix: "Pass a --stack whose last two axes are exactly ({ny}, {nx}) — the same full-resolution grid as the interferogram (it is cropped to a multiple of --factor afterwards)."
+  RES-010:
+    cause: "Experiment '{name}' is neither a readable YAML path nor a bundled experiment."
+    fix: "Give an existing YAML path, or one of the bundled names: {bundled} (list them with `wintersar research experiments`)."

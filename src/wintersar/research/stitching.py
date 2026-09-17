@@ -18,16 +18,15 @@ Tiles are ``(unw_tile, slice_y, slice_x)`` triples in extent coordinates (the la
   squares over the tile graph (incidence matrix, weights = summed overlap coherence, gauge
   ``o_0 = 0``) and rounded. Inconsistent loops show up as non-zero residuals.
 
-The seam detector and the plain merge are shared with the unwrap module
-(``wintersar.unwrap.tiling.boundary_jumps`` / ``merge_tiles``, ADR-0048); both are imported
-lazily with local fallbacks so this module also works on its own.
+The tile geometry (:class:`wintersar.unwrap.tiling.Tile`), the seam detector
+(``boundary_jumps``) and the plain merge (``merge_tiles``) are shared with the unwrap module
+(ADR-0048) and imported directly — there is exactly one implementation of each.
 """
 
 from __future__ import annotations
 
 import itertools
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -35,6 +34,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from wintersar.research.repr_phase import ResearchError, upsample_nearest
+from wintersar.unwrap.tiling import Tile, adjacent_pairs, boundary_jumps, merge_tiles
 
 FloatArray = NDArray[np.float64]
 TileArray = tuple[NDArray[Any], slice, slice]
@@ -48,7 +48,6 @@ METHODS: tuple[str, ...] = ("coarse_ref", "overlap_consensus")
 __all__ = [
     "METHODS",
     "TileArray",
-    "TileBox",
     "adjacent_tiles",
     "coarse_ref_offsets",
     "load_tiles_npz",
@@ -59,43 +58,6 @@ __all__ = [
     "weighted_median",
     "weighted_mode",
 ]
-
-
-@dataclass(frozen=True)
-class TileBox:
-    """Tile geometry compatible with ``wintersar.unwrap.tiling.Tile`` (same field names)."""
-
-    row: int
-    col: int
-    slice_y: slice
-    slice_x: slice
-    core_slice_y: slice
-    core_slice_x: slice
-
-    @property
-    def shape(self) -> tuple[int, int]:
-        return (self.slice_y.stop - self.slice_y.start, self.slice_x.stop - self.slice_x.start)
-
-    @property
-    def extent(self) -> tuple[slice, slice]:
-        return (self.slice_y, self.slice_x)
-
-    @property
-    def core(self) -> tuple[slice, slice]:
-        return (self.core_slice_y, self.core_slice_x)
-
-    @property
-    def core_in_tile(self) -> tuple[slice, slice]:
-        return (
-            slice(
-                self.core_slice_y.start - self.slice_y.start,
-                self.core_slice_y.stop - self.slice_y.start,
-            ),
-            slice(
-                self.core_slice_x.start - self.slice_x.start,
-                self.core_slice_x.stop - self.slice_x.start,
-            ),
-        )
 
 
 def _axis_cores(extents: list[tuple[int, int]], n: int) -> list[tuple[int, int]]:
@@ -113,27 +75,19 @@ def _axis_cores(extents: list[tuple[int, int]], n: int) -> list[tuple[int, int]]
 
 
 def tiles_from_slices(slices: Sequence[tuple[slice, slice]], shape: tuple[int, int]) -> list[Any]:
-    """Rebuild the grid geometry (row/col index, cores) from tile extents.
-
-    Returns ``wintersar.unwrap.tiling.Tile`` objects when that module is importable, else
-    :class:`TileBox` (same attributes). Extents must form a rectangular grid.
+    """Rebuild the grid geometry (row/col index, cores) from tile extents as
+    :class:`wintersar.unwrap.tiling.Tile` objects. Extents must form a rectangular grid.
     """
     ys = sorted({(s[0].start, s[0].stop) for s in slices})
     xs = sorted({(s[1].start, s[1].stop) for s in slices})
     cy = _axis_cores(ys, int(shape[0]))
     cx = _axis_cores(xs, int(shape[1]))
-    try:
-        from wintersar.unwrap.tiling import Tile as _Tile
-
-        tile_cls: Any = _Tile
-    except ImportError:  # pragma: no cover - same tree
-        tile_cls = TileBox
     out: list[Any] = []
     for sy, sx in slices:
         r = ys.index((sy.start, sy.stop))
         c = xs.index((sx.start, sx.stop))
         out.append(
-            tile_cls(
+            Tile(
                 row=r,
                 col=c,
                 slice_y=slice(sy.start, sy.stop),
@@ -147,19 +101,7 @@ def tiles_from_slices(slices: Sequence[tuple[slice, slice]], shape: tuple[int, i
 
 def adjacent_tiles(tiles: Sequence[Any]) -> list[tuple[int, int, str]]:
     """``(index_a, index_b, axis)`` for every 4-neighbour pair (b below / right of a)."""
-    try:
-        from wintersar.unwrap.tiling import adjacent_pairs
-
-        return [(a, b, str(axis)) for a, b, axis in adjacent_pairs(tiles)]
-    except ImportError:  # pragma: no cover - same tree
-        idx = {(t.row, t.col): i for i, t in enumerate(tiles)}
-        pairs: list[tuple[int, int, str]] = []
-        for (r, c), i in sorted(idx.items()):
-            if (r + 1, c) in idx:
-                pairs.append((i, idx[(r + 1, c)], "row"))
-            if (r, c + 1) in idx:
-                pairs.append((i, idx[(r, c + 1)], "col"))
-        return pairs
+    return [(a, b, str(axis)) for a, b, axis in adjacent_pairs(tiles)]
 
 
 def _intersect(a: slice, b: slice) -> slice:
@@ -350,64 +292,21 @@ def overlap_consensus_offsets(
 
 
 # ---------------------------------------------------------------- merge + stitch
-def _merge_core(
-    arrays: Sequence[NDArray[Any]], boxes: Sequence[Any], shape: tuple[int, int]
-) -> NDArray[np.float32]:
-    out = np.full((int(shape[0]), int(shape[1])), np.nan, dtype=np.float32)
-    for arr, t in zip(arrays, boxes, strict=True):
-        out[t.core] = np.asarray(arr, dtype=np.float32)[t.core_in_tile]
-    return out
-
-
 def _merge(
     arrays: Sequence[NDArray[Any]], boxes: Sequence[Any], shape: tuple[int, int], method: Merge
 ) -> NDArray[np.float32]:
-    try:
-        from wintersar.unwrap.tiling import merge_tiles
-
-        return np.asarray(merge_tiles(arrays, boxes, shape, method=method), dtype=np.float32)
-    except ImportError:  # pragma: no cover - same tree
-        return _merge_core(arrays, boxes, shape)
+    return np.asarray(merge_tiles(arrays, boxes, shape, method=method), dtype=np.float32)
 
 
 def _seam_report(merged: NDArray[Any], boxes: Sequence[Any]) -> dict[str, Any]:
-    try:
-        from wintersar.unwrap.tiling import boundary_jumps
-
-        rep = boundary_jumps(merged, boxes)
-        return {
-            "n_boundaries": int(rep["n_boundaries"]),
-            "n_boundaries_with_jump": int(rep["n_boundaries_with_jump"]),
-            "n_jump_pixels": int(rep["n_jump_pixels"]),
-            "histogram": dict(rep["histogram"]),
-        }
-    except ImportError:  # pragma: no cover - same tree
-        n_b = 0
-        n_jump_b = 0
-        n_jump_px = 0
-        for ia, ib, axis in adjacent_tiles(boxes):
-            a, b = boxes[ia], boxes[ib]
-            if axis == "row":
-                y0 = b.core_slice_y.start
-                xs = _intersect(a.core_slice_x, b.core_slice_x)
-                d = merged[y0, xs] - merged[y0 - 1, xs] if 0 < y0 < merged.shape[0] else np.zeros(0)
-            else:
-                x0 = b.core_slice_x.start
-                ys = _intersect(a.core_slice_y, b.core_slice_y)
-                d = merged[ys, x0] - merged[ys, x0 - 1] if 0 < x0 < merged.shape[1] else np.zeros(0)
-            d = np.asarray(d, dtype=np.float64)
-            d = d[np.isfinite(d)]
-            k = np.rint(d / TWO_PI).astype(np.int64)
-            n_b += 1
-            n_jump_px += int(np.count_nonzero(k))
-            if k.size and np.bincount(k - k.min()).argmax() + k.min() != 0:
-                n_jump_b += 1
-        return {
-            "n_boundaries": n_b,
-            "n_boundaries_with_jump": n_jump_b,
-            "n_jump_pixels": n_jump_px,
-            "histogram": {},
-        }
+    """Tile-seam jump statistics from the shared detector (ADR-0048)."""
+    rep = boundary_jumps(merged, boxes)
+    return {
+        "n_boundaries": int(rep["n_boundaries"]),
+        "n_boundaries_with_jump": int(rep["n_boundaries_with_jump"]),
+        "n_jump_pixels": int(rep["n_jump_pixels"]),
+        "histogram": dict(rep["histogram"]),
+    }
 
 
 def stitch(

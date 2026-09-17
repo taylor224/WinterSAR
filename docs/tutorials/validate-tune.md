@@ -47,6 +47,17 @@ wintersar --lang en --json validate --ts ... --leveling ...   # QGIS/스크립�
 - **속도 차이(dv)만 크다** → 대기 보정·deramp 문제(§5 sweep에서 `timeseries.troposphere` 비교).
 - LOS 부호 규약: 양수 = 위성 방향(융기가 양수). 수준측량은 `up × cos(입사각)`으로 LOS에 투영(ADR-0040).
 
+### GNSS 비교에는 heading이 필요하다
+
+수준측량은 `up × cos(입사각)`이라 heading이 없어도 되지만, GNSS는 동서·남북 성분까지 쓰므로 heading을 모르면 부호가
+뒤집힌다(상승 -12° ↔ 하강 192°에서 동쪽 성분이 −0.616 ↔ +0.616으로 반전). 그래서 heading을 모르는 시계열은
+**추측하지 않고** `VAL-008`로 멈춘다. 다음 중 하나로 알려준다:
+
+- `wintersar validate --heading <도>`(시계열 파일 값보다 우선),
+- 시계열 파일 자체(MintPy `timeseries.h5`의 `HEADING`, `io.formats.write_timeseries_npz`의 `heading_deg`),
+- `config.yaml`의 `data.orbit_direction: asc|desc` — 파이프라인 `validate` 단계가 중위도 근사값(−12°/192°)을
+  **보조값**으로만 채우고(파일 값이 있으면 그쪽이 우선) `VAL-017` 경고를 남긴다. `auto`면 채우지 않는다.
+
 ## 3. 기준점 추천 (R-09)
 
 ```bash
@@ -92,6 +103,10 @@ wintersar sweep --config config.yaml --grid sweep.yaml --leveling data/leveling.
 8개 조합 중 첫 조합만 전체 파이프라인을 돌리고, 나머지는 바뀐 섹션의 단계부터만 재실행된다(DAG 캐시, PERF-03).
 `sweep.md` 표에서 `*`가 Pareto 전선, `sweep_pareto.png`가 산점도. 지표 정의는 ADR-0044.
 
+대조군(`--leveling/--gnss` 또는 `validate.leveling_csv`) 없이 돌리면 기본 목표에 들어 있는 `gt_rmse`를 잴 수 없다.
+이때는 그 목표를 순위 계산에서 빼고 `VAL-018`(정보)로 알린 뒤 남은 목표(`closure_rms`, `wall_time_s`)로 전선을
+고른다 — 표가 통째로 비지 않는다.
+
 권장 반복(4~5회): ① 폐합으로 언래핑 임계 결정 → ② 기준점 확정 → ③ 대기 보정 비교 → ④ 필터/looks 미세 조정 → ⑤ 최종 검증 리포트.
 
 ## 6. 파이프라인 안에서 자동 실행
@@ -110,3 +125,5 @@ wintersar sweep --config config.yaml --grid sweep.yaml --leveling data/leveling.
 | VAL-011/012 | 시계열 형식/산출물 없음 |
 | VAL-013 | 검증 요약(정보) |
 | VAL-014~016 | 대조군 미지정, 스윕 그리드 오류, 스윕 조합 실패 |
+| VAL-017 | GNSS를 실측이 아닌 기본 heading으로 투영(경고) |
+| VAL-018 | 잴 수 없는 목표를 스윕 순위에서 제외(정보) |

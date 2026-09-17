@@ -39,7 +39,7 @@ unwrap:
     outputs: "산출물: {unw} · {stats}"
   UNW-001:
     cause: "언래핑 백엔드 '{method}'을(를) 사용할 수 없습니다 ({detail})."
-    fix: "wintersar check-install로 설치 상태를 확인하거나 unwrap.method를 설치된 엔진(snaphu, tophu)으로 바꾸세요."
+    fix: "설치하거나({install_hint}) wintersar check-install로 설치 상태를 확인하고, unwrap.method를 설치된 엔진(snaphu, tophu)으로 바꾸세요."
   UNW-002:
     cause: "타일 하나의 예상 메모리 {tile_mb:.0f} MB가 메모리 예산 {budget_mb:.0f} MB를 넘습니다 (타일 {rows}×{cols})."
     fix: "멀티룩(engine.looks)을 늘리거나 compute.memory_gb를 올리거나 unwrap.tiles로 더 잘게 분할하세요."
@@ -49,3 +49,6 @@ unwrap:
   UNW-004:
     cause: "간섭도 {pair} 언래핑이 실패했습니다: {error}"
     fix: "로그 {log}를 wintersar diagnose로 분석하세요. 메모리 부족이면 타일 수를 늘리고, 보조 arc 초과이면 코히어런스 임계값을 올리세요."
+  UNW-005:
+    cause: "간섭도 스택을 읽을 수 없습니다: {path} (형식 {format}) — {detail}."
+    fix: "interferogram 단계가 끝났는지, unwrap 단계에 해당 'igrams' 산출물(igrams.npz, ISCE2 merged/interferograms 디렉터리, HyP3 산출물 디렉터리)이 전달되는지 확인하세요."

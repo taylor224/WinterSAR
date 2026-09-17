@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 
 from tests.unit.pipeline._support import write_fake_config
 from wintersar.cli import app
+from wintersar.pipeline import cache
 from wintersar.pipeline.cli import parse_set
 
 runner = CliRunner()
@@ -135,3 +136,89 @@ def test_cache_ls_and_gc(tmp_path: Path, cache_dir: Path) -> None:
     assert r.exit_code == 0
     r = runner.invoke(app, ["--json", "cache", "ls", "--config", cfg_path])
     assert len(_json(r)["data"]["entries"]) == 8
+
+
+# ---------------------------------------------------------------------- usage errors (exit 2)
+
+
+def test_usage_errors_emit_the_json_envelope(tmp_path: Path, cache_dir: Path) -> None:
+    """A ``--json`` caller must never get an empty stdout: exit 2 carries PIPELINE-014."""
+    cfg = write_fake_config(tmp_path)
+    cfg_path = str(cfg.config_path)
+    (tmp_path / "bad.yaml").write_text("project: {name: x}\n", encoding="utf-8")
+    cases = [
+        (["--json", "plan", "--config", str(tmp_path / "missing.yaml")], "plan"),
+        (["--json", "plan", "--config", str(tmp_path / "bad.yaml")], "plan"),
+        (["--json", "plan", "--config", cfg_path, "--until", "nope"], "plan"),
+        (["--json", "run", "--config", cfg_path, "--force", "nope"], "run"),
+        (["--json", "run", "--config", cfg_path, "--set", "novalue"], "run"),
+        (["--json", "run", "--config", cfg_path, "--set", "nope.key=1"], "run"),
+        (["--json", "cache", "ls", "--config", str(tmp_path / "missing.yaml")], "cache ls"),
+        (["--json", "cache", "gc", "--config", str(tmp_path / "missing.yaml")], "cache gc"),
+    ]
+    for args, command in cases:
+        r = runner.invoke(app, args)
+        assert r.exit_code == 2, (args, r.output)
+        data = _json(r)
+        assert data["ok"] is False and data["command"] == command, args
+        finding = data["findings"][0]
+        assert finding["rule_id"] == "PIPELINE-014" and finding["severity"] == "FAIL"
+        assert finding["scope"] == command and finding["params"]["command"] == command
+        assert finding["params"]["detail"], args
+    # without --json the message still goes to stderr only
+    r = runner.invoke(app, ["plan", "--config", str(tmp_path / "missing.yaml")])
+    assert r.exit_code == 2 and not r.stdout.strip().startswith("{")
+
+
+def test_cache_ls_shows_orphan_node_dirs(tmp_path: Path, cache_dir: Path) -> None:
+    """A run killed before its first manifest leaves a node dir that must stay visible."""
+    cfg = write_fake_config(tmp_path)
+    cfg_path = str(cfg.config_path)
+    assert runner.invoke(app, ["run", "--config", cfg_path, *SET_SMALL]).exit_code == 0
+    orphan = cache.stage_dir(cfg.workdir, "unwrap", "0" * 16)
+    out, _ = cache.prepare_node_dir(orphan)
+    (out / "half-written.npz").write_bytes(b"x" * 1000)
+    r = runner.invoke(app, ["--json", "cache", "ls", "--config", cfg_path, "--stage", "unwrap"])
+    assert r.exit_code == 0, r.output
+    entries = {e["node_hash"]: e for e in _json(r)["data"]["entries"]}
+    assert "0" * 16 in entries
+    assert entries["0" * 16]["status"] == "orphan" and entries["0" * 16]["orphan"] is True
+    assert entries["0" * 16]["engine"] is None and entries["0" * 16]["finished_at"] is None
+    r = runner.invoke(app, ["cache", "ls", "--config", cfg_path, "--stage", "unwrap"])
+    assert r.exit_code == 0, r.output  # the table must not trip over the missing manifest
+    assert "orphan" in r.output
+    assert runner.invoke(app, ["cache", "gc", "--config", cfg_path, "--keep", "3"]).exit_code == 0
+    assert not orphan.exists()
+
+
+def test_cache_gc_max_size_budget(tmp_path: Path, cache_dir: Path) -> None:
+    """PERF-03: ``--keep`` cannot bound the work-directory size; ``--max-size`` can."""
+    cfg = write_fake_config(tmp_path)
+    cfg_path = str(cfg.config_path)
+    assert runner.invoke(app, ["run", "--config", cfg_path, *SET_SMALL]).exit_code == 0
+    r = runner.invoke(
+        app, ["--json", "cache", "gc", "--config", cfg_path, "--max-size", "100", "--dry-run"]
+    )
+    data = _json(r)["data"]
+    assert data["max_size_gb"] == 100.0 and data["removed"] == []  # everything fits
+    r = runner.invoke(app, ["--json", "cache", "gc", "--config", cfg_path, "--max-size", "0"])
+    data = _json(r)["data"]
+    assert data["kept"] == [] and len(data["removed"]) == 8 and data["freed_bytes"] > 0
+    r = runner.invoke(app, ["--json", "cache", "ls", "--config", cfg_path])
+    assert _json(r)["data"]["entries"] == []
+
+
+def test_help_is_english_whatever_the_language() -> None:
+    """``register()`` runs before ``--lang`` is parsed, so help must not go through t()."""
+    for args in (
+        ["--lang", "en", "plan", "--help"],
+        ["--lang", "en", "run", "--help"],
+        ["--lang", "en", "cache", "--help"],
+        ["--lang", "en", "cache", "gc", "--help"],
+        ["plan", "--help"],
+    ):
+        r = runner.invoke(app, args)
+        assert r.exit_code == 0, r.output
+        assert not any("가" <= ch <= "힣" for ch in r.output), (args, r.output)
+    top = runner.invoke(app, ["--lang", "en", "--help"]).output
+    assert "Build the DAG" in top and "Run the pipeline" in top

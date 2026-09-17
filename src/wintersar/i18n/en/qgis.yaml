@@ -36,7 +36,7 @@ qgis:
       fix: "Run it again when ready; completed stages are reused from the cache."
     CLI_ERROR:
       cause: "'{command}' failed with exit code {exit_code}."
-      fix: "Read the log below; for pipeline failures run 'wintersar diagnose <workdir>/logs' (Diagnose button)."
+      fix: "Read the log below; for pipeline failures press Diagnose (it uses the failed stage's <workdir>/<stage>/<hash>/logs, or walks <workdir> when there is none)."
   status:
     idle: "Idle"
     running: "Running: {command}"

@@ -73,6 +73,7 @@ __all__ = [
     "METHODS",
     "STACK_METHODS",
     "ResearchError",
+    "check_stack_grid",
     "crop_to_multiple",
     "default_shp_window",
     "goldstein_filter",
@@ -186,6 +187,32 @@ def _as_complex(igram: NDArray[Any] | None, factor: int, method: str) -> Complex
             "RES-006", name="factor", value=factor, allowed=f"<= min{tuple(z.shape)}"
         )
     return np.asarray(z, dtype=np.complex128)
+
+
+def check_stack_grid(stack: NDArray[Any] | None, igram: NDArray[Any] | None, method: str) -> None:
+    """The amplitude/SLC ``stack`` must sit on the **same full-resolution grid** as the
+    interferogram (``stack.shape[1:] == igram.shape``), because the two are block-averaged
+    independently: a differently sized stack silently produces a low-resolution estimate on
+    another grid than the interferogram (and than the truth it is compared with).
+
+    Raises ``RES-009``. A missing side, or the wrong rank, is left to the checks that report
+    those (``RES-003`` / ``RES-006``).
+    """
+    if stack is None or igram is None:
+        return
+    s = np.asarray(stack)
+    z = np.asarray(igram)
+    if s.ndim != 3 or z.ndim != 2:
+        return
+    if tuple(s.shape[1:]) != tuple(z.shape):
+        raise ResearchError(
+            "RES-009",
+            method=method,
+            value=str(tuple(int(v) for v in s.shape[1:])),
+            expected=str(tuple(int(v) for v in z.shape)),
+            ny=int(z.shape[0]),
+            nx=int(z.shape[1]),
+        )
 
 
 def _as_coh(coh: NDArray[Any] | None, shape: tuple[int, ...]) -> FloatArray:
@@ -404,11 +431,8 @@ def shp_adaptive_multilook(
     """Full-resolution adaptive multilook: every pixel becomes the coherent mean over its own
     SHP family (window ≤ 15 x 15). The DS filtering step of SqueeSAR at the pixel level."""
     z = _as_complex(igram, 1, "shp")
+    check_stack_grid(amp_stack, z, "shp")
     amp = _amplitude_stack(amp_stack, 1, "shp")
-    if amp.shape[1:] != z.shape:
-        raise ResearchError(
-            "RES-006", name="stack.shape[1:]", value=amp.shape[1:], allowed=str(z.shape)
-        )
     return _shp_average(z, shp_neighbors(amp, 1, window, alpha, test), 1)
 
 
@@ -435,12 +459,9 @@ def repr_shp(
     homogeneity test; the interferogram itself is only averaged.
     """
     z = _as_complex(igram, factor, "shp")
+    check_stack_grid(stack, z, "shp")
     amp = _amplitude_stack(stack, factor, "shp")
     zc = np.asarray(crop_to_multiple(z, factor), dtype=np.complex128)
-    if amp.shape[1:] != zc.shape:
-        raise ResearchError(
-            "RES-006", name="stack.shape[1:]", value=amp.shape[1:], allowed=str(zc.shape)
-        )
     w = default_shp_window(factor) if window is None else int(window)
     if mode == "pixelwise":
         return np.asarray(
@@ -591,11 +612,13 @@ def repr_phase_link(
 ) -> ComplexArray:
     """Pairwise low-resolution reference phase from phase linking: ``tc · exp(j(φ_j - φ_i))``
     for ``pair = (i, j)`` (secondary minus reference, the ``synth.make_stack`` convention);
-    the magnitude is the temporal coherence. ``igram``/``coh`` are not used;
-    ``link_method`` is ``evd`` or ``emi`` (named so it never clashes with the dispatcher's
-    ``method`` argument)."""
+    the magnitude is the temporal coherence. ``coh`` is not used and ``igram`` only pins the
+    grid the stack has to be on (:func:`check_stack_grid`, ``RES-009``); ``link_method`` is
+    ``evd`` or ``emi`` (named so it never clashes with the dispatcher's ``method``
+    argument)."""
     if stack is None:
         raise ResearchError("RES-003", method="phase_link")
+    check_stack_grid(stack, igram, "phase_link")
     if pair is None:
         raise ResearchError("RES-007", method="phase_link")
     i, j = int(pair[0]), int(pair[1])

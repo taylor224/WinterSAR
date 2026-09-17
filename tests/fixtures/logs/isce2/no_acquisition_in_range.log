@@ -1,0 +1,5 @@
+wintersar engines.isce2_topsstack: stackSentinel.py -s /home/user/work/slc -d /home/user/work/dem/demLat_N37_N38_Lon_E126_E128.dem.wgs84 -b '37.0 38.0 126.0 128.0' -a 20231201 -e 20240201 -c 1
+stackSentinel.py: scanning SAFE archive under /home/user/work/slc
+stackSentinel.py: 0 of 14 SAFE files inside the bounding box for the requested dates
+No acquisition fulfills the temporal range and bbox requirement.
+wintersar engines.isce2_topsstack: stackSentinel.py exited with status 1, run_files was not written

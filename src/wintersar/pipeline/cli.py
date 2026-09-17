@@ -2,7 +2,13 @@
 
 Every command honours the global ``--json`` / ``--lang`` state
 (:data:`wintersar.util.clistate.state`). On a failed run the findings are printed
-cause -> fix and the process exits with status 1.
+cause -> fix and the process exits with status 1; a usage error (missing config, unknown
+stage, bad ``--set``) exits 2 through :func:`usage_error`, which still emits the JSON
+envelope so that machine callers never see an empty stdout.
+
+Command *help* strings are plain English like every other module CLI: ``register()`` runs at
+import time, before ``--lang`` is parsed, so ``t()`` would freeze them in the default
+language and print Korean rows inside ``wintersar --lang en --help``.
 """
 
 from __future__ import annotations
@@ -16,7 +22,7 @@ from pydantic import ValidationError
 from rich.table import Table
 
 from wintersar.i18n import t
-from wintersar.io.schemas import Plan, Resources, StageRecord
+from wintersar.io.schemas import Finding, Plan, Resources, StageRecord
 from wintersar.pipeline import api, cache
 from wintersar.pipeline.config import Config, load_config
 from wintersar.pipeline.stages import STAGE_ORDER
@@ -24,7 +30,12 @@ from wintersar.util.clistate import state
 from wintersar.util.masking import mask_text
 from wintersar.util.output import console, emit_json, err_console, print_findings
 
-cache_app = typer.Typer(no_args_is_help=True, help=t("pipeline.cli.help_cache"))
+USAGE_RULE = "PIPELINE-014"
+
+cache_app = typer.Typer(
+    no_args_is_help=True,
+    help="Inspect and prune the work-directory cache (work/<stage>/<hash>).",
+)
 
 ConfigOpt = Annotated[Path, typer.Option("--config", "-c", help="config.yaml (plan §4.4)")]
 UntilOpt = Annotated[str | None, typer.Option("--until", help="Stop after this stage.")]
@@ -48,36 +59,61 @@ SetOpt = Annotated[
 # ---------------------------------------------------------------------- helpers
 
 
-def _load(config: Path) -> Config:
+def usage_error(command: str, detail: str, code: int = 2) -> typer.Exit:
+    """Bad input/usage: report ``detail`` and exit with ``code`` (2 by default).
+
+    Under ``--json`` the envelope is emitted as well — a machine caller that only gets an
+    exit code and a line on stderr cannot tell a usage error from a crash.
+    """
+    if state.json:
+        emit_json(
+            command,
+            None,
+            [
+                Finding(
+                    rule_id=USAGE_RULE,
+                    severity="FAIL",
+                    message_key="pipeline.PIPELINE-014.cause",
+                    fix_key="pipeline.PIPELINE-014.fix",
+                    params={"command": command, "detail": detail},
+                    evidence={"detail": detail},
+                    scope=command,
+                )
+            ],
+            ok=False,
+        )
+    else:
+        err_console.print(f"[red]{detail}[/]")
+    return typer.Exit(code=code)
+
+
+def _load(config: Path, command: str = "plan") -> Config:
     try:
         return load_config(config)
     except FileNotFoundError:
-        err_console.print(f"[red]{t('cli.config_not_found', path=mask_text(str(config)))}[/]")
-        raise typer.Exit(code=2) from None
+        detail = t("cli.config_not_found", path=mask_text(str(config)))
+        raise usage_error(command, detail) from None
     except (ValidationError, yaml.YAMLError, ValueError) as exc:
-        err_console.print(f"[red]{t('cli.invalid_config', error=mask_text(str(exc)))}[/]")
-        raise typer.Exit(code=2) from None
+        detail = t("cli.invalid_config", error=mask_text(str(exc)))
+        raise usage_error(command, detail) from None
 
 
-def _check_stage(name: str | None) -> None:
+def _check_stage(name: str | None, command: str = "plan") -> None:
     if name is not None and name not in STAGE_ORDER:
-        err_console.print(
-            f"[red]{t('pipeline.cli.unknown_stage', stage=name, stages=', '.join(STAGE_ORDER))}[/]"
-        )
-        raise typer.Exit(code=2)
+        detail = t("pipeline.cli.unknown_stage", stage=name, stages=", ".join(STAGE_ORDER))
+        raise usage_error(command, detail)
 
 
-def parse_set(values: list[str] | None) -> dict[str, dict[str, Any]]:
+def parse_set(values: list[str] | None, command: str = "plan") -> dict[str, dict[str, Any]]:
     """``["unwrap.coherence_threshold=0.4", "interferogram.shape=[24,24]"]`` -> overrides."""
     overrides: dict[str, dict[str, Any]] = {}
     for raw in values or []:
         key, sep, value = raw.partition("=")
         parts = key.strip().split(".")
         if not sep or len(parts) < 2 or not all(parts):
-            err_console.print(f"[red]{t('pipeline.cli.bad_set', value=raw)}[/]")
-            raise typer.Exit(code=2)
+            raise usage_error(command, t("pipeline.cli.bad_set", value=raw))
         stage, *path = parts
-        _check_stage(stage)
+        _check_stage(stage, command)
         try:
             parsed = yaml.safe_load(value)
         except yaml.YAMLError:
@@ -173,12 +209,12 @@ def plan_cmd(
     force: ForceOpt = None,
     set_: SetOpt = None,
 ) -> None:
-    cfg = _load(config)
-    _check_stage(until)
-    _check_stage(from_stage)
+    cfg = _load(config, "plan")
+    _check_stage(until, "plan")
+    _check_stage(from_stage, "plan")
     for s in force or []:
-        _check_stage(s)
-    overrides = parse_set(set_)
+        _check_stage(s, "plan")
+    overrides = parse_set(set_, "plan")
     plan = api.plan(cfg, until=until, from_stage=from_stage, force=force, param_overrides=overrides)
     ok = not any(f.is_fail for f in plan.findings)
     if state.json:
@@ -199,12 +235,12 @@ def run_cmd(
         bool, typer.Option("--dry-run", help="Only print the plan (same as `plan`).")
     ] = False,
 ) -> None:
-    cfg = _load(config)
-    _check_stage(until)
-    _check_stage(from_stage)
+    cfg = _load(config, "run")
+    _check_stage(until, "run")
+    _check_stage(from_stage, "run")
     for s in force or []:
-        _check_stage(s)
-    overrides = parse_set(set_)
+        _check_stage(s, "run")
+    overrides = parse_set(set_, "run")
     result = api.run(
         cfg,
         until=until,
@@ -240,10 +276,10 @@ def run_cmd(
         raise typer.Exit(code=1)
 
 
-def _workdir(config: Path | None, workdir: Path | None) -> Path:
+def _workdir(config: Path | None, workdir: Path | None, command: str = "cache ls") -> Path:
     if workdir is not None:
         return workdir
-    return _load(config or Path("config.yaml")).workdir
+    return _load(config or Path("config.yaml"), command).workdir
 
 
 WorkdirOpt = Annotated[
@@ -257,8 +293,8 @@ def cache_ls(
     workdir: WorkdirOpt = None,
     stage: Annotated[str | None, typer.Option("--stage", help="Only this stage.")] = None,
 ) -> None:
-    _check_stage(stage)
-    wd = _workdir(config, workdir)
+    _check_stage(stage, "cache ls")
+    wd = _workdir(config, workdir, "cache ls")
     entries = cache.list_records(wd, stage)
     if state.json:
         emit_json(
@@ -269,9 +305,11 @@ def cache_ls(
                     {
                         "stage": e.stage,
                         "node_hash": e.node_hash,
-                        "status": e.record.status,
-                        "engine": e.record.engine,
-                        "engine_version": e.record.engine_version,
+                        # an orphan (crash before the first manifest) has no record at all
+                        "status": e.status,
+                        "orphan": e.orphan,
+                        "engine": e.record.engine if e.record else None,
+                        "engine_version": e.record.engine_version if e.record else None,
                         "finished_at": e.finished_at.isoformat() if e.finished_at else None,
                         "size_bytes": e.size_bytes,
                         "path": str(e.path),
@@ -297,9 +335,9 @@ def cache_ls(
         table.add_row(
             e.stage,
             e.node_hash,
-            e.record.status,
-            e.record.engine or "-",
-            e.record.engine_version or "-",
+            e.status,
+            (e.record.engine if e.record else None) or "-",
+            (e.record.engine_version if e.record else None) or "-",
             e.finished_at.strftime("%Y-%m-%d %H:%M") if e.finished_at else "-",
             cache.human_size(e.size_bytes),
         )
@@ -317,10 +355,20 @@ def cache_gc(
     config: ConfigOptional = None,
     workdir: WorkdirOpt = None,
     keep: Annotated[int, typer.Option("--keep", min=0, help="Entries kept per stage.")] = 3,
+    max_size: Annotated[
+        float | None,
+        typer.Option(
+            "--max-size",
+            min=0.0,
+            help="Cache budget in GB: evict the oldest survivors until the work directory "
+            "fits (PERF-03). Default: no size limit.",
+        ),
+    ] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Only report.")] = False,
 ) -> None:
-    wd = _workdir(config, workdir)
-    report = cache.gc(wd, keep_latest=keep, dry_run=dry_run)
+    wd = _workdir(config, workdir, "cache gc")
+    max_bytes = None if max_size is None else int(max_size * 1e9)
+    report = cache.gc(wd, keep_latest=keep, dry_run=dry_run, max_bytes=max_bytes)
     if state.json:
         emit_json(
             "cache gc",
@@ -328,6 +376,7 @@ def cache_gc(
                 "workdir": str(wd),
                 "dry_run": dry_run,
                 "keep": keep,
+                "max_size_gb": max_size,
                 "freed_bytes": report.freed_bytes,
                 "removed": [{"stage": e.stage, "node_hash": e.node_hash} for e in report.removed],
                 "kept": [{"stage": e.stage, "node_hash": e.node_hash} for e in report.kept],
@@ -348,8 +397,20 @@ def cache_gc(
 
 
 def register(app: typer.Typer) -> None:
-    app.command("plan", help=t("pipeline.cli.help_plan"))(plan_cmd)
-    app.command("run", help=t("pipeline.cli.help_run"))(run_cmd)
-    cache_app.command("ls", help=t("pipeline.cli.help_cache_ls"))(cache_ls)
-    cache_app.command("gc", help=t("pipeline.cli.help_cache_gc"))(cache_gc)
+    app.command(
+        "plan",
+        help="Build the DAG and print which stages are cached / will run plus estimated "
+        "resources (no execution).",
+    )(plan_cmd)
+    app.command(
+        "run",
+        help="Run the pipeline. Cached stages are skipped; only changed stages and their "
+        "downstream re-run (PERF-03).",
+    )(run_cmd)
+    cache_app.command("ls", help="List cached stage results.")(cache_ls)
+    cache_app.command(
+        "gc",
+        help="Keep the N most recent entries per stage (and an optional --max-size budget) "
+        "and delete the rest.",
+    )(cache_gc)
     app.add_typer(cache_app, name="cache")

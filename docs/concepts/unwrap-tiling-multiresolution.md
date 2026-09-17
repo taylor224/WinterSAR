@@ -35,7 +35,7 @@
 5. 마스크(수역·저코히어런스 `unwrap.coherence_threshold`·레이오버 `unwrap.mask.*`)로 노드 수를 줄이고,
    마스크 픽셀은 NaN 으로 출력합니다(SARscape 동작과 같음).
 6. 조립 파라미터만 바꿀 때는 SNAPHU `--assemble`(타일 임시 디렉터리 보존)로 타일 재언래핑을 건너뜁니다
-   (PERF-03; snaphu-py 경로 제약은 open-questions #18).
+   (PERF-03; snaphu-py 경로 제약은 open-questions #21).
 
 `wintersar unwrap plan --shape NY NX --n N [--memory-gb G] [--cores C]` 가 이 결정과 이유를 표로 보여 줍니다.
 출력 통계: 연결성분 수, 타일 경계 단차 수(오버랩 구간 차이의 2π 정수배 분포), 실행 시간, peak RSS.

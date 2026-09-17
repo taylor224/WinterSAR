@@ -15,7 +15,9 @@ Two runner functions share the :data:`RunnerFn` signature ``(site, workdir, repe
 Metrics (plan §6.3 item 3): ``closure_rms`` (wrapped triplet closure, radians),
 ``unwrap_error_fraction`` (fraction of pixels ≥ π from the synthetic truth after removing the
 constant offset, synthetic sites only), ``gt_rmse`` (LOS RMSE against the ground-truth CSV via
-:mod:`wintersar.validate`, when a CSV is configured and the module is importable).
+:mod:`wintersar.validate`, when a CSV is configured and the module is importable — the time
+series is read with :func:`wintersar.validate.api.load_timeseries` and :func:`gt_geometry` so
+that bench and the pipeline ``validate`` stage use one and the same synthetic grid).
 """
 
 from __future__ import annotations
@@ -39,7 +41,7 @@ from wintersar.bench.report import CompareReport, compare, load_result
 from wintersar.bench.sites import ENGINE_STAGES, Site, build_config
 from wintersar.io.schemas import Artifacts, Finding, Severity
 from wintersar.util import sysinfo
-from wintersar.util.masking import mask_mapping
+from wintersar.util.masking import mask_mapping, mask_text
 from wintersar.util.output import to_jsonable
 
 SCHEMA_VERSION = 1
@@ -239,8 +241,14 @@ def _npz(path: Path | None) -> dict[str, NDArray[Any]] | None:
         return {k: z[k] for k in z.files}
 
 
-def compute_metrics(artifacts: dict[str, Path], site: Site) -> dict[str, float | None]:
-    """``{metric: value | None}`` for the metrics listed in ``site.metrics``."""
+def compute_metrics(
+    artifacts: dict[str, Path], site: Site, errors: dict[str, str] | None = None
+) -> dict[str, float | None]:
+    """``{metric: value | None}`` for the metrics listed in ``site.metrics``.
+
+    ``errors`` is an optional out-parameter: ``{metric: reason}`` for every metric that could
+    not be computed because of an error (carried into the ``BENCH-006`` finding).
+    """
     out: dict[str, float | None] = {}
     ig = _npz(artifacts.get("igrams"))
     if "closure_rms" in site.metrics:
@@ -257,26 +265,86 @@ def compute_metrics(artifacts: dict[str, Path], site: Site) -> dict[str, float |
             else None
         )
     if "gt_rmse" in site.metrics:
-        out["gt_rmse"] = _gt_rmse(artifacts.get("timeseries"), site)
+        value, reason = _gt_rmse(artifacts.get("timeseries"), site)
+        out["gt_rmse"] = value
+        if reason is not None and errors is not None:
+            errors["gt_rmse"] = reason
     return out
 
 
-def _gt_rmse(ts_path: Path | None, site: Site) -> float | None:
+def _site_aoi_origin(site: Site) -> tuple[float, float] | None:
+    """North-west corner ``(lat, lon)`` of the site AOI, read with validate's own parser so
+    that bench places the synthetic grid exactly where the pipeline validate stage does."""
+    aoi = site.resolve(site.aoi)
+    if aoi is None or not aoi.exists():
+        return None
+    from wintersar.validate import api as validate_api
+
+    # source: src/wintersar/validate/api.py::run_validate -> _aoi_origin(cfg.aoi)
+    fn = getattr(validate_api, "_aoi_origin", None)
+    origin = None if fn is None else fn(aoi)
+    return None if origin is None else (float(origin[0]), float(origin[1]))
+
+
+def gt_geometry(site: Site) -> dict[str, Any]:
+    """Geometry overrides for a coordinate-less (fake-engine) ``.npz``, identical to what the
+    pipeline ``validate`` stage derives from the config — otherwise ``gt_rmse`` and the
+    validate report would place the same pixels on two different grids.
+
+    # source: src/wintersar/validate/api.py::run_validate — geometry = {
+    #   "pixel_m": cfg.engine.target_pixel_m,
+    #   "heading_deg": default_heading(cfg.data.orbit_direction unless "auto"),
+    #   "lat0_deg"/"lon0_deg": north-west corner of cfg.aoi (omitted when unknown)}
+    """
+    from pydantic import ValidationError
+
+    from wintersar.pipeline.config import DataCfg, EngineCfg
+    from wintersar.validate.los import default_heading
+
+    cfg = site.config if isinstance(site.config, dict) else {}
+    try:
+        engine = EngineCfg.model_validate(cfg.get("engine") or {})
+        data = DataCfg.model_validate(cfg.get("data") or {})
+    except ValidationError:  # build_config would have raised first; fall back to the defaults
+        engine, data = EngineCfg(), DataCfg()
+    geom: dict[str, Any] = {
+        "pixel_m": float(engine.target_pixel_m),
+        "heading_deg": default_heading(
+            None if data.orbit_direction == "auto" else data.orbit_direction
+        ),
+    }
+    origin = _site_aoi_origin(site)
+    if origin is not None:
+        geom["lat0_deg"], geom["lon0_deg"] = origin
+    return geom
+
+
+def _gt_rmse(ts_path: Path | None, site: Site) -> tuple[float | None, str | None]:
+    """LOS RMSE (m) against the site ground-truth CSV, and the reason when it is ``None``.
+
+    The time series is read through :func:`wintersar.validate.api.load_timeseries` with
+    :func:`gt_geometry`, not through :mod:`wintersar.io.formats`: the fake-engine ``.npz``
+    carries no lat/lon, incidence or heading, and only validate's reader fills them with the
+    same synthetic geometry the pipeline validate stage uses (``.h5`` and other formats are
+    delegated to ``io.formats`` by that function anyway).
+    """
     gt = site.ground_truth_path
     if gt is None or not gt.exists() or ts_path is None or not Path(ts_path).exists():
-        return None
+        return None, None
     try:
-        from wintersar.io.formats import load_timeseries
+        from wintersar.validate.api import load_timeseries
         from wintersar.validate.ground_truth import load_csv
         from wintersar.validate.metrics import compare as compare_gt
-    except ImportError:
-        return None
+    except ImportError as exc:  # pragma: no cover - validate is part of the same tree
+        return None, f"{type(exc).__name__}: {exc}"
     try:
-        ts = load_timeseries(ts_path)
+        ts = load_timeseries(ts_path, **gt_geometry(site))
         res = compare_gt(ts, load_csv(gt))
-    except Exception:
-        return None
-    return None if not np.isfinite(res.rmse_m) else float(res.rmse_m)
+    except Exception as exc:  # a metric never fails the benchmark run; the reason is reported
+        return None, mask_text(f"{type(exc).__name__}: {exc}")[:300]
+    if not np.isfinite(res.rmse_m):
+        return None, f"n_sites={res.n_sites} n_points={res.n_points}"
+    return float(res.rmse_m), None
 
 
 # ============================================================================ aggregation
@@ -449,6 +517,7 @@ def run_site(
         wd.mkdir(parents=True, exist_ok=True)
     outcomes: list[RunOutcome] = []
     per_run_metrics: list[dict[str, float | None]] = []
+    metric_errors: dict[str, str] = {}
     try:
         for i in range(n_rep):
             outcome = fn(site, wd, i)
@@ -467,7 +536,10 @@ def run_site(
                     )
                 )
                 break
-            per_run_metrics.append(compute_metrics(outcome.artifacts, site))
+            errors: dict[str, str] = {}
+            per_run_metrics.append(compute_metrics(outcome.artifacts, site, errors))
+            for metric, reason in errors.items():
+                metric_errors.setdefault(metric, reason)
     finally:
         if tmp is not None:
             tmp.cleanup()
@@ -476,7 +548,11 @@ def run_site(
     metrics = aggregate_metrics(per_run_metrics)
     for m in site.metrics:
         if metrics.get(m) is None:
-            findings.append(_finding("BENCH-006", "INFO", metric=m, site=site.name))
+            findings.append(
+                _finding(
+                    "BENCH-006", "INFO", metric=m, site=site.name, reason=metric_errors.get(m, "-")
+                )
+            )
     budget = site.max_wall_time_s
     total_wall = total.get("wall_time_s")
     if budget is not None and total_wall is not None and float(total_wall) > budget:

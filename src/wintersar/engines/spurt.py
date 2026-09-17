@@ -12,6 +12,13 @@ not per-pair interferograms, so:
 * :meth:`SpurtEngine.run` needs the artifact ``phase_linked_stack`` (kind ``dir``) and runs
   the CLI as a subprocess (rule 11.2), writing stdout/stderr and ``--log-file`` under ``log_dir``.
 
+The EMCF output directory is published under **both** names: ``unw`` — the name
+``StageSpec("unwrap", ["igrams"], ["unw"], ...)`` requires, so that the DAG resolves the
+timeseries stage for every interchangeable unwrap engine — and ``unw_stack``, the
+spurt-specific name of ADR-0025. Both entries are the same directory artifact; consumers
+tell it apart from the ``unw.npz`` of snaphu/tophu by ``kind == "dir"`` and
+``meta["layout"] == "spurt_stack"``.
+
 CLI flags verified against ``src/spurt/workflows/emcf/_cli.py`` (v0.1.1); see
 :func:`build_spurt_command`.
 """
@@ -55,6 +62,10 @@ SPURT_CONSTRAINT = ">=0.1,<1"
 # source: spurt v0.1.1 pyproject.toml [project.scripts] spurt-emcf; src/spurt/workflows/emcf/__main__.py
 SPURT_EMCF_SCRIPT = "spurt-emcf"
 SPURT_EMCF_MODULE = "spurt.workflows.emcf"
+
+#: ``Artifact.meta["layout"]`` of the EMCF output directory: a stack of per-pair
+#: ``*.unw.tif`` rasters, not the ``unw.npz`` that snaphu/tophu write.
+SPURT_STACK_LAYOUT = "spurt_stack"
 
 # source: spurt v0.1.1 src/spurt/workflows/emcf/_cli.py argparse definitions
 # (flag, wintersar param key, type)
@@ -257,8 +268,12 @@ class SpurtEngine(UnwrapEngineBase):
         )
         log.write(f"spurt-emcf done wall_time_s={stats['wall_time_s']} n_outputs={len(outputs)}")
         meta = {k: v for k, v in stats.items() if k not in {"outputs", "params"}}
+        meta["layout"] = SPURT_STACK_LAYOUT
         return (
             Artifacts()
+            # "unw" is the StageSpec("unwrap", ...) output name shared with snaphu/tophu;
+            # "unw_stack" is the spurt-specific alias of ADR-0025 (same directory).
+            .add(Artifact(name="unw", path=output_dir, kind="dir", meta=meta))
             .add(Artifact(name="unw_stack", path=output_dir, kind="dir", meta=meta))
             .add(Artifact(name="unw_stats", path=stats_path, kind="json", meta={}))
         )

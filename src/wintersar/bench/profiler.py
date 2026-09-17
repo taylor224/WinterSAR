@@ -236,6 +236,11 @@ class StageProfiler:
         )
 
     @property
+    def n_samples(self) -> int:
+        """Samples taken so far (readable while the profiler is running)."""
+        return self._n_samples
+
+    @property
     def result(self) -> Measurement:
         if self.measurement is None:
             msg = "StageProfiler has not finished (use it as a context manager)"

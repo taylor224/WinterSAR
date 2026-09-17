@@ -20,7 +20,7 @@ from numpy.typing import ArrayLike, NDArray
 
 from wintersar.io.schemas import Finding, GroundTruthRecord
 from wintersar.io.timeseries import TimeSeries
-from wintersar.validate.ground_truth import LosSample, to_los
+from wintersar.validate.ground_truth import LosSample, make_finding, to_los
 
 FloatArray = NDArray[np.float64]
 Aggregate = Literal["mean", "median"]
@@ -272,12 +272,20 @@ def compare(
     farther away than that, i.e. sites outside the grid (VAL-009).
     """
     samples = to_los(gt, ts, heading_deg=heading_deg, incidence_deg=incidence_deg)
+    findings: list[Finding] = []
+    n_gnss = sum(1 for s in samples if s.method == "gnss")
+    if n_gnss and heading_deg is None and ts.attrs.get("synthetic_heading"):
+        # The heading was filled from the configured orbit direction, not measured: the
+        # mid-latitude default is 1-3 deg off (docs/open-questions.md #13) and the whole
+        # east/north projection hangs on it.
+        findings.append(
+            make_finding("VAL-017", "WARN", heading_deg=ts.heading_deg, n_samples=n_gnss)
+        )
     by_site: dict[str, list[LosSample]] = {}
     for s in samples:
         by_site.setdefault(s.site_id, []).append(s)
     limit = max_site_distance_m if max_site_distance_m is not None else 2.0 * radius_m
     per_site: list[SiteComparison] = []
-    findings: list[Finding] = []
     all_ins: list[float] = []
     all_gt: list[float] = []
     for site_id, ss in by_site.items():
@@ -292,14 +300,19 @@ def compare(
             continue
         gt_dates = [s.date for s in ss]
         pairs = align_dates(ts.dates, gt_dates, max_gap_days, align)
-        pairs = [(gi, pos) for gi, pos in pairs if np.isfinite(series[int(np.floor(pos))])]
-        if len(pairs) < 2:
-            f = _finding("VAL-010", "WARN", site_id, n=len(pairs), max_gap_days=max_gap_days)
+        # Drop the samples the InSAR series cannot supply. The test must be on the *sampled*
+        # value, not on ``series[floor(pos)]``: in 'interp' mode a NaN epoch next to the
+        # bracketing one poisons the interpolation and would turn the site (and the pooled)
+        # RMSE into NaN.
+        sampled = sample_series(series, [pos for _, pos in pairs])
+        keep = np.isfinite(sampled)
+        gt_idx = [gi for (gi, _), ok in zip(pairs, keep.tolist(), strict=True) if ok]
+        if len(gt_idx) < 2:
+            f = _finding("VAL-010", "WARN", site_id, n=len(gt_idx), max_gap_days=max_gap_days)
             findings.append(f)
             per_site.append(_empty_site(site_id, ss[0].method, lat, lon, n_pix, d_near, f))
             continue
-        gt_idx = [gi for gi, _ in pairs]
-        ins = sample_series(series, [pos for _, pos in pairs])
+        ins = sampled[keep]
         gtv = np.asarray([ss[gi].los_m for gi in gt_idx], dtype=np.float64)
         dates = [ss[gi].date for gi in gt_idx]
         # reference both to the first common date
@@ -315,7 +328,7 @@ def compare(
                 method=ss[0].method,
                 lat=lat,
                 lon=lon,
-                n=len(pairs),
+                n=len(gt_idx),
                 rmse_m=float(np.sqrt(np.mean(diff**2))),
                 bias_m=float(np.mean(diff)),
                 corr=pearson(ins, gtv),

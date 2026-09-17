@@ -59,8 +59,12 @@ MB_PER_GB: float = 1024.0
 DEFAULT_OVERLAP_FRACTION: float = 0.25
 DEFAULT_MIN_OVERLAP_PX: int = 200
 
-# ADR-0045 — fringe density (mean |Δφ| / π over pixel neighbours; 1.0 = one cycle every two
-# pixels, the aliasing limit) above which the multiresolution unwrapper is preferred.
+# ADR-0045 — fringe density (mean |Δφ| / π over pixel neighbours of *both* axes; 1.0 = one
+# cycle every two pixels along each axis, the aliasing limit) above which the multiresolution
+# unwrapper is preferred. Because the two axes are pooled, a one-directional fringe pattern
+# reaches 0.25 at π/2 rad/px (a fringe every 4 px) — see :func:`fringe_density`. The
+# threshold is calibrated against this pooled score by ``wintersar bench`` (open question #8),
+# so it must not be re-scaled without the domain review (rule 11.10).
 FRINGE_HIGH: float = 0.25
 
 MAX_TILES: int = 4096
@@ -143,10 +147,18 @@ def fringe_density(wrapped: NDArray[Any], mask: NDArray[np.bool_] | None = None)
     """Mean absolute phase gradient of a wrapped interferogram, normalised to [0, 1].
 
     The gradient is taken as the angle of complex neighbour differences
-    (``angle(z[i+1] · conj(z[i]))``), so it is insensitive to the 2π wrap. ``1.0`` means
-    π radians per pixel (one fringe every two pixels — the aliasing limit); pure noise
-    gives ≈ 0.5 and a smooth field ≪ 0.1. Pixels under ``mask`` (``True`` = masked) or
-    with non-finite phase are ignored; returns NaN when nothing is valid.
+    (``angle(z[i+1] · conj(z[i]))``), so it is insensitive to the 2π wrap, and **both axes
+    are pooled into one mean**: the score is the mean over all vertical *and* horizontal
+    neighbour pairs of ``|Δφ| / π``.
+
+    Scale, read with that pooling in mind: ``1.0`` means π rad/px in *both* directions (one
+    fringe every two pixels along each axis — the aliasing limit) and pure noise gives
+    ≈ 0.5. Fringes that run in one direction only score **half** of their per-axis value
+    (a π/4 rad/px ramp along x alone gives 0.125, the same ramp along both axes 0.25), so
+    :data:`FRINGE_HIGH` is a threshold on this pooled mean, not on a single-axis gradient.
+
+    Pixels under ``mask`` (``True`` = masked) or with non-finite phase are ignored; returns
+    NaN when nothing is valid.
     """
     w = np.asarray(wrapped)
     if w.ndim != 2:
@@ -266,7 +278,11 @@ def choose_strategy(
     """Plan §5.4 rules. ``machine`` is the *budgeted* spec (``MachineSpec.budget``).
 
     ``available`` lists the installed engine backends (``None`` = assume all of
-    :data:`ENGINE_METHODS`); it only matters when ``cfg.method == "auto"``.
+    :data:`ENGINE_METHODS`); it only matters when ``cfg.method == "auto"``. It must contain
+    backends that can unwrap **one** interferogram: stack-only engines (``spurt``) are no
+    auto-selection candidates (ADR-0045) and are filtered out by
+    :func:`wintersar.unwrap.api.resolve_plan`, which knows the engine registry — this
+    function takes the list as given.
     """
     ny, nx = int(shape[0]), int(shape[1])
     if ny <= 0 or nx <= 0:

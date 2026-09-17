@@ -125,11 +125,31 @@ def vertical_to_los(up: ArrayLike, incidence_deg: ArrayLike) -> FloatArray:
     return np.asarray(np.asarray(up, dtype=np.float64) * np.cos(inc), dtype=np.float64)
 
 
-def default_heading(flight_direction: str | None) -> float:
-    """Mid-latitude Sentinel-1 heading for ``ASCENDING``/``asc`` or ``DESCENDING``/``desc``."""
-    if flight_direction and flight_direction.lower().startswith("asc"):
+def heading_for_orbit(flight_direction: str | None) -> float | None:
+    """Mid-latitude Sentinel-1 heading for ``ASCENDING``/``asc`` or ``DESCENDING``/``desc``,
+    and ``None`` when the direction is unknown (``None``, ``"auto"``, anything else).
+
+    Unknown must stay unknown: a descending heading applied to an ascending stack flips the
+    sign of the east and north terms of :func:`enu_to_los` (east: -0.616 → +0.616 per metre at
+    39° incidence), which silently inverts every GNSS comparison.
+    """
+    d = (flight_direction or "").strip().lower()
+    if d.startswith("asc"):
         return S1_HEADING_ASC_DEG
-    return S1_HEADING_DESC_DEG
+    if d.startswith("desc"):
+        return S1_HEADING_DESC_DEG
+    return None
+
+
+def default_heading(flight_direction: str | None) -> float:
+    """:func:`heading_for_orbit` with the descending default for an unknown direction.
+
+    Only for callers that *must* have a number (display, a coarse geometry mask). Anything
+    that projects GNSS to LOS uses :func:`heading_for_orbit` and treats ``None`` as "no
+    heading" (``VAL-008``) instead of guessing.
+    """
+    h = heading_for_orbit(flight_direction)
+    return S1_HEADING_DESC_DEG if h is None else h
 
 
 __all__ = [
@@ -139,6 +159,7 @@ __all__ = [
     "azimuth_to_heading",
     "default_heading",
     "enu_to_los",
+    "heading_for_orbit",
     "heading_to_azimuth",
     "los_to_vertical",
     "los_unit_vector",

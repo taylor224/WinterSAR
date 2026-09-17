@@ -49,6 +49,12 @@ validate:
   VAL-016:
     cause: "스윕 조합 {index}({params}) 실행이 실패했습니다: {error}."
     fix: "같은 파라미터로 'wintersar run'을 실행해 단계 진단을 확인하세요. 해당 행은 지표가 빈 채로 표에 남습니다."
+  VAL-017:
+    cause: "GNSS {n_samples}개 시점을 실측이 아닌 기본 heading {heading_deg}도로 LOS에 투영했습니다. 이 값은 설정의 data.orbit_direction에서 온 중위도 근사(상승 -12도 / 하강 192도)로 실제 궤도와 1~3도 차이가 납니다(docs/open-questions.md #13)."
+    fix: "동서·남북 성분이 중요하면 실제 heading을 주세요: 'wintersar validate --heading <도>' 또는 HEADING 속성이 있는 시계열(MintPy timeseries.h5). 수준측량만 비교할 때는 heading이 필요 없습니다."
+  VAL-018:
+    cause: "목표 지표 {dropped}은(는) 성공한 조합 어디에도 값이 없어(예: 대조군 없이 실행한 gt_rmse) Pareto 전선 계산에서 제외했습니다. 남은 목표: {used}."
+    fix: "gt_rmse가 필요하면 --leveling/--gnss(또는 config.yaml의 validate.leveling_csv)를 주고, 아니면 sweep YAML의 'objectives:'에 원하는 지표만 적으세요."
   cli:
     validate_title: "대조군 검증"
     refpoint_title: "기준점 추천"
@@ -57,6 +63,8 @@ validate:
     summary: "RMSE {rmse_mm} mm · bias {bias_mm} mm · 지점 {n_sites}개 · 시점 {n_points}개 · 반경 {radius_m} m"
     no_sites: "비교할 수 있는 지점이 없습니다(발견 사항 참조)."
     ts_not_found: "시계열 파일을 찾을 수 없습니다: {path}"
+    igrams_not_found: "간섭도 스택 파일을 찾을 수 없습니다: {path}"
+    unw_not_found: "언래핑 스택 파일을 찾을 수 없습니다: {path}"
     csv_not_found: "CSV를 찾을 수 없습니다: {path}"
     aoi_not_found: "AOI 파일을 찾을 수 없습니다: {path}"
     grid_not_found: "스윕 그리드 파일을 찾을 수 없습니다: {path}"
@@ -135,4 +143,5 @@ validate:
     status_ok: "성공"
     status_failed: "실패"
     plot_title: "스윕 Pareto 전선"
+    pareto_dropped: "이 스윕에서 값이 없는 목표는 제외했습니다: {dropped}."
     pareto_note: "{objectives} 기준 Pareto 전선(max 표시가 없으면 작을수록 좋음)."

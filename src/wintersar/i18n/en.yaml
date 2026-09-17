@@ -22,6 +22,12 @@ cli:
   invalid_config: "Invalid config: {error}"
   no_findings: "No findings."
   findings_summary: "FAIL {n_fail} · WARN {n_warn} · INFO {n_info}"
+  CLI-001:
+    cause: "Unexpected error while running the command: {error}"
+    fix: "Check the inputs (config path, stage names, workdir permissions) and re-run with -v for the full traceback."
+  CLI-002:
+    cause: "{path} already exists."
+    fix: "Add --force to overwrite it, or choose a different path."
   check_install:
     title: "Installation check"
     engine: "Engine"

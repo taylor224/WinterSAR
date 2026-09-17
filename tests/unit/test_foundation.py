@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import json
+import re
+import sys
+import tomllib
 from datetime import date
 from pathlib import Path
 
@@ -205,3 +209,191 @@ def test_cli_init_writes_config(tmp_path: Path) -> None:
     r = CliRunner().invoke(app, ["init", str(p)])
     assert r.exit_code == 0, r.output
     assert load_config(p).project.name
+
+
+def test_masking_hides_env_var_shaped_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rule 11.11: a log excerpt must not leak ``EARTHDATA_TOKEN=…`` shaped secrets.
+
+    The value is *not* set in this process: engine wrappers (`set -x`, `env`, SDK debug
+    dumps) print these lines and `wintersar diagnose` masks them later, from another shell.
+    """
+    for var in ("EARTHDATA_TOKEN", "HYP3_TOKEN", "AWS_SECRET_ACCESS_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    secret = "s3cr3tOpaqueTokenValue1234567890"
+    lines = [
+        f"+ export EARTHDATA_TOKEN={secret}",
+        f"env: HYP3_TOKEN={secret}",
+        f"AWS_SECRET_ACCESS_KEY={secret}",
+        f"HYP3_TOKEN: {secret}",
+        f"hyp3 --token {secret} --submit",
+        f"os.environ['EARTHDATA_TOKEN'] = '{secret}'",
+        f'{{"EARTHDATA_TOKEN": "{secret}"}}',
+        f"Authorization: Bearer {secret}",
+        f"machine urs.earthdata.nasa.gov login u password {secret}",
+        f"https://u:{secret}@example.invalid/x",
+    ]
+    for line in lines:
+        out = masking.mask_text(line)
+        assert secret not in out, line
+        assert "***" in out
+
+
+def test_masking_leaves_ordinary_log_lines_alone() -> None:
+    for line in (
+        "stage=unwrap status=ok n_pairs=12 coherence_threshold=0.3",
+        "ERROR: Exceeded maximum number of secondary nodes",
+        "runconfig: worker_settings: n_workers: 4",
+        "간섭도 12개 처리 완료 (masked_fraction=0.16)",
+        "key: value",
+    ):
+        assert masking.mask_text(line) == line
+
+
+def test_mask_mapping_masks_values_stored_under_a_secret_key() -> None:
+    masked = masking.mask_mapping(
+        {"token": "abcdefgh", "api_key": "k", "n_secrets": 3, "log_path": "/x/y"}
+    )
+    assert masked["token"] == "***"
+    assert masked["api_key"] == "***"
+    assert masked["n_secrets"] == 3
+    assert masked["log_path"] == "/x/y"
+
+
+def test_findings_keep_numpy_values_serialisable() -> None:
+    """A rule that computes with numpy must not crash the serializers (io/schemas)."""
+    import numpy as np
+
+    from wintersar.io.schemas import Artifact, StageRecord
+    from wintersar.util.output import emit_json
+
+    f = Finding(
+        rule_id="SEL-99",
+        severity="WARN",
+        message_key="x",
+        params={"coverage": np.float32(0.5)},
+        evidence={"n": np.int64(3), "hist": np.arange(3), "nested": {"ok": np.bool_(True)}},
+    )
+    assert f.evidence == {"n": 3, "hist": [0, 1, 2], "nested": {"ok": True}}
+    assert f.model_dump(mode="json")["params"] == {"coverage": pytest.approx(0.5)}
+    rec = StageRecord(stage="unwrap", node_hash="h", extra={"masked": np.float64(0.25)})
+    assert rec.model_dump(mode="json")["extra"] == {"masked": 0.25}
+    art = Artifact(name="unw", path=Path("unw.npz"), meta={"n_pairs": np.int32(2)})
+    assert art.model_dump(mode="json")["meta"] == {"n_pairs": 2}
+    buf = io.StringIO()
+    emit_json("t", {"a": np.int64(1)}, [f], stream=buf)
+    assert json.loads(buf.getvalue())["findings"][0]["evidence"]["n"] == 3
+
+
+def test_cli_init_refuses_existing_file_with_catalog_text_and_envelope(tmp_path: Path) -> None:
+    """Rule 11.6: no hard-coded English; ``--json`` always gets an envelope."""
+    from wintersar.cli import app
+
+    p = tmp_path / "config.yaml"
+    p.write_text("project: {name: x}\n", encoding="utf-8")
+    r = CliRunner().invoke(app, ["--json", "init", str(p)])
+    assert r.exit_code == 1
+    payload = json.loads(r.stdout)
+    assert payload["ok"] is False
+    assert [f["rule_id"] for f in payload["findings"]] == ["CLI-002"]
+    assert payload["findings"][0]["message_key"] == "cli.CLI-002.cause"
+    for lang in ("ko", "en"):
+        assert i18n.has_key("cli.CLI-002.cause", lang) and i18n.has_key("cli.CLI-002.fix", lang)
+    r = CliRunner().invoke(app, ["--lang", "en", "init", str(p)])
+    assert r.exit_code == 1
+    assert "exists" in r.output and "--force" in r.output
+
+
+def test_cli_check_install_strict_gates_on_fail_findings() -> None:
+    """Default stays 0 (report command); ``--strict`` makes the exit code match ``ok``."""
+    from wintersar.cli import app
+
+    r = CliRunner().invoke(app, ["--json", "check-install"])
+    assert r.exit_code == 0, r.output
+    ok = json.loads(r.stdout)["ok"]
+    assert ok is False  # no external engine is installed in this environment
+    r = CliRunner().invoke(app, ["--json", "check-install", "--strict"])
+    assert r.exit_code == 1
+    assert json.loads(r.stdout)["ok"] is False
+    r = CliRunner().invoke(app, ["--json", "check-install", "--strict", "--engine", "fake"])
+    assert r.exit_code == 0, r.output
+    assert json.loads(r.stdout)["ok"] is True
+
+
+def test_cli_main_converts_escaped_exceptions_into_the_output_contract(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An exception that escapes a sub-command must not end as a raw traceback.
+
+    Typer re-raises it (``Typer.__call__``), so ``main`` has to emit the envelope itself;
+    the message is masked (rule 11.11) and ``-v`` still gives the traceback.
+    """
+    from wintersar import cli
+
+    def _boom() -> None:
+        raise ValueError(f"--from 'unwrap' is after --until 'search' ({Path.home()}/c.yaml)")
+
+    monkeypatch.setattr(cli, "app", _boom)
+    monkeypatch.setattr(cli.state, "json", True)
+    monkeypatch.setattr(cli.state, "verbose", 0)
+    monkeypatch.setattr(sys, "argv", ["wintersar", "--json", "plan", "--from", "unwrap"])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["command"] == "plan"
+    assert [f["rule_id"] for f in payload["findings"]] == ["CLI-001"]
+    assert str(Path.home()) not in payload["data"]["error"]
+    for lang in ("ko", "en"):
+        assert i18n.has_key("cli.CLI-001.cause", lang) and i18n.has_key("cli.CLI-001.fix", lang)
+    monkeypatch.setattr(cli.state, "verbose", 1)
+    with pytest.raises(ValueError):
+        cli.main()
+
+
+# ------------------------------------------------------------------ packaging / CI (Phase 0 DoD)
+
+_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_dockerfile_copies_only_paths_that_exist_in_the_build_context() -> None:
+    """``docker build`` on a clean checkout fails on an empty/absent COPY source.
+
+    git cannot track an empty directory, so ``COPY <empty dir>`` aborts the CI docker job.
+    """
+    for line in _ROOT.joinpath("Dockerfile").read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("COPY ") or "--from=" in stripped:
+            continue
+        for src in stripped.split()[1:-1]:
+            path = _ROOT / src
+            assert path.exists(), f"Dockerfile COPY {src}: not in the build context"
+            if path.is_dir():
+                assert any(p.is_file() for p in path.rglob("*")), (
+                    f"Dockerfile COPY {src}: directory is empty, git cannot track it"
+                )
+
+
+def test_ci_runs_the_mocked_engine_tests_and_does_not_claim_a_bench_gate() -> None:
+    """Plan §3.3: the adapter contract tests must run in CI, not be deselected."""
+    ci = yaml.safe_load(_ROOT.joinpath(".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    steps = ci["jobs"]["lint-test"]["steps"]
+    markers = pytest_step = None
+    for step in steps:
+        run = step.get("run", "")
+        if "pytest" in run:
+            pytest_step = step
+            m = re.search(r'-m\s+"([^"]+)"', run)
+            assert m, run
+            markers = [part.strip() for part in m.group(1).split(" and ")]
+    assert pytest_step is not None and markers is not None
+    assert "not engine" not in markers, "CI must run the stub-driven adapter contract tests"
+    assert "not engine_real" in markers
+    declared = tomllib.loads(_ROOT.joinpath("pyproject.toml").read_text(encoding="utf-8"))
+    names = {m.split(":")[0] for m in declared["tool"]["pytest"]["ini_options"]["markers"]}
+    assert {"engine", "engine_real"} <= names  # --strict-markers
+    bench = next(s for s in steps if "wintersar --json bench" in s.get("run", ""))
+    if "--compare" not in bench["run"]:
+        # rule 11.8 / open question #58: no baseline is committed yet, so the step may not
+        # advertise a regression guard it does not implement.
+        assert "guard" not in bench.get("name", "").lower()

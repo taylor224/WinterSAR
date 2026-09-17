@@ -3,11 +3,17 @@ handling (R-12, plan §5.8, ADR-0070/0071). No QGIS needed."""
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import stat
+import subprocess
 import sys
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from wintersar_qgis import cli_client as cc
@@ -387,6 +393,142 @@ def test_cancel_running_command(fake_cli) -> None:
     th.join(timeout=5.0)
     assert result and result[0].error == "CANCELLED"
     assert not client.running and not client.cancel()
+
+
+# ------------------------------------------------------- engine grandchildren (process group)
+
+
+def _spawning_cli(tmp_path: Path, pid_file: Path, sleep_s: int = 30) -> Path:
+    """Fake CLI that starts an "engine" the way the adapters do, and records its pid.
+
+    A ``/bin/sh`` script rather than a Python one: it reaches the ``echo $!`` in a
+    millisecond, so the engine pid is on disk well before the 1 s timeout under test fires.
+    """
+    script = tmp_path / "fake_python_spawns_engine"
+    script.write_text(
+        f"#!/bin/sh\nsleep {sleep_s} &\necho $! > {str(pid_file)!r}\nwait\n",
+        encoding="utf-8",
+    )
+    script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return script
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # pragma: no cover - not ours any more, but it exists
+        return True
+    return True
+
+
+def _wait_gone(pid: int, timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not _alive(pid):
+            return True
+        time.sleep(0.05)
+    return not _alive(pid)
+
+
+def _read_pid(pid_file: Path, timeout: float = 10.0) -> int:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pid_file.exists() and pid_file.read_text().strip():
+            return int(pid_file.read_text().strip())
+        time.sleep(0.02)
+    raise AssertionError(f"{pid_file} never appeared")
+
+
+@pytest.fixture
+def engine_pid_file(tmp_path: Path) -> Iterator[Path]:
+    """``pid_file`` for the fake engine, SIGKILLed on teardown if a test leaks it."""
+    pid_file = tmp_path / "engine.pid"
+    yield pid_file
+    if pid_file.exists() and pid_file.read_text().strip():
+        with contextlib.suppress(OSError, ValueError):
+            os.kill(int(pid_file.read_text().strip()), 9)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
+def test_run_starts_the_cli_in_its_own_process_group() -> None:
+    kwargs = cc.new_process_group_kwargs()
+    assert kwargs == {"start_new_session": True}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
+def test_cancel_kills_engine_grandchildren(tmp_path: Path, engine_pid_file: Path) -> None:
+    """Cancel must stop SNAPHU/topsStack/MintPy too, not just the CLI pid."""
+    exe = _spawning_cli(tmp_path, engine_pid_file)
+    client = WintersarClient(python_exe=exe, timeout=60.0)
+    result: list[CliResponse] = []
+    th = threading.Thread(target=lambda: result.append(client.run(["run"])))
+    th.start()
+    engine_pid = _read_pid(engine_pid_file)
+    assert _alive(engine_pid)
+    assert client.cancel()
+    th.join(timeout=15.0)
+    assert result and result[0].error == "CANCELLED"
+    assert _wait_gone(engine_pid), f"engine pid {engine_pid} survived cancel (orphaned)"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
+def test_terminate_process_tree_kills_engine_grandchildren(
+    tmp_path: Path, engine_pid_file: Path
+) -> None:
+    """The kill path the Cancel button and the timeout share, without racing a timer."""
+    exe = _spawning_cli(tmp_path, engine_pid_file)
+    proc: subprocess.Popen[str] = subprocess.Popen(
+        [str(exe)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        **cc.new_process_group_kwargs(),
+    )
+    try:
+        engine_pid = _read_pid(engine_pid_file)
+        assert _alive(engine_pid)
+        assert cc.terminate_process_tree(proc)
+        proc.wait(timeout=15.0)
+        assert _wait_gone(engine_pid), f"engine pid {engine_pid} survived (orphaned)"
+    finally:
+        if proc.poll() is None:  # pragma: no cover - only if the kill failed
+            proc.kill()
+            proc.wait()
+
+
+def test_timeout_path_terminates_the_whole_tree(fake_cli, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A timeout must go through ``terminate_process_tree``, not ``Popen.kill``."""
+    seen: list[int] = []
+    real = cc.terminate_process_tree
+
+    def spy(proc: subprocess.Popen[str], *args: Any, **kwargs: Any) -> bool:
+        seen.append(proc.pid)
+        return real(proc, *args, **kwargs)
+
+    monkeypatch.setattr(cc, "terminate_process_tree", spy)
+    exe = fake_cli(stdout=_env_text(), sleep_s=5.0)
+    resp = WintersarClient(python_exe=exe, timeout=0.5).run(["version"])
+    assert resp.error == "TIMEOUT"
+    assert seen, "the timeout path killed only the CLI pid"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process groups")
+def test_terminate_process_tree_never_signals_the_callers_own_group() -> None:
+    """Without a group of its own only the pid is killed — QGIS must survive a Cancel."""
+    proc: subprocess.Popen[str] = subprocess.Popen(  # no new session: shares our group
+        [sys.executable, "-c", "import time; time.sleep(30)"], text=True
+    )
+    try:
+        assert cc._own_process_group(proc) is None
+        assert cc.terminate_process_tree(proc)
+        proc.wait(timeout=10.0)
+        assert proc.returncode != 0
+    finally:
+        if proc.poll() is None:  # pragma: no cover - only if the kill failed
+            proc.kill()
+            proc.wait()
 
 
 def test_helper_methods_build_expected_argv(monkeypatch: pytest.MonkeyPatch) -> None:

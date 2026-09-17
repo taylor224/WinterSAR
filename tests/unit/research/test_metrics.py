@@ -12,6 +12,7 @@ from wintersar.research import metrics as mt
 from wintersar.research import synth
 from wintersar.research.repr_phase import truth_lowres_phase
 from wintersar.research.stitching import stitch
+from wintersar.validate.closure import closure_from_arrays
 
 
 def test_phase_rmse_and_mae_wrap_and_mask():
@@ -78,9 +79,10 @@ def test_closure_rms_on_synthetic_stack(rng):
     wrapped = np.stack([st.igrams[k].wrapped for k in keys])
     res3 = mt.closure_rms(wrapped, keys, wrapped=True)
     assert 0.0 <= res3["closure_rms_rad"] < np.pi
-    # the local fallback agrees with the validate implementation
-    n_tri, vals = mt._closure_local(bad, keys, None, False)
-    assert n_tri == res2["n_triplets"]
+    # one implementation only: closure_rms is the shared wintersar.validate.closure path
+    tri, closure, valid = closure_from_arrays(bad, keys, None, wrapped=False)
+    assert len(tri) == res2["n_triplets"]
+    vals = np.asarray(closure[valid], dtype=np.float64)
     assert abs(np.sqrt(np.mean(vals**2)) - res2["closure_rms_rad"]) < 1e-9
 
 

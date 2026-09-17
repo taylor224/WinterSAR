@@ -1,0 +1,381 @@
+{
+  "name": "S_synth_strong_atmosphere",
+  "kind": "repr_phase",
+  "status": "ok",
+  "reason": null,
+  "missing": [],
+  "metrics": [
+    "phase_rmse_rad",
+    "phase_mae_rad",
+    "mean_magnitude",
+    "wall_s",
+    "peak_rss_mb"
+  ],
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "experiment": {
+    "name": "S_synth_strong_atmosphere",
+    "kind": "repr_phase",
+    "description": "Representative (low-resolution) phase of a 96x96 synthetic interferogram with a 3 rad turbulent atmosphere (Kolmogorov-like k^-8/3) over a Gaussian subsidence bowl, base coherence 0.6 and single-look noise drawn from the exact phase distribution (noise_model: exact), at downsample factor 3, compared with the block mean of the true phase.",
+    "requires": [],
+    "factor": 3,
+    "seeds": [
+      0,
+      1,
+      2
+    ],
+    "data": {
+      "kind": "synthetic_igram",
+      "shape": [
+        96,
+        96
+      ],
+      "deformation_kind": "gaussian",
+      "deformation_amplitude_m": -0.05,
+      "atmosphere_std_rad": 3.0,
+      "coherence_base": 0.6,
+      "looks": 1,
+      "noise_model": "exact"
+    },
+    "methods": [
+      {
+        "name": "ml",
+        "params": {},
+        "label": null
+      },
+      {
+        "name": "coh_weighted",
+        "params": {
+          "p": 1.0
+        },
+        "label": null
+      },
+      {
+        "name": "coh_weighted",
+        "params": {
+          "p": 2.0
+        },
+        "label": "coh_weighted(p=2)"
+      },
+      {
+        "name": "filtered",
+        "params": {
+          "alpha": 0.5,
+          "window": 16,
+          "overlap": 0.5
+        },
+        "label": null
+      }
+    ],
+    "metrics": [
+      "phase_rmse_rad",
+      "phase_mae_rad",
+      "mean_magnitude",
+      "wall_s",
+      "peak_rss_mb"
+    ],
+    "protocol": null,
+    "path": "~/Documents/develop/winterSARS/src/wintersar/research/experiments/S_synth_strong_atmosphere.yaml",
+    "ids": [
+      "R-07",
+      "PERF-04"
+    ]
+  },
+  "environment": {
+    "wintersar": "0.1.0.dev0",
+    "python": "3.11.7",
+    "numpy": "2.4.6",
+    "os": "darwin-arm64",
+    "timestamp": "2026-09-17T02:07:19+00:00"
+  },
+  "rows": [
+    {
+      "method": "ml",
+      "seed": 0,
+      "status": "ok",
+      "phase_rmse_rad": 1.165576473733839,
+      "phase_mae_rad": 0.8666205769677584,
+      "mean_magnitude": 0.16218091080075814,
+      "wall_s": 0.019543208996765316,
+      "cpu_s": 0.019524999999999904,
+      "peak_rss_mb": 56.229888
+    },
+    {
+      "method": "coh_weighted(p=1.0)",
+      "seed": 0,
+      "status": "ok",
+      "phase_rmse_rad": 1.165576473733839,
+      "phase_mae_rad": 0.8666205769677583,
+      "mean_magnitude": 0.35606098404666636,
+      "wall_s": 0.0013886250089854002,
+      "cpu_s": 0.0013889999999999736,
+      "peak_rss_mb": 56.918016
+    },
+    {
+      "method": "coh_weighted(p=2)",
+      "seed": 0,
+      "status": "ok",
+      "phase_rmse_rad": 1.1640971084703393,
+      "phase_mae_rad": 0.8649151855776405,
+      "mean_magnitude": 0.35950791844954266,
+      "wall_s": 0.0011786249815486372,
+      "cpu_s": 0.0011799999999999589,
+      "peak_rss_mb": 56.918016
+    },
+    {
+      "method": "filtered(alpha=0.5,overlap=0.5,window=16)",
+      "seed": 0,
+      "status": "ok",
+      "phase_rmse_rad": 1.1488033178637904,
+      "phase_mae_rad": 0.8518080468132528,
+      "mean_magnitude": 0.17243182324356224,
+      "wall_s": 0.03534508400480263,
+      "cpu_s": 0.019519000000000064,
+      "peak_rss_mb": 57.26208
+    },
+    {
+      "method": "ml",
+      "seed": 1,
+      "status": "ok",
+      "phase_rmse_rad": 1.3423511339904224,
+      "phase_mae_rad": 1.0436426695294438,
+      "mean_magnitude": 0.13394568155493597,
+      "wall_s": 0.0005727499956265092,
+      "cpu_s": 0.0005739999999999634,
+      "peak_rss_mb": 57.67168
+    },
+    {
+      "method": "coh_weighted(p=1.0)",
+      "seed": 1,
+      "status": "ok",
+      "phase_rmse_rad": 1.3423511339904224,
+      "phase_mae_rad": 1.043642669529444,
+      "mean_magnitude": 0.33141660009640883,
+      "wall_s": 0.001492624985985458,
+      "cpu_s": 0.0012460000000000804,
+      "peak_rss_mb": 57.67168
+    },
+    {
+      "method": "coh_weighted(p=2)",
+      "seed": 1,
+      "status": "ok",
+      "phase_rmse_rad": 1.3424020142731756,
+      "phase_mae_rad": 1.0413553235410822,
+      "mean_magnitude": 0.3345269671749401,
+      "wall_s": 0.0007907499966677278,
+      "cpu_s": 0.0007650000000000157,
+      "peak_rss_mb": 57.67168
+    },
+    {
+      "method": "filtered(alpha=0.5,overlap=0.5,window=16)",
+      "seed": 1,
+      "status": "ok",
+      "phase_rmse_rad": 1.3345398223366762,
+      "phase_mae_rad": 1.0352990601874037,
+      "mean_magnitude": 0.13898560378673055,
+      "wall_s": 0.017473917017923668,
+      "cpu_s": 0.01703100000000002,
+      "peak_rss_mb": 57.688064
+    },
+    {
+      "method": "ml",
+      "seed": 2,
+      "status": "ok",
+      "phase_rmse_rad": 1.024281375752775,
+      "phase_mae_rad": 0.7392337150821402,
+      "mean_magnitude": 0.20505242327350467,
+      "wall_s": 0.0005671669787261635,
+      "cpu_s": 0.0005669999999999842,
+      "peak_rss_mb": 57.688064
+    },
+    {
+      "method": "coh_weighted(p=1.0)",
+      "seed": 2,
+      "status": "ok",
+      "phase_rmse_rad": 1.024281375752775,
+      "phase_mae_rad": 0.7392337150821402,
+      "mean_magnitude": 0.38420627912789407,
+      "wall_s": 0.0011982090072706342,
+      "cpu_s": 0.0011979999999999214,
+      "peak_rss_mb": 57.688064
+    },
+    {
+      "method": "coh_weighted(p=2)",
+      "seed": 2,
+      "status": "ok",
+      "phase_rmse_rad": 1.027873367165077,
+      "phase_mae_rad": 0.7390269868148356,
+      "mean_magnitude": 0.38643815745843924,
+      "wall_s": 0.0008925420115701854,
+      "cpu_s": 0.0008919999999998929,
+      "peak_rss_mb": 57.688064
+    },
+    {
+      "method": "filtered(alpha=0.5,overlap=0.5,window=16)",
+      "seed": 2,
+      "status": "ok",
+      "phase_rmse_rad": 1.0019840226777346,
+      "phase_mae_rad": 0.7183685470644676,
+      "mean_magnitude": 0.2208857145734773,
+      "wall_s": 0.021018458006437868,
+      "cpu_s": 0.017806999999999906,
+      "peak_rss_mb": 57.688064
+    }
+  ],
+  "summary": {
+    "ml": {
+      "phase_rmse_rad": {
+        "mean": 1.1774029944923454,
+        "std": 0.15936433955335622,
+        "min": 1.024281375752775,
+        "max": 1.3423511339904224,
+        "n": 3.0
+      },
+      "phase_mae_rad": {
+        "mean": 0.8831656538597809,
+        "std": 0.15287742660035636,
+        "min": 0.7392337150821402,
+        "max": 1.0436426695294438,
+        "n": 3.0
+      },
+      "mean_magnitude": {
+        "mean": 0.16705967187639958,
+        "std": 0.03580354607692799,
+        "min": 0.13394568155493597,
+        "max": 0.20505242327350467,
+        "n": 3.0
+      },
+      "wall_s": {
+        "mean": 0.006894375323705996,
+        "std": 0.010954211644799407,
+        "min": 0.0005671669787261635,
+        "max": 0.019543208996765316,
+        "n": 3.0
+      },
+      "peak_rss_mb": {
+        "mean": 57.196543999999996,
+        "std": 0.8371887335696755,
+        "min": 56.229888,
+        "max": 57.688064,
+        "n": 3.0
+      }
+    },
+    "coh_weighted(p=1.0)": {
+      "phase_rmse_rad": {
+        "mean": 1.1774029944923454,
+        "std": 0.15936433955335622,
+        "min": 1.024281375752775,
+        "max": 1.3423511339904224,
+        "n": 3.0
+      },
+      "phase_mae_rad": {
+        "mean": 0.8831656538597809,
+        "std": 0.15287742660035647,
+        "min": 0.7392337150821402,
+        "max": 1.043642669529444,
+        "n": 3.0
+      },
+      "mean_magnitude": {
+        "mean": 0.35722795442365635,
+        "std": 0.02641418024390284,
+        "min": 0.33141660009640883,
+        "max": 0.38420627912789407,
+        "n": 3.0
+      },
+      "wall_s": {
+        "mean": 0.0013598196674138308,
+        "std": 0.00014930674099967146,
+        "min": 0.0011982090072706342,
+        "max": 0.001492624985985458,
+        "n": 3.0
+      },
+      "peak_rss_mb": {
+        "mean": 57.42592,
+        "std": 0.4399340448021714,
+        "min": 56.918016,
+        "max": 57.688064,
+        "n": 3.0
+      }
+    },
+    "coh_weighted(p=2)": {
+      "phase_rmse_rad": {
+        "mean": 1.1781241633028638,
+        "std": 0.15773279989706862,
+        "min": 1.027873367165077,
+        "max": 1.3424020142731756,
+        "n": 3.0
+      },
+      "phase_mae_rad": {
+        "mean": 0.8817658319778529,
+        "std": 0.1518669286250085,
+        "min": 0.7390269868148356,
+        "max": 1.0413553235410822,
+        "n": 3.0
+      },
+      "mean_magnitude": {
+        "mean": 0.36015768102764073,
+        "std": 0.02596169414191484,
+        "min": 0.3345269671749401,
+        "max": 0.38643815745843924,
+        "n": 3.0
+      },
+      "wall_s": {
+        "mean": 0.0009539723299288502,
+        "std": 0.0002011019989565658,
+        "min": 0.0007907499966677278,
+        "max": 0.0011786249815486372,
+        "n": 3.0
+      },
+      "peak_rss_mb": {
+        "mean": 57.42592,
+        "std": 0.4399340448021714,
+        "min": 56.918016,
+        "max": 57.688064,
+        "n": 3.0
+      }
+    },
+    "filtered(alpha=0.5,overlap=0.5,window=16)": {
+      "phase_rmse_rad": {
+        "mean": 1.1617757209594004,
+        "std": 0.16665699026220226,
+        "min": 1.0019840226777346,
+        "max": 1.3345398223366762,
+        "n": 3.0
+      },
+      "phase_mae_rad": {
+        "mean": 0.8684918846883747,
+        "std": 0.15912259541552987,
+        "min": 0.7183685470644676,
+        "max": 1.0352990601874037,
+        "n": 3.0
+      },
+      "mean_magnitude": {
+        "mean": 0.17743438053459004,
+        "std": 0.04117858935548739,
+        "min": 0.13898560378673055,
+        "max": 0.2208857145734773,
+        "n": 3.0
+      },
+      "wall_s": {
+        "mean": 0.024612486343054723,
+        "std": 0.009462157900369863,
+        "min": 0.017473917017923668,
+        "max": 0.03534508400480263,
+        "n": 3.0
+      },
+      "peak_rss_mb": {
+        "mean": 57.54606933333333,
+        "std": 0.24594197707047338,
+        "min": 57.26208,
+        "max": 57.688064,
+        "n": 3.0
+      }
+    }
+  },
+  "json_path": "S_synth_strong_atmosphere.json",
+  "md_path": "S_synth_strong_atmosphere.md",
+  "docs_md_path": null
+}

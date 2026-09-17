@@ -144,6 +144,8 @@ def test_method_explicit_and_fringe_rules(machine_64gb_10c):
     assert nan.method == "snaphu"
     none = choose_strategy((1000, 1000), 2, machine_64gb_10c, UnwrapCfg(), available=[])
     assert none.method == "snaphu" and R + "method_none_available" in none.reason_keys
+    # choose_strategy takes ``available`` as given (it knows no engine registry); the
+    # stack-only engines are filtered out one level up, in api.resolve_plan (ADR-0045).
     other = choose_strategy((1000, 1000), 2, machine_64gb_10c, UnwrapCfg(), available=["spurt"])
     assert other.method == "spurt" and R + "method_first_available" in other.reason_keys
 
@@ -246,3 +248,22 @@ def test_all_reason_keys_used_by_scheduler_exist_in_catalogs():
 def test_plan_dataclass_defaults():
     p = UnwrapPlan("snaphu", 1, 1, 0, 1, 1, 10.0)
     assert not p.tiled and p.n_tiles == 1 and p.reason_keys == []
+
+
+def test_fringe_density_pools_both_axes_so_one_directional_fringes_score_half():
+    """The documented scale (ADR-0045): the score is the mean over x *and* y neighbours.
+
+    A fringe pattern that runs in one direction only therefore reaches FRINGE_HIGH at
+    π/2 rad/px, not at π/4 rad/px — the docstring of ``fringe_density`` says so.
+    """
+    ny, nx = 64, 64
+    x = np.arange(nx, dtype=np.float64)[None, :]
+    y = np.arange(ny, dtype=np.float64)[:, None]
+    one_d = synth.wrap(np.broadcast_to(np.pi / 4 * x, (ny, nx)).copy())
+    both = synth.wrap(np.pi / 4 * (x + y))
+    assert fringe_density(one_d) == pytest.approx(0.125, abs=1e-3)
+    assert fringe_density(both) == pytest.approx(FRINGE_HIGH, abs=1e-3)
+    one_d_steeper = synth.wrap(np.broadcast_to(np.pi / 2 * x, (ny, nx)).copy())
+    assert fringe_density(one_d_steeper) == pytest.approx(FRINGE_HIGH, abs=1e-3)
+    aliased = synth.wrap(np.pi * (x + y))
+    assert fringe_density(aliased) == pytest.approx(1.0, abs=1e-3)

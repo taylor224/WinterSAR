@@ -26,7 +26,6 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -49,10 +48,13 @@ from wintersar.engines._unwrap_common import (
     command_version,
     conncomp_masked,
     conncomp_stats,
+    engine_log,
     make_finding,
     nan_masked,
     resolve_nlooks,
+    resolve_nproc,
     resolve_tiles,
+    scratch_dir,
     to_complex64,
     unwrap_cfg,
 )
@@ -288,7 +290,7 @@ def build_snaphu_config(
         ntilecol=tiles.cols,
         rowovrlp=tiles.overlap_px[0],
         colovrlp=tiles.overlap_px[1],
-        nproc=max(int(cfg.get("nproc_per_igram", 1) or 1), 1),
+        nproc=resolve_nproc(cfg),
         tilecostthresh=int(cfg.get("tile_cost_thresh", SNAPHU_PY_DEFAULTS["tile_cost_thresh"])),
         minregionsize=int(cfg.get("min_region_size", SNAPHU_PY_DEFAULTS["min_region_size"])),
         minconncompfrac=float(
@@ -427,7 +429,7 @@ class SnaphuEngine(UnwrapEngineBase):
             msg = f"igram must be 2-D and coh the same shape, got {igram.shape} / {coh.shape}"
             raise ValueError(msg)
         shape = (int(igram.shape[0]), int(igram.shape[1]))
-        log = EngineLog(Path(str(cfg["_log_path"]))) if cfg.get("_log_path") else None
+        log = engine_log(cfg, self.name)
         mask_cfg: Mapping[str, Any] = cfg["mask"] if isinstance(cfg.get("mask"), Mapping) else {}
         masked = build_masked(
             igram,
@@ -454,7 +456,7 @@ class SnaphuEngine(UnwrapEngineBase):
         if log is not None:
             for f in findings:
                 log.finding(f)
-        scratch, scratch_is_temp = self._scratch_dir(cfg)
+        scratch, scratch_is_temp = scratch_dir(cfg, "wintersar-snaphu-")
         t0 = time.perf_counter()
         if backend == "snaphu-py":
             unw, cc, extra = self._unwrap_snaphu_py(
@@ -480,7 +482,7 @@ class SnaphuEngine(UnwrapEngineBase):
             "masked_fraction": float(masked.mean()),
             "ntiles": list(tiles.ntiles),
             "tile_overlap_px": list(tiles.overlap_px),
-            "nproc": int(cfg.get("nproc_per_igram", 1) or 1),
+            "nproc": resolve_nproc(cfg),
             "findings": [f.rule_id for f in findings],
             **conncomp_stats(cc_out),
             **extra,
@@ -492,15 +494,6 @@ class SnaphuEngine(UnwrapEngineBase):
                 stats["tile_dir"] = None
                 stats["assemble_only_capable"] = False
         return UnwrapResult(unw=unw_out, conncomp=cc_out, stats=stats)
-
-    @staticmethod
-    def _scratch_dir(cfg: Mapping[str, Any]) -> tuple[Path, bool]:
-        raw = cfg.get("_scratch_dir") or cfg.get("scratch_dir")
-        if raw:
-            p = Path(str(raw))
-            p.mkdir(parents=True, exist_ok=True)
-            return p, False
-        return Path(tempfile.mkdtemp(prefix="wintersar-snaphu-")), True
 
     # ------------------------------------------------------------------ backend: snaphu-py
     def _unwrap_snaphu_py(
@@ -534,7 +527,7 @@ class SnaphuEngine(UnwrapEngineBase):
             ),
             "ntiles": tiles.ntiles,
             "tile_overlap": tiles.overlap_px,
-            "nproc": max(int(cfg.get("nproc_per_igram", 1) or 1), 1),
+            "nproc": resolve_nproc(cfg),
             "tile_cost_thresh": int(
                 cfg.get("tile_cost_thresh", SNAPHU_PY_DEFAULTS["tile_cost_thresh"])
             ),
@@ -578,7 +571,9 @@ class SnaphuEngine(UnwrapEngineBase):
         if tiles.tiled:
             # snaphu-py never sets TILEDIR/RMTMPTILE, so SNAPHU removes its tile files
             # (v2.0 default) — the scratch dir is recorded but cannot feed ASSEMBLEONLY.
-            extra["tile_dir"] = str(scratch)
+            # ``keep`` is False -> snaphu-py deleted the scratch dir, so there is nothing
+            # left to report (a stale path would fail a later assemble-only run, UNW-005).
+            extra["tile_dir"] = str(scratch) if keep else None
             extra["tile_dir_kept"] = keep
             extra["assemble_only_capable"] = False
         return unw_arr, cc_arr, extra

@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 import yaml
 
@@ -151,3 +152,42 @@ def test_summarise_is_nan_aware():
     s = ex.summarise(rows, ["x", "y"])
     assert s["a"]["x"]["mean"] == 2.0 and s["a"]["x"]["n"] == 2 and "y" not in s["a"]
     assert s["b"]["y"]["std"] == 0.0
+
+
+def test_perf_metrics_stay_in_the_json_and_out_of_the_markdown(tmp_path):
+    """Rule 11.8: performance numbers need a bench_result.json behind them, and an
+    experiment run does not produce one — so wall_s / peak_rss_mb are measured and stored
+    but never rendered into the committed table."""
+    spec = dict(TINY_STITCH, name="perf", metrics=["n_wrong_offsets", "wall_s", "peak_rss_mb"])
+    res = ex.run_experiment(ex.load_experiment(_write(tmp_path, spec)), tmp_path / "out")
+    md = res.md_path.read_text(encoding="utf-8")
+    header = next(line for line in md.splitlines() if line.startswith("| ") and "---" not in line)
+    assert "n_wrong_offsets" in header
+    assert "wall_s" not in header and "peak_rss_mb" not in header
+    assert "bench_result.json" in md  # the table says where the numbers went
+    payload = json.loads(res.json_path.read_text(encoding="utf-8"))
+    assert all("wall_s" in r and "peak_rss_mb" in r for r in payload["rows"])
+    assert {"wall_s", "cpu_s", "peak_rss_mb"} == ex.PERF_METRICS
+
+
+def test_bundled_synthetic_types_b_and_c_run(tmp_path):
+    """Phase 6 DoD "합성 3종": (a) SLC stack, (b) steep ramp, (c) strong atmosphere."""
+    bundled = {p.stem for p in ex.list_bundled()}
+    assert {"S_synth_steep_ramp", "S_synth_strong_atmosphere"} <= bundled
+    for name in ("S_synth_steep_ramp", "S_synth_strong_atmosphere"):
+        exp = ex.load_experiment(ex.bundled_experiment_dir() / f"{name}.yaml")
+        assert exp.kind == "repr_phase" and exp.data["kind"] == "synthetic_igram"
+        res = ex.run_experiment(exp, tmp_path / name)
+        assert res.status == ex.STATUS_OK
+        assert all(r["status"] == ex.STATUS_OK for r in res.rows)
+        assert all(np.isfinite(s["phase_rmse_rad"]["mean"]) for s in res.summary.values())
+    # (b) is the aliasing case: the complex block mean loses magnitude to the fringe rate
+    ramp = ex.run_experiment(
+        ex.load_experiment(ex.bundled_experiment_dir() / "S_synth_steep_ramp.yaml"), None
+    )
+    assert ramp.summary["ml"]["mean_magnitude"]["mean"] < 0.5
+    # (c) reaches synth through the YAML: the exact noise model is honoured
+    strong = ex.load_experiment(ex.bundled_experiment_dir() / "S_synth_strong_atmosphere.yaml")
+    assert strong.data["noise_model"] == "exact"
+    ds = ex._repr_dataset(strong.data, 0)
+    assert ds["igram"].shape == (96, 96)

@@ -1,7 +1,9 @@
 """Shared pytest fixtures.
 
-Network tests are deselected unless ``--run-network`` (or ``-m network``) is given; engine
-tests need the external engine installed.
+Network tests are deselected unless ``--run-network`` (or ``-m network``) is given.
+``engine``-marked tests are adapter *contract* tests driven by stubs/mocks and run
+everywhere; only ``engine_real`` needs the external engine installed (see the marker
+descriptions in ``pyproject.toml``).
 """
 
 from __future__ import annotations

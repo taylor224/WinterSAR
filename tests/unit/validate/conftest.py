@@ -131,3 +131,20 @@ def ts_npz(tmp_path: Path, synth_stack: SynthStack) -> Path:
         heading_deg=SYNTH_HEADING,
     )
     return p
+
+
+@pytest.fixture
+def ts_npz_bare(tmp_path: Path, synth_stack: SynthStack) -> Path:
+    """Exactly what ``engines/fake.py::_stage_timeseries`` writes: no lat/lon, no geometry.
+
+    # source: src/wintersar/engines/fake.py::FakeEngine._stage_timeseries
+    #   np.savez_compressed(p, dates=…, displacement_m=…, velocity_m_per_yr=…)
+    """
+    p = tmp_path / "bare_timeseries.npz"
+    np.savez_compressed(
+        p,
+        dates=np.array([d.isoformat() for d in synth_stack.dates]),
+        displacement_m=synth_stack.displacement_m.astype(np.float32),
+        velocity_m_per_yr=synth_stack.velocity_m_per_yr.astype(np.float32),
+    )
+    return p

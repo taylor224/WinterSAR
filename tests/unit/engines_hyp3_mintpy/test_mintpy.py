@@ -306,6 +306,16 @@ def test_parse_log_patterns(tmp_path: Path) -> None:
 # ------------------------------------------------------------------ h5py reader
 
 
+def test_h5_reader_is_the_single_io_implementation() -> None:
+    """ADR-0021: engines.mintpy re-exports wintersar.io.formats; there is no second copy."""
+    from wintersar.io import formats
+
+    assert mp.read_timeseries_h5 is formats.read_timeseries_h5
+    assert mp.read_h5_attrs is formats.read_h5_attrs
+    src = Path(mp.__file__).read_text(encoding="utf-8")
+    assert "def read_timeseries_h5" not in src and "def read_h5_attrs" not in src
+
+
 def test_read_timeseries_h5_geocoded(tmp_path: Path) -> None:
     p = make_timeseries_h5(tmp_path / "timeseries.h5", n_dates=4, ny=4, nx=5, sidecars=True)
     ts = mp.read_timeseries_h5(p)
@@ -337,7 +347,7 @@ def test_read_timeseries_h5_geocoded(tmp_path: Path) -> None:
 
 def test_read_timeseries_h5_radar_coords(tmp_path: Path) -> None:
     p = make_timeseries_h5(tmp_path / "timeseries.h5", geocoded=False)
-    with pytest.raises(ValueError, match="radar coordinates"):
+    with pytest.raises(ValueError, match="radar-coded file"):
         mp.read_timeseries_h5(p)
     make_timeseries_h5(tmp_path / "timeseries.h5", geocoded=False, sidecars=True)
     ts = mp.read_timeseries_h5(p)  # finds inputs/geometryRadar.h5 automatically

@@ -7,7 +7,13 @@
 * Artifact identity uses :func:`wintersar.util.hashing.hash_path` with ``fast=True``
   (size + mtime + head/tail) — multi-GB rasters must not be re-read on every plan
   (ADR-0031). The method is recorded in ``artifact.meta["hash_method"]``.
-* :func:`gc` keeps the ``keep_latest`` most recent entries per stage.
+* :func:`gc` keeps the ``keep_latest`` most recent entries per stage and, with
+  ``max_bytes``, additionally evicts the oldest of those until the work directory fits the
+  byte budget (plan §6.2 PERF-03: "캐시 크기 제한과 ``wintersar cache gc``").
+* :func:`node_lock` serialises two processes that resolve the *same* node hash on the same
+  work directory: without it the second ``prepare_node_dir(clean=True)`` deletes the first
+  run's in-flight ``out/`` (ADR-0032 has no ownership rule; ``engines/aux_cache.py`` locks
+  the aux-data cache the same way).
 """
 
 from __future__ import annotations
@@ -16,6 +22,8 @@ import json
 import os
 import shutil
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -28,8 +36,23 @@ from wintersar.util.hashing import hash_path
 MANIFEST_NAME = "manifest.json"
 OUT_DIRNAME = "out"
 LOGS_DIRNAME = "logs"
+LOCK_NAME = ".lock"
 ARTIFACTS_KEY = "artifacts"
 HASH_METHOD_KEY = "hash_method"
+ORPHAN_STATUS = "orphan"
+
+try:  # POSIX advisory locks: released by the kernel when the process dies (no stale locks)
+    import fcntl
+
+    #: annotated so that ``warn_unreachable`` does not fold the Windows branches away
+    HAS_FLOCK: bool = True
+except ImportError:  # pragma: no cover - non-POSIX platform
+    fcntl = None  # type: ignore[assignment]
+    HAS_FLOCK = False
+
+
+class NodeBusyError(RuntimeError):
+    """Another process is executing this node directory."""
 
 
 # ---------------------------------------------------------------------- layout
@@ -62,6 +85,63 @@ def prepare_node_dir(node_dir: Path, clean: bool = True) -> tuple[Path, Path]:
             shutil.rmtree(sub)
         sub.mkdir(parents=True, exist_ok=True)
     return out_dir(node_dir), log_dir(node_dir)
+
+
+# ---------------------------------------------------------------------- locking
+
+
+def lock_path(node_dir: Path) -> Path:
+    return node_dir / LOCK_NAME
+
+
+@contextmanager
+def node_lock(node_dir: Path) -> Iterator[None]:
+    """Hold an exclusive lock on ``node_dir`` for the duration of the block.
+
+    Raises :class:`NodeBusyError` when another process holds it. On platforms without
+    ``fcntl`` (Windows) this is a no-op, i.e. exactly today's behaviour.
+    """
+    node_dir.mkdir(parents=True, exist_ok=True)
+    if not HAS_FLOCK:  # pragma: no cover - non-POSIX platform
+        yield
+        return
+    fd = os.open(lock_path(node_dir), os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            msg = f"node directory is locked by another run: {node_dir}"
+            raise NodeBusyError(msg) from exc
+        try:
+            os.truncate(fd, 0)
+            os.write(fd, f"{os.getpid()}\n".encode())
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def is_locked(node_dir: Path) -> bool:
+    """True when another process currently holds the node lock (never blocks)."""
+    if not HAS_FLOCK:  # pragma: no cover - non-POSIX platform
+        return False
+    p = lock_path(node_dir)
+    if not p.is_file():
+        return False
+    try:
+        fd = os.open(p, os.O_RDWR)
+    except OSError:  # pragma: no cover - unreadable lock file
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return True
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(fd)
 
 
 # ---------------------------------------------------------------------- manifests
@@ -168,24 +248,43 @@ def find_cached(
 
 @dataclass(frozen=True)
 class CacheEntry:
+    """One ``work/<stage>/<hash>/`` directory.
+
+    ``record`` is ``None`` for an *orphan*: a node directory whose manifest is missing or
+    unparsable (a run killed between :func:`prepare_node_dir` and the first
+    :func:`write_record`). Orphans are listed and collected so their ``out/`` cannot leak.
+    """
+
     stage: str
     node_hash: str
     path: Path
-    record: StageRecord
+    record: StageRecord | None
     size_bytes: int
 
     @property
+    def orphan(self) -> bool:
+        return self.record is None
+
+    @property
+    def status(self) -> str:
+        return ORPHAN_STATUS if self.record is None else self.record.status
+
+    @property
     def finished_at(self) -> datetime | None:
+        if self.record is None:
+            return None
         return self.record.finished_at or self.record.started_at
 
     def sort_key(self) -> float:
         ts = self.finished_at
         if ts is not None:
             return ts.timestamp()
-        try:
-            return manifest_path(self.path).stat().st_mtime
-        except OSError:
-            return 0.0
+        for p in (manifest_path(self.path), self.path):
+            try:
+                return p.stat().st_mtime
+            except OSError:
+                continue
+        return 0.0  # pragma: no cover - the directory was just listed
 
 
 def dir_size(path: Path) -> int:
@@ -200,7 +299,10 @@ def dir_size(path: Path) -> int:
 
 
 def list_records(workdir: Path, stage: str | None = None) -> list[CacheEntry]:
-    """All manifests under ``workdir`` (newest first), optionally for one stage."""
+    """All node directories under ``workdir`` (newest first), optionally for one stage.
+
+    Directories without a readable manifest are returned as orphans (``record is None``).
+    """
     stages = [stage] if stage else STAGE_ORDER
     entries: list[CacheEntry] = []
     for s in stages:
@@ -208,15 +310,12 @@ def list_records(workdir: Path, stage: str | None = None) -> list[CacheEntry]:
         if not root.is_dir():
             continue
         for node_dir in sorted(p for p in root.iterdir() if p.is_dir()):
-            record = load_record(node_dir)
-            if record is None:
-                continue
             entries.append(
                 CacheEntry(
                     stage=s,
                     node_hash=node_dir.name,
                     path=node_dir,
-                    record=record,
+                    record=load_record(node_dir),
                     size_bytes=dir_size(node_dir),
                 )
             )
@@ -227,6 +326,8 @@ def list_records(workdir: Path, stage: str | None = None) -> list[CacheEntry]:
 def latest_record(workdir: Path, stage: str, status: str = "ok") -> StageRecord | None:
     """Most recent manifest of ``stage`` with ``status`` whose outputs are intact."""
     for e in list_records(workdir, stage):
+        if e.record is None:
+            continue
         if e.record.status == status and artifacts_unchanged(record_artifacts(e.record)):
             return e.record
     return None
@@ -259,24 +360,40 @@ def gc(
     keep_latest: int = 3,
     dry_run: bool = False,
     stages: list[str] | None = None,
+    max_bytes: int | None = None,
 ) -> GcReport:
     """Keep the ``keep_latest`` newest entries of every stage and delete the rest.
 
-    Entries are ordered by ``finished_at`` (fallback: manifest mtime). Failed entries count
-    like any other so that a failed run's logs survive until they age out.
+    Entries are ordered by ``finished_at`` (fallback: manifest/directory mtime). Failed
+    entries count like any other so that a failed run's logs survive until they age out;
+    orphans (no readable manifest) never occupy a ``keep_latest`` slot. ``max_bytes`` caps
+    the total size afterwards by evicting the oldest survivors first (plan §6.2 PERF-03).
+    Entries locked by a running pipeline are always kept.
     """
     if keep_latest < 0:
         msg = "keep_latest must be >= 0"
         raise ValueError(msg)
+    if max_bytes is not None and max_bytes < 0:
+        msg = "max_bytes must be >= 0"
+        raise ValueError(msg)
     removed: list[CacheEntry] = []
     kept: list[CacheEntry] = []
     for s in stages or STAGE_ORDER:
-        entries = list_records(workdir, s)  # newest first
-        kept.extend(entries[:keep_latest])
-        for e in entries[keep_latest:]:
-            removed.append(e)
-            if not dry_run:
-                shutil.rmtree(e.path, ignore_errors=True)
+        entries = [e for e in list_records(workdir, s) if not is_locked(e.path)]  # newest first
+        survivors = [e for e in entries if not e.orphan][:keep_latest]
+        keys = {id(e) for e in survivors}
+        kept.extend(survivors)
+        removed.extend(e for e in entries if id(e) not in keys)
+    if max_bytes is not None:
+        kept.sort(key=lambda e: -e.sort_key())  # newest first, across stages
+        total = sum(e.size_bytes for e in kept)
+        while kept and total > max_bytes:
+            victim = kept.pop()
+            total -= victim.size_bytes
+            removed.append(victim)
+    if not dry_run:
+        for e in removed:
+            shutil.rmtree(e.path, ignore_errors=True)
     return GcReport(removed=removed, kept=kept, dry_run=dry_run)
 
 

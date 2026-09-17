@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import numpy as np
 import typer
@@ -151,37 +151,39 @@ def repr_phase_cmd(
             kw["pair"] = (int(pair[0]), int(pair[1]))
         with rmetrics.ResourceTimer() as rt:
             est = representative_phase(method, z, coh, factor, stack=stack_arr, **kw)
+        data: dict[str, Any] = {
+            "method": method,
+            "factor": factor,
+            "index": index,
+            "pair": st.pairs[index],
+            "shape": list(est.shape),
+            "out": str(out),
+            "mean_magnitude": float(np.mean(np.abs(est))),
+            "wall_s": rt.result.wall_s,
+            "peak_rss_mb": rt.result.peak_rss_mb,
+            "params": kw,
+        }
+        # inside the guarded block: a truth/estimate grid mismatch must come out as a
+        # finding, and the .npz must not be written when anything above failed
+        if "unw_true" in st.truth:
+            truth_lo = truth_lowres_phase(
+                np.asarray(st.truth["unw_true"][index], dtype=np.float64), factor
+            )
+            data["phase_rmse_rad"] = rmetrics.phase_rmse(est, truth_lo)
+            data["phase_mae_rad"] = rmetrics.phase_mae(est, truth_lo)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(
+            out,
+            repr_complex=est.astype(np.complex64),
+            repr_phase=np.angle(est).astype(np.float32),
+            repr_magnitude=np.abs(est).astype(np.float32),
+            method=np.array(method),
+            factor=np.array(factor),
+            pair=np.array(st.pairs[index]),
+        )
     except (ResearchError, OSError, KeyError, ValueError, typer.BadParameter) as e:
         _fail(command, e)
         return
-    out.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(
-        out,
-        repr_complex=est.astype(np.complex64),
-        repr_phase=np.angle(est).astype(np.float32),
-        repr_magnitude=np.abs(est).astype(np.float32),
-        method=np.array(method),
-        factor=np.array(factor),
-        pair=np.array(st.pairs[index]),
-    )
-    data: dict[str, Any] = {
-        "method": method,
-        "factor": factor,
-        "index": index,
-        "pair": st.pairs[index],
-        "shape": list(est.shape),
-        "out": str(out),
-        "mean_magnitude": float(np.mean(np.abs(est))),
-        "wall_s": rt.result.wall_s,
-        "peak_rss_mb": rt.result.peak_rss_mb,
-        "params": kw,
-    }
-    if "unw_true" in st.truth:
-        truth_lo = truth_lowres_phase(
-            np.asarray(st.truth["unw_true"][index], dtype=np.float64), factor
-        )
-        data["phase_rmse_rad"] = rmetrics.phase_rmse(est, truth_lo)
-        data["phase_mae_rad"] = rmetrics.phase_mae(est, truth_lo)
     if state.json:
         emit_json(command, data)
         return
@@ -358,6 +360,13 @@ def synth_cmd(
     atmosphere_std_rad: Annotated[float, typer.Option("--atmosphere-std-rad")] = 0.6,
     coherence_base: Annotated[float, typer.Option("--coherence-base")] = 0.8,
     looks: Annotated[int, typer.Option("--looks")] = 1,
+    noise_model: Annotated[
+        str,
+        typer.Option(
+            "--noise-model",
+            help="crlb (Cramer-Rao lower bound, default) | exact (true phase distribution).",
+        ),
+    ] = "crlb",
     water_fraction: Annotated[float, typer.Option("--water-fraction")] = 0.0,
     rows: Annotated[int, typer.Option("--rows", help="tiles: tile rows")] = 2,
     cols: Annotated[int, typer.Option("--cols", help="tiles: tile columns")] = 2,
@@ -383,6 +392,11 @@ def synth_cmd(
     rng = np.random.default_rng(seed)
     shp = (int(shape[0]), int(shape[1]))
     try:
+        if noise_model not in ("crlb", "exact"):
+            raise ResearchError(
+                "RES-006", name="noise_model", value=noise_model, allowed="crlb | exact"
+            )
+        nm = cast("synth.NoiseModel", noise_model)
         if kind == "igrams":
             st = synth.make_stack(
                 n_dates=n_dates,
@@ -391,6 +405,7 @@ def synth_cmd(
                 atmosphere_std_rad=atmosphere_std_rad,
                 coherence_base=coherence_base,
                 looks=looks,
+                noise_model=nm,
                 water_fraction=water_fraction,
             )
             keys = [p.key for p in st.pairs]
@@ -427,6 +442,7 @@ def synth_cmd(
                 atmosphere_std_rad=atmosphere_std_rad,
                 coherence_base=coherence_base,
                 looks=looks,
+                noise_model=nm,
                 water_fraction=water_fraction,
             )
             save_tiles_npz(
@@ -489,6 +505,8 @@ def synth_cmd(
         _fail(command, e)
         return
     data.update({"kind": kind, "seed": seed, "out": str(out)})
+    if kind in ("igrams", "tiles"):
+        data["noise_model"] = noise_model
     if state.json:
         emit_json(command, data)
         return
@@ -497,7 +515,8 @@ def synth_cmd(
 
 # ---------------------------------------------------------------- experiment
 def _resolve_experiment(spec: str) -> Path:
-    from wintersar.research.experiments import bundled_experiment_dir
+    from wintersar.research.experiments import bundled_experiment_dir, list_bundled
+    from wintersar.research.repr_phase import ResearchError
 
     p = Path(spec)
     if p.exists():
@@ -505,7 +524,11 @@ def _resolve_experiment(spec: str) -> Path:
     candidate = bundled_experiment_dir() / (spec if spec.endswith(".yaml") else f"{spec}.yaml")
     if candidate.exists():
         return candidate
-    raise FileNotFoundError(spec)
+    raise ResearchError(
+        "RES-010",
+        name=mask_text(spec),
+        bundled=", ".join(sorted(b.stem for b in list_bundled())),
+    )
 
 
 @research_app.command("experiment")

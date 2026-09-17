@@ -18,12 +18,14 @@ from wintersar.validate.sweep import (
     METRIC_KEYS,
     SweepRow,
     apply_point,
+    available_objectives,
     expand,
     flatten,
     grid_points,
     load_sweep_yaml,
     make_grid,
     metrics_from_run,
+    objectives_finding,
     pareto_front,
     run_sweep,
     to_html_table,
@@ -276,3 +278,29 @@ def test_real_fake_pipeline_sweep_reuses_cache(tmp_path, cache_dir, monkeypatch,
     result = pipeline_api.run(apply_point(cfg, grid[0]), param_overrides=SMALL)
     m = metrics_from_run(result, gt)
     assert m["cache_hits"] == 8 and m["gt_rmse"] is not None
+
+
+def test_pareto_front_ignores_objectives_nothing_could_measure():
+    """A sweep without ground truth still has a front: gt_rmse is None everywhere, so it
+    cannot rank anything and is dropped (VAL-018) instead of emptying the table."""
+    rows = _rows()
+    for r in rows:
+        r.metrics["gt_rmse"] = None
+    used, dropped = available_objectives(rows, ["gt_rmse", "wall_time_s"])
+    assert dropped == ["gt_rmse"] and list(used) == ["wall_time_s"]
+    assert [r.index for r in pareto_front(rows, ["gt_rmse", "wall_time_s"])] == [2]  # fastest
+    f = objectives_finding(rows, ["gt_rmse", "wall_time_s"])
+    assert f is not None and f.rule_id == "VAL-018" and f.severity == "INFO"
+    assert f.params == {"dropped": "gt_rmse", "used": "wall_time_s"}
+    md = to_markdown(rows, ["gt_rmse", "wall_time_s"], "en")
+    assert "Pareto front over wall_time_s (min)" in md and "ignored: gt_rmse" in md
+    assert md.splitlines()[4].endswith("| * | ok |")  # row 2 marked
+    # nothing measurable at all -> no front, and the finding names every objective
+    for r in rows:
+        r.metrics["wall_time_s"] = None
+    assert pareto_front(rows, ["gt_rmse", "wall_time_s"]) == []
+    assert objectives_finding(rows, ["gt_rmse", "wall_time_s"]).params["used"] == "-"
+    # every run failed: VAL-016 already explains that, nothing is "unavailable"
+    for r in rows:
+        r.ok = False
+    assert objectives_finding(rows, ["gt_rmse"]) is None and pareto_front(rows) == []

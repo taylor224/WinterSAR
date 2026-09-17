@@ -17,6 +17,7 @@ every record produced so far.
 
 from __future__ import annotations
 
+import os
 import resource
 import sys
 import time
@@ -44,7 +45,19 @@ from wintersar.util.masking import mask_text
 
 LOG_EXCERPT_LINES = 40
 LOG_EXCERPT_MAX_CHARS = 8000
+#: never read more than this from the end of a log file: the stage that just failed may
+#: have died of OOM and ``read_text()`` on a multi-hundred-MB log would follow it.
+#: (``wintersar.diagnose.api.read_log`` caps the same way.)
+LOG_EXCERPT_TAIL_BYTES = 256 * 1024
 RETRY_HINT_KEY = "retry_hint"
+
+#: Registry engine name -> ``wintersar diagnose --engine`` name. The KB only accepts
+#: ``KB_ENGINES`` and exits 2 for anything else, so a fix text must not suggest e.g.
+#: ``--engine isce2_topsstack``.
+#: source: src/wintersar/diagnose/kb_loader.py::KB_ENGINES / src/wintersar/diagnose/cli.py
+#: source: src/wintersar/diagnose/kb/isce2.yaml:1 ("ISCE2 / topsStack failure knowledge base")
+KB_ENGINE_ALIASES: dict[str, str] = {"isce2_topsstack": "isce2"}
+_KB_ENGINES_FALLBACK: tuple[str, ...] = ("snaphu", "isce2", "mintpy", "hyp3", "asf")
 
 
 class PipelineError(RuntimeError):
@@ -137,6 +150,20 @@ def _peak_rss_gb() -> float | None:
     return float(peak) * scale / 1e9
 
 
+def tail_lines(
+    path: Path, n_lines: int = LOG_EXCERPT_LINES, max_bytes: int = LOG_EXCERPT_TAIL_BYTES
+) -> list[str]:
+    """Last ``n_lines`` of ``path``, reading at most ``max_bytes`` from its end."""
+    with path.open("rb") as fh:
+        size = fh.seek(0, os.SEEK_END)
+        fh.seek(max(0, size - max_bytes))
+        data = fh.read()
+    text = data.decode("utf-8", errors="replace")
+    if size > max_bytes:
+        _, _, text = text.partition("\n")  # drop the truncated first line
+    return text.splitlines()[-n_lines:]
+
+
 def log_excerpt(log_dir: Path, n_lines: int = LOG_EXCERPT_LINES) -> dict[str, str]:
     """Last ``n_lines`` of every ``*.log`` under ``log_dir``, masked (rule 11.11)."""
     excerpt: dict[str, str] = {}
@@ -145,10 +172,10 @@ def log_excerpt(log_dir: Path, n_lines: int = LOG_EXCERPT_LINES) -> dict[str, st
     budget = LOG_EXCERPT_MAX_CHARS
     for p in sorted(log_dir.rglob("*.log")):
         try:
-            lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+            lines = tail_lines(p, n_lines)
         except OSError:
             continue
-        text = mask_text("\n".join(lines[-n_lines:]))[:budget]
+        text = mask_text("\n".join(lines))[:budget]
         budget -= len(text)
         excerpt[mask_text(p.relative_to(log_dir).as_posix())] = text
         if budget <= 0:
@@ -168,6 +195,22 @@ def _as_artifacts(result: Any) -> tuple[Artifacts, list[Finding]]:
         return Artifacts().add(result), findings
     msg = f"stage callable must return Artifacts (got {type(result).__name__})"
     raise TypeError(msg)
+
+
+def _kb_engine_names() -> tuple[str, ...]:
+    try:
+        from wintersar.diagnose.kb_loader import KB_ENGINES
+    except ImportError:  # pragma: no cover - diagnose module absent
+        return _KB_ENGINES_FALLBACK
+    return tuple(KB_ENGINES)
+
+
+def kb_engine(engine: str | None) -> str | None:
+    """``wintersar diagnose --engine`` name for ``engine`` (``None`` -> let it auto-detect)."""
+    if not engine:
+        return None
+    name = KB_ENGINE_ALIASES.get(engine, engine)
+    return name if name in _kb_engine_names() else None
 
 
 def diagnose_logs(log_dir: Path, engine: str | None) -> tuple[list[Finding], str | None]:
@@ -251,10 +294,7 @@ class Executor:
                 continue
             if not resolved or node.blocked or before_start:
                 if before_start and not node.blocked:
-                    node.findings.append(
-                        self.dag._missing_input(node, ",".join(node.spec.outputs), None)
-                    )
-                    node.findings[-1].params["producer"] = node.stage
+                    node.findings.append(self.dag.no_cached_result(node))
                 blocked = node.pending_record()
                 blocked.status = "failed"
                 records.append(blocked)
@@ -271,8 +311,44 @@ class Executor:
 
     # -------------------------------------------------------------- one node
     def _execute(self, node: Node, available: Artifacts) -> StageRecord:
+        """Run one node while holding its directory lock (ADR-0032).
+
+        Two ``wintersar run`` processes on one work directory resolve the same node hash;
+        without the lock the second ``prepare_node_dir(clean=True)`` would delete the
+        first run's in-flight ``out/`` and both manifests would race.
+        """
         assert node.node_hash is not None
         node_dir = cache.stage_dir(self.workdir, node.stage, node.node_hash)
+        try:
+            with cache.node_lock(node_dir):
+                return self._execute_locked(node, node_dir, available)
+        except cache.NodeBusyError:
+            record = self.dag.lookup_cache(node)  # the other run may have just finished it
+            if record is not None:
+                node.record = record
+                return _cache_hit(record)
+            return self._busy_record(node, node_dir)
+
+    def _busy_record(self, node: Node, node_dir: Path) -> StageRecord:
+        """Another process owns this node directory: fail cleanly, touch nothing."""
+        record = node.pending_record()
+        record.status = "failed"
+        record.extra.update({"run_id": self.run_id, "cache_hit": False, "busy": True})
+        record.findings.append(
+            Finding(
+                rule_id="PIPELINE-013",
+                severity="FAIL",
+                message_key="pipeline.PIPELINE-013.cause",
+                fix_key="pipeline.PIPELINE-013.fix",
+                params={"stage": node.stage, "node_dir": mask_text(str(node_dir))},
+                evidence={"node_hash": node.node_hash, "node_dir": mask_text(str(node_dir))},
+                scope=node.stage,
+            )
+        )
+        return record
+
+    def _execute_locked(self, node: Node, node_dir: Path, available: Artifacts) -> StageRecord:
+        assert node.node_hash is not None
         out_dir, log_dir = cache.prepare_node_dir(node_dir, clean=True)
         record = StageRecord(
             stage=node.stage,
@@ -331,6 +407,8 @@ class Executor:
             outputs = self._hash_outputs(node, outputs)
             record.outputs = {n: str(a.path) for n, a in outputs.items.items()}
             record.extra[cache.ARTIFACTS_KEY] = cache.artifacts_to_extra(outputs)
+            self._lift_tile_dirs(record, outputs)
+            self._record_actual_unwrap_engine(node, record, outputs)
             record.status = "ok"
         except Exception as exc:
             self._on_failure(node, record, log_dir, exc)
@@ -345,6 +423,38 @@ class Executor:
             )
             cache.write_record(record, node_dir)
         return record
+
+    def _lift_tile_dirs(self, record: StageRecord, outputs: Artifacts) -> None:
+        """Copy per-pair unwrapping tile directories from artifact meta into the manifest.
+
+        Re-tuning only the tile-assembly parameters can then re-use the existing tiles
+        (SNAPHU assemble-only) instead of unwrapping every tile again (plan §6.2 PERF-03).
+        # source: src/wintersar/unwrap/api.py::run_unwrap -> Artifact("unw", meta["tile_dirs"])
+        """
+        for art in outputs.items.values():
+            dirs = art.meta.get("tile_dirs")
+            if isinstance(dirs, dict) and dirs:
+                record.extra["tile_dirs"] = {str(k): str(v) for k, v in dirs.items()}
+                return
+
+    def _record_actual_unwrap_engine(
+        self, node: Node, record: StageRecord, outputs: Artifacts
+    ) -> None:
+        """``unwrap.method: auto`` is hashed as snaphu, but the scheduler may pick tophu.
+
+        The manifest/report must name the backend that actually ran; the cache key keeps
+        the planned one (it is all the DAG can know before the stage runs).
+        # source: src/wintersar/unwrap/api.py::run_unwrap -> Artifact("unw", meta["method"])
+        """
+        if node.stage != "unwrap" or node.engine == FAKE_ENGINE:
+            return
+        art = outputs.items.get("unw")
+        method = str(art.meta.get("method") or "") if art is not None else ""
+        if not method or method == record.engine:
+            return
+        record.extra["engine_planned"] = record.engine
+        record.engine = method
+        record.engine_version = self.dag.engine_version(method)
 
     def _dispatch(
         self,
@@ -415,14 +525,16 @@ class Executor:
         diagnosed, diag_error = diagnose_logs(log_dir, node.engine)
         if diag_error:
             record.extra["diagnose_error"] = diag_error
+        kb = kb_engine(node.engine)
         generic = Finding(
             rule_id="PIPELINE-001",
             severity="FAIL",
             message_key="pipeline.PIPELINE-001.cause",
-            fix_key="pipeline.PIPELINE-001.fix",
+            fix_key=f"pipeline.PIPELINE-001.{'fix' if kb else 'fix_auto'}",
             params={
                 "stage": node.stage,
                 "engine": node.engine or "python",
+                "kb_engine": kb or "",
                 "error": error,
                 "log_dir": mask_text(str(log_dir)),
             },

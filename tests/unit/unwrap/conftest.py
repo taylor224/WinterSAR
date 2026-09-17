@@ -63,3 +63,49 @@ def synth_stack() -> IgramStack:
 @pytest.fixture
 def synth_stack_npz(tmp_path: Path, synth_stack: IgramStack) -> Path:
     return save_igram_stack(synth_stack, tmp_path / "igrams.npz")
+
+
+# --------------------------------------------------------------- ISCE2 flat-binary input
+# Minimal ``merged/interferograms`` tree as topsStack leaves it (ADR-0052, R-06): one
+# directory per pair with the filtered interferogram and its coherence.
+# source: https://github.com/isce-framework/isce2/blob/main/contrib/stack/topsStack/FilterAndCoherence.py
+#   runFilter -> filt_fine.int (IntImage, CFLOAT), estCoherence -> filt_fine.cor
+#   (``phsigImage.dataType='FLOAT'``, ``phsigImage.bands = 1``)
+# source: https://github.com/insarlab/MintPy/blob/main/src/mintpy/utils/readfile.py read_isce_xml
+#   (lower-case property names in the ``.xml`` sidecar)
+ISCE_WRAPPED_FILE = "filt_fine.int"
+ISCE_COHERENCE_FILE = "filt_fine.cor"
+
+
+def isce_sidecar_xml(
+    width: int, length: int, data_type: str, scheme: str, file_name: str, bands: int = 1
+) -> str:
+    return (
+        "<imageFile>\n"
+        f'    <property name="byte_order"><value>l</value></property>\n'
+        f'    <property name="data_type"><value>{data_type}</value></property>\n'
+        f'    <property name="file_name"><value>{file_name}</value></property>\n'
+        f'    <property name="length"><value>{length}</value></property>\n'
+        f'    <property name="number_bands"><value>{bands}</value></property>\n'
+        f'    <property name="scheme"><value>{scheme}</value></property>\n'
+        f'    <property name="width"><value>{width}</value></property>\n'
+        "</imageFile>\n"
+    )
+
+
+def write_isce_igram_dir(root: Path, stack: IgramStack) -> Path:
+    """Write ``stack`` as an ISCE2 topsStack ``merged/interferograms`` directory."""
+    ny, nx = stack.shape
+    for i, pair in enumerate(stack.pairs):
+        d = root / pair
+        d.mkdir(parents=True, exist_ok=True)
+        igram = (stack.coherence[i] * np.exp(1j * stack.wrapped[i])).astype("<c8")
+        igram.tofile(d / ISCE_WRAPPED_FILE)
+        (d / f"{ISCE_WRAPPED_FILE}.xml").write_text(
+            isce_sidecar_xml(nx, ny, "CFLOAT", "BIP", ISCE_WRAPPED_FILE), encoding="utf-8"
+        )
+        np.asarray(stack.coherence[i], dtype="<f4").tofile(d / ISCE_COHERENCE_FILE)
+        (d / f"{ISCE_COHERENCE_FILE}.xml").write_text(
+            isce_sidecar_xml(nx, ny, "FLOAT", "BIL", ISCE_COHERENCE_FILE), encoding="utf-8"
+        )
+    return root

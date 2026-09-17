@@ -154,7 +154,8 @@ markers = [
   "network: tests that need internet access / credentials (deselected by default: -m 'not network')",
   "slow: long-running tests",
   "gpu: requires CuPy + CUDA",
-  "engine: requires an external engine installed (isce2, snaphu, mintpy, ...)",
+  "engine: adapter contract tests for an external engine (isce2, snaphu, mintpy, ...). They drive the adapter with stubs/mocks and run everywhere, including CI, so that an engine API change breaks them first (plan §3.3)",
+  "engine_real: needs the external engine actually installed (deselected in CI)",
 ]
 filterwarnings = [
   "ignore::DeprecationWarning:asf_search.*",

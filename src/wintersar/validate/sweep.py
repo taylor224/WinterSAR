@@ -420,13 +420,50 @@ def _dominates(a: SweepRow, b: SweepRow, sense: Mapping[str, str]) -> bool:
     return better_somewhere
 
 
+def available_objectives(
+    rows: Sequence[SweepRow], objectives: Mapping[str, str] | Iterable[str] | None = None
+) -> tuple[dict[str, str], list[str]]:
+    """``(objectives that can rank these rows, objectives dropped because nothing measured
+    them)``.
+
+    ``DEFAULT_OBJECTIVES`` contains ``gt_rmse``, which is ``None`` for every row of a sweep
+    run without ground truth; keeping it would silently empty the Pareto front (every row
+    lacks it), so such objectives are dropped and reported (``VAL-018``) instead. When no run
+    succeeded nothing is dropped — the front is empty because there is nothing to rank.
+    """
+    sense = _sense(objectives if objectives is not None else DEFAULT_OBJECTIVES)
+    ok_rows = [r for r in rows if r.ok]
+    if not ok_rows:
+        return sense, []
+    dropped = [n for n in sense if all(r.metric(n) is None for r in ok_rows)]
+    return {k: v for k, v in sense.items() if k not in dropped}, dropped
+
+
+def objectives_finding(
+    rows: Sequence[SweepRow], objectives: Mapping[str, str] | Iterable[str] | None = None
+) -> Finding | None:
+    """``VAL-018`` INFO naming the objectives that were dropped from the ranking (or ``None``)."""
+    used, dropped = available_objectives(rows, objectives)
+    if not dropped:
+        return None
+    return make_finding(
+        "VAL-018",
+        "INFO",
+        dropped=", ".join(dropped),
+        used=", ".join(used) or "-",  # rendered later: keep params language-neutral
+    )
+
+
 def pareto_front(
     rows: Sequence[SweepRow], objectives: Mapping[str, str] | Iterable[str] | None = None
 ) -> list[SweepRow]:
     """Non-dominated rows for the objectives (``{"name": "min"|"max"}`` or a name list;
-    ``temporal_coherence``/``cache_hits`` default to max). Rows lacking an objective are
-    excluded."""
-    sense = _sense(objectives if objectives is not None else DEFAULT_OBJECTIVES)
+    ``temporal_coherence``/``cache_hits`` default to max). Objectives no successful row
+    measured are ignored (:func:`available_objectives`); rows lacking one of the remaining
+    objectives are excluded."""
+    sense, _ = available_objectives(rows, objectives)
+    if not sense:
+        return []
     usable = [r for r in rows if r.ok and all(r.metric(n) is not None for n in sense)]
     front = [r for r in usable if not any(_dominates(o, r, sense) for o in usable if o is not r)]
     return sorted(front, key=lambda r: r.index)
@@ -466,12 +503,14 @@ def to_markdown(
         mark = "*" if r.index in front_ids else ""
         status = t("validate.sweep.status_ok" if r.ok else "validate.sweep.status_failed", lang)
         lines.append(f"| {r.index} | {params} | " + " | ".join(vals) + f" | {mark} | {status} |")
-    sense = _sense(objectives if objectives is not None else DEFAULT_OBJECTIVES)
+    sense, dropped = available_objectives(rows, objectives)
     note = t(
         "validate.sweep.pareto_note",
         lang,
-        objectives=", ".join(f"{k} ({v})" for k, v in sense.items()),
+        objectives=", ".join(f"{k} ({v})" for k, v in sense.items()) or t("common.none", lang),
     )
+    if dropped:
+        note += " " + t("validate.sweep.pareto_dropped", lang, dropped=", ".join(dropped))
     return "\n".join(lines) + "\n\n" + note + "\n"
 
 
@@ -580,6 +619,7 @@ __all__ = [
     "SweepRow",
     "SweepSpec",
     "apply_point",
+    "available_objectives",
     "closure_metrics",
     "deep_merge",
     "expand",
@@ -589,6 +629,7 @@ __all__ = [
     "make_grid",
     "metrics_from_run",
     "network_residual_rms",
+    "objectives_finding",
     "pareto_front",
     "plot_pareto",
     "run_sweep",

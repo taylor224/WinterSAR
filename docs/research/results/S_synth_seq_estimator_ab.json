@@ -61,7 +61,7 @@
       "peak_rss_mb"
     ],
     "protocol": "1. Inputs: identical coregistered SLC stack (S site, 2 bursts x 30 days) for A and B; same\n   DEM, orbits, water/layover masks (wintersar select geometry), same reference point.\n2. A (baseline): SBAS network (max temporal 48 d, max Bperp 150 m), multilook per SEL-09,\n   SNAPHU per interferogram (wintersar unwrap scheduler, PERF-04), MintPy inversion with the\n   template of ADR-0021. Record: number of unwrap jobs (M), wall time per stage, peak RSS.\n3. B (candidate): dolphin sequential mode (mini-stack 10, EMI, compressed SLCs), N-1 linked\n   interferograms unwrapped with the same SNAPHU settings, time series through the same\n   MintPy inversion so that only the phase estimation differs (plan 6.2 PERF-05/06:\n   outputs normalised to the same schema by io.formats).\n4. Metrics (plan 6.3, 3 repetitions, median): closure RMS of the unwrapped stack\n   (validate.closure, unw mode), unwrap-error indicators (non-zero integer closure\n   fraction, tile-seam jumps), ground-truth RMSE at levelling/GNSS sites\n   (validate.metrics.compare), total wall time and peak RSS per path, number of unwrap\n   jobs. Write bench_result.json per path; wintersar bench --compare renders the table.\n5. Decision rule (ADR-0064): B is adopted as an option only if its ground-truth RMSE is not\n   worse than A beyond the levelling sigma and closure RMS is not higher; the default path\n   changes only through a separate ADR after the researcher signs off (rule 11.10).\n",
-    "path": "src/wintersar/research/experiments/S_synth_seq_estimator_ab.yaml",
+    "path": "~/Documents/develop/winterSARS/src/wintersar/research/experiments/S_synth_seq_estimator_ab.yaml",
     "ids": [
       "R-15",
       "PERF-05",
@@ -73,7 +73,7 @@
     "python": "3.11.7",
     "numpy": "2.4.6",
     "os": "darwin-arm64",
-    "timestamp": "2026-09-17T00:25:59+00:00"
+    "timestamp": "2026-09-17T02:07:17+00:00"
   },
   "rows": [],
   "summary": {},

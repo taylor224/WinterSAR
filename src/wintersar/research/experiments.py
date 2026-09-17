@@ -56,9 +56,14 @@ from wintersar.util.masking import mask_mapping
 KINDS: tuple[str, ...] = ("repr_phase", "stitching", "seq_estimator_ab")
 STATUS_OK = "ok"
 STATUS_SKIPPED = "skipped"
+#: Timing / memory metrics. They are measured and written to ``<name>.json`` but never
+#: rendered into the committed Markdown table: rule 11.8 allows performance numbers only
+#: with a ``bench_result.json`` behind them, which an experiment run does not produce.
+PERF_METRICS: frozenset[str] = frozenset({"wall_s", "cpu_s", "peak_rss_mb"})
 
 __all__ = [
     "KINDS",
+    "PERF_METRICS",
     "Experiment",
     "ExperimentResult",
     "MethodSpec",
@@ -289,11 +294,14 @@ def _repr_dataset(data: dict[str, Any], seed: int) -> dict[str, Any]:
             in (
                 "deformation_kind",
                 "deformation_amplitude_m",
+                "deformation_ramp",
+                "deformation_sigma_px",
                 "atmosphere_std_rad",
                 "coherence_base",
                 "looks",
                 "water_fraction",
                 "dem_error_rad",
+                "noise_model",
             )
         }
         ig = synth.make_interferogram(shape, rng, **kw)
@@ -351,7 +359,16 @@ def _run_stitching(exp: Experiment, seed: int) -> list[dict[str, Any]]:
     igram_kw = {
         k: v
         for k, v in data.items()
-        if k in ("atmosphere_std_rad", "coherence_base", "looks", "deformation_amplitude_m")
+        if k
+        in (
+            "atmosphere_std_rad",
+            "coherence_base",
+            "looks",
+            "noise_model",
+            "deformation_amplitude_m",
+            "deformation_kind",
+            "deformation_ramp",
+        )
     }
     tt = synth.make_tiled_truth(
         shape,
@@ -479,7 +496,10 @@ def results_markdown(result: ExperimentResult, lang: str | None = None) -> str:
         f"- factor: {result.experiment.get('factor')}",
         "",
     ]
-    metric_names = result.metrics
+    metric_names = [m for m in result.metrics if m not in PERF_METRICS]
+    dropped = [m for m in result.metrics if m in PERF_METRICS]
+    if dropped:
+        lines += [t("research.experiment.perf_in_json", lang, metrics=", ".join(dropped)), ""]
     header = [t("research.experiment.method", lang), *metric_names]
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "---|" * len(header))

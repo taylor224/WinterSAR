@@ -230,3 +230,35 @@ def test_dispatcher_errors_are_diagnostics():
         rp.representative_phase("ml", np.ones((4, 4)), None, 0)
     assert ei.value.rule_id == "RES-006"
     assert set(rp.METHODS) == {"ml", "coh_weighted", "shp", "phase_link", "filtered"}
+
+
+def test_stack_grid_mismatch_is_res_009_naming_the_interferogram_shape():
+    """A stack on another grid used to reach the estimator: ``shp`` reported the *cropped*
+    igram shape as an "allowed range" and ``phase_link`` had no check at all, so it silently
+    produced a low-res array on the stack's grid."""
+    rng = np.random.default_rng(4)
+    ig = synth.make_interferogram((64, 64), rng, atmosphere_std_rad=0.2, looks=16)
+    small = synth.make_slc_stack(5, (48, 48), rng).slc
+    for method, stack in (("shp", np.abs(small)), ("phase_link", small)):
+        with pytest.raises(rp.ResearchError) as ei:
+            rp.representative_phase(method, ig.complex, ig.coherence, 3, stack=stack, pair=(0, 1))
+        assert ei.value.rule_id == "RES-009"
+        # the message names the full-resolution interferogram grid, not the cropped (63, 63)
+        assert ei.value.params["expected"] == "(64, 64)"
+        assert ei.value.params["value"] == "(48, 48)"
+        assert "(64, 64)" in str(ei.value) and "63" not in str(ei.value)
+        assert ei.value.fix
+    ok_stack = synth.make_slc_stack(5, (64, 64), rng).slc
+    est = rp.representative_phase(
+        "phase_link", ig.complex, ig.coherence, 3, stack=ok_stack, pair=(0, 1)
+    )
+    assert est.shape == rp.lowres_shape((64, 64), 3)
+    # the full-resolution SHP filter checks the same grid
+    with pytest.raises(rp.ResearchError) as ei:
+        rp.shp_adaptive_multilook(ig.complex, np.abs(small), window=5)
+    assert ei.value.rule_id == "RES-009"
+    # no interferogram (the documented phase_link-only call) is still allowed
+    assert rp.representative_phase("phase_link", None, None, 3, stack=small, pair=(0, 1)).shape == (
+        16,
+        16,
+    )

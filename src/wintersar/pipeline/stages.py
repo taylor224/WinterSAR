@@ -8,6 +8,9 @@ reads the multilooked stack, not the raw interferograms).
 Engine stages are executed by an :class:`wintersar.engines.base.Engine` chosen by
 :func:`resolve_engine`; python stages (``search``, ``precheck``, ``validate``) call a
 function in another wintersar module lazily (:data:`PYTHON_STAGE_ENTRYPOINTS`).
+
+``timeseries``, ``corrections`` and ``geocode`` are keyed on ``timeseries.engine`` (MintPy
+runs all three); the interferogram engine only owns ``fetch`` … ``multilook``.
 """
 
 from __future__ import annotations
@@ -71,20 +74,75 @@ STAGES: dict[str, StageSpec] = {
         StageSpec("search", [], ["candidates"], None),
         StageSpec("precheck", ["candidates"], ["stack", "precheck_report"], None),
         StageSpec("fetch", ["stack"], ["slc_manifest"], "engine.interferogram"),
-        StageSpec("coregister", ["slc_manifest"], ["coreg_manifest"], "engine.interferogram"),
-        StageSpec("interferogram", ["coreg_manifest"], ["igrams"], "engine.interferogram"),
-        StageSpec("multilook", ["igrams"], ["igrams"], "engine.interferogram"),
+        # ``stack`` (precheck) is optional for the engine stages but every real adapter needs
+        # it: hyp3 reads notes["granules"] to build its jobs, isce2_topsstack reads
+        # notes["aoi_wkt"]/["bbox_snwe"] for -b and the date list for -c.
+        # source: engines/hyp3.py::STACK_INPUT_NAMES, engines/isce2_topsstack.py::bbox_snwe
+        StageSpec(
+            "coregister",
+            ["slc_manifest"],
+            ["coreg_manifest"],
+            "engine.interferogram",
+            optional_inputs=["stack"],
+        ),
+        StageSpec(
+            "interferogram",
+            ["coreg_manifest"],
+            ["igrams"],
+            "engine.interferogram",
+            optional_inputs=["stack"],
+        ),
+        StageSpec(
+            "multilook",
+            ["igrams"],
+            ["igrams"],
+            "engine.interferogram",
+            optional_inputs=["stack"],
+        ),
         StageSpec("unwrap", ["igrams"], ["unw"], "unwrap.method"),
-        StageSpec("timeseries", ["unw", "igrams"], ["timeseries"], "timeseries.engine"),
-        StageSpec("corrections", ["timeseries"], ["timeseries"], "timeseries.engine"),
-        StageSpec("geocode", ["timeseries"], ["velocity"], "engine.interferogram"),
+        # ``mintpy_workdir`` is emitted by the MintPy adapter only; dolphin/fake simply do not
+        # produce it, which is why every consumer takes it as an optional input.
+        # source: engines/mintpy.py::MintPyEngine._collect_artifacts
+        StageSpec(
+            "timeseries",
+            ["unw", "igrams"],
+            ["timeseries", "mintpy_workdir"],
+            "timeseries.engine",
+        ),
+        # MintPy's corrections step list ends with ``velocity`` and its artifact collector
+        # requires ``velocity.h5`` there, so corrections already produces a (radar-coordinate)
+        # velocity; ``geocode`` re-exports the geocoded one.
+        # source: src/wintersar/engines/mintpy.py::MintPyEngine._collect_artifacts (stage
+        #         "corrections" -> Artifact(name="velocity", path=workdir/"velocity.h5"))
+        StageSpec(
+            "corrections",
+            ["timeseries"],
+            ["timeseries", "velocity", "mintpy_workdir"],
+            "timeseries.engine",
+            # MintPy re-enters its own work dir instead of re-deriving it from params.
+            # source: engines/mintpy.py::MintPyEngine._inherit_workdir (inputs["mintpy_workdir"])
+            optional_inputs=["mintpy_workdir"],
+        ),
+        # geocode is a post-processing stage of the *time-series* engine: MintPy declares it,
+        # the interferogram engines (hyp3, isce2_topsstack, compass_isce3) never do.
+        # source: src/wintersar/engines/mintpy.py::MintPyEngine.stages
+        StageSpec(
+            "geocode",
+            ["timeseries"],
+            ["velocity"],
+            "timeseries.engine",
+            optional_inputs=["mintpy_workdir"],
+        ),
+        # ``run_validate`` only consumes the optional ``timeseries`` artifact, so neither
+        # velocity nor timeseries may block the plan when the chosen engine does not geocode.
+        # source: src/wintersar/validate/api.py::run_validate (inputs.items.get("timeseries"))
         StageSpec(
             "validate",
-            ["velocity"],
+            [],
             ["validation_report"],
             None,
             optional=True,
-            optional_inputs=["timeseries"],
+            optional_inputs=["velocity", "timeseries"],
         ),
     )
 }
@@ -221,6 +279,17 @@ def select_search_stage(
     return Artifacts().add(Artifact(name="candidates", path=path, kind="json", meta=meta)), findings
 
 
+def _aoi_bbox_snwe(aoi_wkt: str) -> tuple[float, float, float, float] | None:
+    """``(S, N, W, E)`` of an AOI WKT, the ordering ISCE2 topsStack expects for ``-b``."""
+    try:
+        from shapely import wkt as _wkt
+
+        minx, miny, maxx, maxy = _wkt.loads(aoi_wkt).bounds
+    except Exception:
+        return None
+    return (float(miny), float(maxy), float(minx), float(maxx))
+
+
 def select_precheck_stage(
     cfg: Config, inputs: Artifacts, params: dict[str, Any], out_dir: Path, log_dir: Path
 ) -> tuple[Artifacts, list[Finding]]:
@@ -228,7 +297,8 @@ def select_precheck_stage(
     from wintersar.select.report import write_precheck_report
 
     records = load_candidates_file(Path(inputs["candidates"].path))
-    result = run_precheck(records, cfg, aoi_file_to_wkt(cfg.aoi))
+    aoi_wkt = aoi_file_to_wkt(cfg.aoi)
+    result = run_precheck(records, cfg, aoi_wkt)
     rec_id = result.recommended.stack_id if result.recommended else None
     paths = write_precheck_report(
         result.candidates,
@@ -250,6 +320,12 @@ def select_precheck_stage(
     if stack is None or result.has_fail:
         msg = "precheck found no usable stack" if stack is None else "precheck has FAIL findings"
         raise StageFailureError(msg, findings)
+    # Carry the AOI into stack.json: the local processing engines derive their processing
+    # bounds from it (ISCE2 topsStack -b S N W E) and cannot read cfg.aoi themselves.
+    stack.notes.setdefault("aoi_wkt", aoi_wkt)
+    bbox = _aoi_bbox_snwe(aoi_wkt)
+    if bbox is not None:
+        stack.notes.setdefault("bbox_snwe", list(bbox))
     stack_path = out_dir / "stack.json"
     stack_path.write_text(stack.model_dump_json(indent=2), encoding="utf-8")
     meta = {

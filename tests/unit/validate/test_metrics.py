@@ -127,3 +127,41 @@ def test_compare_too_few_epochs_and_heading_override(synth_ts, leveling_csv):
     assert res2.sites_compared[0].incidence_deg == 30.0
     # projecting with the wrong incidence scales the GT series and must worsen the fit
     assert res2.rmse_m > compare(synth_ts, gt2).rmse_m
+
+
+def test_interp_drops_nan_insar_samples_instead_of_poisoning_the_site(synth_ts, leveling_csv):
+    """A NaN epoch next to a survey date must cost that one sample, not the whole site.
+
+    In 'interp' mode the sample is ``(1-f)*series[k] + f*series[k+1]``, so testing only
+    ``series[k]`` for finiteness lets a NaN at ``k+1`` through and turns the site RMSE — and
+    the pooled overall RMSE — into NaN.
+    """
+    gt = [r for r in load_csv(leveling_csv) if r.site_id == "L01-center"]
+    ts = synth_ts
+    ts.displacement_m = np.asarray(ts.displacement_m, dtype=np.float64).copy()
+    ts.displacement_m[4] = np.nan  # one epoch lost at every pixel
+    for align in ("nearest", "interp"):
+        res = compare(ts, gt, align=align)
+        site = res.per_site[0]
+        assert not site.findings, (align, site.findings)
+        assert np.isfinite(res.rmse_m) and np.isfinite(res.bias_m), align
+        assert np.isfinite(site.rmse_m) and np.isfinite(site.corr), align
+        assert all(np.isfinite(v) for v in site.insar_m), align
+        assert site.n == len(site.insar_m) == len(site.dates) < len(gt), align
+        assert site.rmse_m < 3 * NOISE_M, (align, site.rmse_m)
+
+
+def test_gnss_projected_with_a_defaulted_heading_warns(synth_ts, gnss_csv, leveling_csv):
+    """VAL-017: the heading came from the configured orbit direction, not from the data."""
+    gt = load_csv(gnss_csv)
+    synth_ts.attrs = {**synth_ts.attrs, "synthetic_heading": True}
+    res = compare(synth_ts, gt)
+    warn = [f for f in res.findings if f.rule_id == "VAL-017"]
+    assert len(warn) == 1 and warn[0].severity == "WARN"
+    assert warn[0].params["heading_deg"] == synth_ts.heading_deg
+    assert warn[0].params["n_samples"] == len(gt)
+    assert res.n_sites == 2 and np.isfinite(res.rmse_m)  # still compared, just flagged
+    # an explicit heading is a statement, not a guess; levelling never needs one
+    assert not compare(synth_ts, gt, heading_deg=192.0).findings
+    lev = compare(synth_ts, load_csv(leveling_csv))
+    assert all(f.rule_id != "VAL-017" for f in lev.findings)

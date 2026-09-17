@@ -25,6 +25,7 @@ research:
     std: "표준편차"
     status: "상태"
     generated_from: "생성 원본: `{json}` (표만 기록 — 수치 해석은 ADR·연구 노트에서, 규칙 11.8)"
+    perf_in_json: "실행 시간·메모리({metrics})는 결과 JSON에만 둔다: 규칙 11.8은 bench_result.json이 있을 때만 성능 수치를 본문·표에 쓸 수 있게 한다."
     status_skipped: "상태: 건너뜀 — {reason}"
     missing_packages: "미설치 패키지: {missing}"
     protocol: "프로토콜"
@@ -57,3 +58,9 @@ research:
   RES-008:
     cause: "실험 YAML 형식 오류: {detail}"
     fix: "name/kind(repr_phase|stitching|seq_estimator_ab)/methods/seeds/factor/metrics 키를 내장 예시(src/wintersar/research/experiments/*.yaml)와 비교하세요."
+  RES-009:
+    cause: "방법 '{method}': 스택 격자 stack.shape[1:] = {value}은(는) 간섭도 크기 {expected}과(와) 같아야 합니다."
+    fix: "--stack 의 마지막 두 축이 정확히 ({ny}, {nx})인 배열을 지정하세요 — 간섭도와 같은 원해상도 격자입니다(--factor 배수 자르기는 그 다음에 적용됩니다)."
+  RES-010:
+    cause: "실험 '{name}'은(는) 읽을 수 있는 YAML 경로도, 내장 실험 이름도 아닙니다."
+    fix: "존재하는 YAML 경로를 지정하거나 내장 이름 중 하나를 쓰세요: {bundled} (`wintersar research experiments`로 목록 확인)."

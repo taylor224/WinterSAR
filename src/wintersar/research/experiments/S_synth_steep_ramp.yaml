@@ -1,0 +1,38 @@
+# Synthetic type (b) — steep phase ramp (ADR-0060 Phase 6 DoD "합성 3종"). A strong linear
+# LOS ramp is the case where a low-resolution representative phase aliases: the fringe rate
+# approaches one cycle per few pixels, so the block mean of the complex interferogram loses
+# magnitude while the adaptive/filtered estimators keep it. Tables only.
+name: S_synth_steep_ramp
+kind: repr_phase
+ids: [R-07, PERF-04]
+description: >-
+  Representative (low-resolution) phase of a 96x96 synthetic interferogram dominated by a
+  steep linear LOS ramp (0.7 m of range change across the scene = 4pi/lambda * 0.7 rad,
+  one fringe per ~3.8 pixels, so a factor-3 block spans ~0.79 cycle) with a moderate
+  turbulent atmosphere and 16 looks, at downsample factor 3. This is the regime where the
+  complex block mean loses magnitude to the fringe rate; compared with the block mean of
+  the true phase.
+requires: []
+factor: 3
+seeds: [0, 1, 2]
+data:
+  kind: synthetic_igram
+  shape: [96, 96]
+  deformation_kind: linear
+  deformation_ramp: [0.0, 0.7]
+  atmosphere_std_rad: 0.5
+  coherence_base: 0.85
+  looks: 16
+methods:
+  - name: ml
+  - name: coh_weighted
+    params: {p: 1.0}
+  - name: coh_weighted
+    params: {p: 2.0}
+    label: coh_weighted(p=2)
+  - name: filtered
+    params: {alpha: 0.5, window: 16, overlap: 0.5}
+  - name: filtered
+    params: {alpha: 0.8, window: 16, overlap: 0.5}
+    label: filtered(alpha=0.8)
+metrics: [phase_rmse_rad, phase_mae_rad, mean_magnitude, wall_s, peak_rss_mb]

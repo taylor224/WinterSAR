@@ -36,6 +36,10 @@
   engine: isce2
   expect:
   - KB-ISCE2-004
+- file: isce2/no_acquisition_in_range.log
+  engine: isce2
+  expect:
+  - KB-ISCE2-005
 - file: mintpy/reference_point.log
   engine: mintpy
   expect:
@@ -52,6 +56,10 @@
   engine: mintpy
   expect:
   - KB-MINTPY-003
+- file: mintpy/reference_point_out_of_coverage.log
+  engine: mintpy
+  expect:
+  - KB-MINTPY-004
 - file: hyp3/insufficient_credits.log
   engine: hyp3
   expect:
@@ -74,6 +82,10 @@
   engine: hyp3
   expect:
   - KB-HYP3-003
+- file: hyp3/access_pending.log
+  engine: hyp3
+  expect:
+  - KB-HYP3-004
 - file: asf/cmr_500.log
   engine: asf
   expect:
@@ -88,6 +100,12 @@
   engine: null
   expect:
   - KB-ENV-001
+# no SNAPHU marker and no literal "Out of memory": KB-SNAPHU-002 `supersedes: [KB-ENV-002]`
+# would otherwise hide the entry this fixture guards (see snaphu/child_killed.log).
+- file: env/oom_killed.log
+  engine: null
+  expect:
+  - KB-ENV-002
 - file: generic/unknown_traceback.log
   engine: null
   expect:

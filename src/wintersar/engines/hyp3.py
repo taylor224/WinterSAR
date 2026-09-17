@@ -757,26 +757,84 @@ def clip_to_common_extent(
 
 # ---------------------------------------------------------------------- job specs from inputs
 
+#: artifact names that may carry the ``StackCandidate`` JSON, in preference order.
+#: ``stack`` is what the ``precheck`` stage writes (``<out>/stack.json``, one
+#: ``StackCandidate``); ``candidates`` is accepted for direct callers that already hold a
+#: ``{"stacks": [...]}`` file. The ``candidates`` artifact written by the ``search`` stage is
+#: a *search result* (``{"records": [BurstRecord, ...]}``) and is rejected with a clear error.
+STACK_INPUT_NAMES: tuple[str, ...] = ("stack", "candidates")
+
+
+def stack_path_from_workdir(params: Mapping[str, Any]) -> Path | None:
+    """``stack.json`` of the newest successful ``precheck`` node under ``params["_workdir"]``.
+
+    The executor forwards only the artifacts declared by ``StageSpec("interferogram")``
+    (``coreg_manifest``), which the HyP3 path never produces because ``fetch``/``coregister``
+    are skipped (ADR-0020), so the precheck ``stack`` artifact is recovered from the work
+    directory that ``Engine.run`` receives in the private ``_workdir`` parameter.
+    Returns ``None`` outside a pipeline run (no ``_workdir``, no cached precheck node).
+    """
+    root = params.get("_workdir")
+    if not root:
+        return None
+    try:
+        # local import: the engine adapters must stay importable without the pipeline package
+        from wintersar.pipeline import cache
+
+        record = cache.latest_record(Path(root), "precheck")
+    except Exception:  # pragma: no cover - defensive: cache layout/permissions
+        return None
+    if record is None:
+        return None
+    raw = record.outputs.get("stack")
+    if not raw:
+        return None
+    path = Path(raw)
+    return path if path.exists() else None
+
+
+def resolve_stack_path(inputs: Artifacts, params: Mapping[str, Any]) -> Path:
+    """Locate the ``StackCandidate`` JSON: params override → artifact → precheck cache."""
+    value = params.get("candidates") or params.get("stack")
+    if value is None:
+        value = next(
+            (inputs[n].path for n in STACK_INPUT_NAMES if n in inputs),
+            None,
+        )
+    if value is None:
+        value = stack_path_from_workdir(params)
+    if value is None:
+        msg = (
+            "hyp3: no stack candidate JSON (params['candidates'], the 'stack'/'candidates' "
+            "input artifact or a cached precheck node under params['_workdir']) and no "
+            "params['jobs']; run the precheck stage first"
+        )
+        raise FileNotFoundError(msg)
+    return Path(value)
+
 
 def load_candidates(
     inputs: Artifacts, params: Mapping[str, Any]
 ) -> tuple[StackCandidate, dict[str, dict[str, str]]]:
-    """Read ``candidates.json`` (``wintersar search`` output) and the granule mapping.
+    """Read the precheck ``stack.json`` (or an equivalent file) and the granule mapping.
 
     Accepted shapes: a ``StackCandidate`` dict, a list of them, or ``{"stacks": [...]}`` /
     ``{"candidates": [...]}``. Granule names per date come from ``stack.notes["granules"]``
-    (``{date_iso: {burst_id: granule}}``) or from a top-level ``"granules": {stack_id: ...}``.
-    The stack is chosen with ``params["stack_id"]``, else the top-level ``"recommended"``
-    id, else the first entry.
+    (``{date_iso: {burst_id: granule}}``, written by :mod:`wintersar.select.network`) or from
+    a top-level ``"granules": {stack_id: ...}``. The stack is chosen with
+    ``params["stack_id"]``, else the top-level ``"recommended"`` id, else the first entry.
+    The file is located by :func:`resolve_stack_path`.
     """
-    path_v = params.get("candidates")
-    if path_v is None and "candidates" in inputs:
-        path_v = inputs["candidates"].path
-    if path_v is None:
-        msg = "hyp3: no candidates.json (inputs['candidates'] or params['candidates']) and no params['jobs']"
-        raise FileNotFoundError(msg)
-    path = Path(path_v)
+    path = resolve_stack_path(inputs, params)
     raw = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(raw, dict) and "records" in raw and not (raw.keys() & {"stacks", "candidates"}):
+        msg = (
+            f"hyp3: {mask_text(str(path))} is a `wintersar search` result "
+            "({'records': [BurstRecord, ...]}), not a stack candidate; point "
+            "params['candidates'] at the precheck stack.json "
+            "(a StackCandidate or {'stacks': [...]})"
+        )
+        raise ValueError(msg)
     stacks_raw: list[dict[str, Any]]
     top: dict[str, Any] = {}
     if isinstance(raw, list):
@@ -971,6 +1029,20 @@ def _mapping(params: Mapping[str, Any], key: str) -> dict[str, Any]:
     return dict(v) if isinstance(v, Mapping) else {}
 
 
+def hyp3_options(params: Mapping[str, Any]) -> dict[str, Any]:
+    """Flat adapter options: ``params["engine"]["hyp3"]`` with the flat ``params`` on top.
+
+    The pipeline delivers the engine configuration nested — ``Config.stage_params(
+    "interferogram")`` returns ``{"engine": {..., "hyp3": {...}}}`` — so every
+    :class:`wintersar.pipeline.config.EngineCfg` ``hyp3`` key (``apply_water_mask``,
+    ``submit_batch_size``, ``poll_*``, ``clip_to_common_extent``, ``ignore_credits``,
+    ``api_url``, ``name_prefix``, ``stack_id``, ``jobs``, ``candidates``) must be read from
+    here. Flat keys (direct callers, ``--set`` overrides) win over the nested section, and
+    the executor's private ``_*`` keys are preserved.
+    """
+    return {**_mapping(_mapping(params, "engine"), "hyp3"), **params}
+
+
 def _chunks(items: Sequence[JobSpec], n: int) -> Iterable[Sequence[JobSpec]]:
     for i in range(0, len(items), max(1, n)):
         yield items[i : i + n]
@@ -988,7 +1060,15 @@ def _write_json(path: Path, obj: Any) -> None:
 
 @register_engine
 class Hyp3Engine(Engine):
-    """HyP3 burst InSAR adapter: submit → poll → download → validate → MintPy-ready layout."""
+    """HyP3 burst InSAR adapter: submit → poll → download → validate → MintPy-ready layout.
+
+    Inputs: the precheck ``stack`` artifact (``stack.json``, one ``StackCandidate`` whose
+    ``notes["granules"]`` maps ``{date: {burst_id: granule}}``). On the HyP3 path ``fetch``
+    and ``coregister`` are skipped, so the executor may pass no artifacts at all; the stack is
+    then read from the newest cached ``precheck`` node under ``params["_workdir"]``
+    (:func:`resolve_stack_path`). Options come from ``params["engine"]["hyp3"]`` as the
+    pipeline nests them, with flat ``params`` keys overriding (:func:`hyp3_options`).
+    """
 
     name: ClassVar[str] = "hyp3"
     version_constraint: ClassVar[str] = ">=7.0,<8"  # verified against hyp3-sdk 7.7.8 API
@@ -1029,8 +1109,8 @@ class Hyp3Engine(Engine):
         for rec in plan.stages:
             if rec.stage != "interferogram" or rec.engine not in (None, self.name):
                 continue
-            p = rec.params
-            eng = _mapping(p, "engine")
+            p = hyp3_options(rec.params)
+            eng = _mapping(rec.params, "engine")
             n_pairs = int(p.get("n_pairs") or len(p.get("pairs") or p.get("jobs") or []))
             n_bursts = int(p.get("n_bursts", 1))
             looks, _ = resolve_looks(
@@ -1056,22 +1136,23 @@ class Hyp3Engine(Engine):
         if stage != "interferogram":
             msg = f"hyp3 engine only implements the 'interferogram' stage, got {stage!r}"
             raise ValueError(msg)
-        out_root = Path(params.get("_out_dir") or log_dir.parent)
+        opts = hyp3_options(params)
+        out_root = Path(opts.get("_out_dir") or log_dir.parent)
         data_dir = out_root / "hyp3"
         data_dir.mkdir(parents=True, exist_ok=True)
         log = _Log(log_dir / f"{stage}.log")
         findings: list[Finding] = []
         eng = _mapping(params, "engine")
         looks, lf = resolve_looks(
-            params.get("looks", eng.get("looks")),
-            params.get("target_pixel_m", eng.get("target_pixel_m")),
+            opts.get("looks", eng.get("looks")),
+            opts.get("target_pixel_m", eng.get("target_pixel_m")),
         )
         if lf is not None:
             findings.append(lf)
-        water = bool(params.get("apply_water_mask", False))
+        water = bool(opts.get("apply_water_mask", False))
         log(f"START hyp3 interferogram looks={looks} water_mask={water} data_dir={data_dir}")
 
-        specs, spec_findings = build_job_specs(inputs, params, looks=looks, apply_water_mask=water)
+        specs, spec_findings = build_job_specs(inputs, opts, looks=looks, apply_water_mask=water)
         findings.extend(spec_findings)
         if not specs:
             findings.append(
@@ -1086,7 +1167,7 @@ class Hyp3Engine(Engine):
             return self._finish(stage, data_dir, log_dir, log, findings, [], {}, looks, water)
 
         state = JobState.load(data_dir / "jobs.json")
-        client = self._get_client(params)
+        client = self._get_client(opts)
         spec_by_pair = {s.pair: s for s in specs}
 
         # ---- resume (PERF-06): reuse validated products and in-flight job ids
@@ -1107,7 +1188,7 @@ class Hyp3Engine(Engine):
         )
 
         # ---- credits (SEL-13 / HYP3-005)
-        if todo and not params.get("ignore_credits", False):
+        if todo and not opts.get("ignore_credits", False):
             needed = sum(job_credits(s.looks, s.n_bursts) or 0.0 for s in todo)
             remaining = client.check_credits()
             log(f"CREDITS needed={needed} remaining={remaining}")
@@ -1127,7 +1208,7 @@ class Hyp3Engine(Engine):
                 return self._finish(stage, data_dir, log_dir, log, findings, [], {}, looks, water)
 
         # ---- submit in batches
-        batch_size = int(params.get("submit_batch_size", SUBMIT_BATCH_SIZE))
+        batch_size = int(opts.get("submit_batch_size", SUBMIT_BATCH_SIZE))
         for chunk in _chunks(todo, batch_size):
             infos = client.submit(chunk)
             for spec, info in zip(chunk, infos, strict=True):
@@ -1144,7 +1225,7 @@ class Hyp3Engine(Engine):
             state.save()
 
         # ---- poll with backoff
-        jobs, poll_findings = self._poll(client, state, params, log)
+        jobs, poll_findings = self._poll(client, state, opts, log)
         findings.extend(poll_findings)
 
         # ---- download + validate
@@ -1241,7 +1322,7 @@ class Hyp3Engine(Engine):
 
         # ---- clip to common extent (MintPy needs identical sizes)
         clipped = False
-        if params.get("clip_to_common_extent", True) and len(products) > 1:
+        if opts.get("clip_to_common_extent", True) and len(products) > 1:
             clipped, cf = clip_to_common_extent([p.product_dir for p in products.values()])
             findings.extend(cf)
         return self._finish(

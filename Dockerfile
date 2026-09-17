@@ -18,7 +18,10 @@ WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 COPY benchmarks ./benchmarks
-COPY examples ./examples
+# NOTE: only directories that are tracked by git may be COPYed here — a clean checkout
+# (`git archive HEAD`, which is what CI builds from) contains no empty directories, so a
+# COPY of one aborts the build. `examples/` holds no tracked file yet; add its COPY line
+# back together with the first example config.
 
 RUN uv pip install --system -e .
 

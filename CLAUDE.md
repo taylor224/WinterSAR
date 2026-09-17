@@ -14,7 +14,11 @@ and docs that implement them.
 - No conda/pixi on this machine. External engines (ISCE2, SNAPHU, MintPy, tophu, dolphin,
   hyp3-sdk, sentineleof, sardem) are **not installed**; adapters must detect absence and
   return `ENV-001` findings, and tests for them use mocks/fakes (`@pytest.mark.engine`).
-- Network tests: `@pytest.mark.network`; default CI runs `-m "not network"`.
+- Markers: `@pytest.mark.engine` = adapter contract test driven by stubs/mocks — it runs
+  everywhere **including CI** (that is how an engine API change breaks the adapter first);
+  `@pytest.mark.engine_real` = needs the engine actually installed and is the only engine
+  marker CI deselects. `@pytest.mark.network` needs internet/credentials.
+- CI runs `-m "not network and not engine_real and not gpu"`.
 
 ## Invariant rules (plan §11)
 
@@ -57,6 +61,13 @@ and docs that implement them.
   `findings_to_markdown`; `wintersar.util.clistate.state` for `--json/--lang`.
 - Module CLIs: `wintersar/<module>/cli.py` exposes `register(app: typer.Typer) -> None`
   and is mounted by `wintersar/cli.py`. Every command must honour `state.json`.
+- Envelope vs exit code: `ok` is "the subject has no FAIL finding", the exit code is "what
+  happened to the command" — `0` ran, `1` the requested action failed, `2` bad input/usage.
+  *Report* commands (`check-install`, `search`, `diagnose`, `validate`) therefore exit 0
+  with `ok:false` and let the caller read the findings (`check-install --strict`,
+  `precheck --no-fail` opt in/out); *action* commands (`plan`, `run`, `precheck`, `bench`)
+  exit 1 when not `ok`. An envelope is always emitted in `--json` mode, including for an
+  unexpected exception (`cli.main` → `CLI-001`).
 
 ## Layout
 

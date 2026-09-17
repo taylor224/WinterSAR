@@ -21,8 +21,14 @@ def test_adapter_lookup_prefers_api_then_adapter(monkeypatch) -> None:
     assert load_python_stage("validate") is None
     assert load_python_stage("unwrap") is None  # not a python stage
     monkeypatch.setattr(stages, "load_entrypoint", real)
+    # with the real loader the select module is importable, so the adapter is used until
+    # ``wintersar.select.api.run_search`` exists (the assertion must pin one of the two).
     fn = load_python_stage("search")
-    assert fn is None or fn is stages.select_search_stage or callable(fn)
+    api_fn = stages.load_entrypoint(*stages.PYTHON_STAGE_ENTRYPOINTS["search"])
+    assert fn is (api_fn if api_fn is not None else stages.select_search_stage)
+    validate_fn = load_python_stage("validate")
+    assert validate_fn is stages.load_entrypoint("wintersar.validate.api", "run_validate")
+    assert validate_fn is not None
 
 
 def test_search_adapter(tmp_path: Path, cache_dir: Path, monkeypatch) -> None:

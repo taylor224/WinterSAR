@@ -66,6 +66,58 @@ def test_resolve_nlooks_precedence(cfg: dict, attrs: dict | None, expected: tupl
     assert uc.resolve_nlooks(cfg, attrs) == expected
 
 
+@pytest.mark.parametrize(
+    ("cfg", "expected"),
+    [
+        ({}, 1),  # neither key
+        ({"nproc_per_igram": 3}, 3),  # UnwrapEngineBase.run / raw UnwrapCfg field
+        ({"nproc": 4}, 4),  # unwrap scheduler (_backend_params)
+        ({"nproc": 4, "nproc_per_igram": 1}, 4),  # planned value wins (ADR-0047)
+        ({"nproc": 0}, 1),  # never below 1
+        ({"nproc": None, "nproc_per_igram": 2}, 2),
+        ({"nproc": "x", "nproc_per_igram": 2}, 2),
+    ],
+)
+def test_resolve_nproc_precedence(cfg: dict, expected: int) -> None:
+    assert uc.resolve_nproc(cfg) == expected
+
+
+def test_engine_log_accepts_both_scheduler_and_run_spellings(tmp_path: Path) -> None:
+    assert uc.engine_log({}, "snaphu") is None
+    # scheduler: a directory -> <log_dir>/<engine>.log
+    log = uc.engine_log({"_log_dir": str(tmp_path / "logs")}, "snaphu")
+    assert log is not None and log.path == tmp_path / "logs" / "snaphu.log"
+    log.write("hello")
+    assert "hello" in log.path.read_text(encoding="utf-8")
+    # run(): an explicit path wins
+    both = uc.engine_log(
+        {"_log_dir": str(tmp_path / "logs"), "_log_path": str(tmp_path / "x.log")}, "snaphu"
+    )
+    assert both is not None and both.path == tmp_path / "x.log"
+
+
+def test_scratch_dir_accepts_both_scheduler_and_run_spellings(tmp_path: Path) -> None:
+    # scheduler: one stage directory + the pair key -> a per-pair subdirectory, kept
+    path, is_temp = uc.scratch_dir(
+        {"_tile_dir": str(tmp_path / "tiles"), "_pair": "20240101_20240113"}, "p-"
+    )
+    assert path == tmp_path / "tiles" / "20240101_20240113"
+    assert path.is_dir() and is_temp is False
+    # without a pair key the stage directory is used as-is
+    path2, _ = uc.scratch_dir({"_tile_dir": str(tmp_path / "tiles")}, "p-")
+    assert path2 == tmp_path / "tiles"
+    # run(): the per-pair _scratch_dir wins over the stage directory
+    path3, _ = uc.scratch_dir(
+        {"_tile_dir": str(tmp_path / "tiles"), "_pair": "a_b", "_scratch_dir": str(tmp_path / "s")},
+        "p-",
+    )
+    assert path3 == tmp_path / "s"
+    # nothing given -> a temporary directory the caller must clean up
+    path4, is_temp4 = uc.scratch_dir({}, "wintersar-test-")
+    assert is_temp4 is True and path4.is_dir() and path4.name.startswith("wintersar-test-")
+    path4.rmdir()
+
+
 def test_resolve_tiles_auto_is_single_tile() -> None:
     spec = uc.resolve_tiles({"tiles": "auto"}, (64, 64))
     assert spec.ntiles == (1, 1) and spec.overlap_px == (0, 0) and not spec.tiled

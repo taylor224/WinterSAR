@@ -22,7 +22,12 @@ def register(app: typer.Typer) -> None:
         path: Annotated[
             Path | None,
             typer.Argument(
-                help="Log file or directory (e.g. work/logs/). Omit with --list-kb.",
+                help=(
+                    "Log file or directory (e.g. work/logs/). Omit with --list-kb. "
+                    "Scanning a directory skips wintersar's own records "
+                    "(manifest.json, runs/*.json) so each failure is reported once; "
+                    "name such a file explicitly to diagnose it anyway."
+                ),
                 show_default=False,
             ),
         ] = None,

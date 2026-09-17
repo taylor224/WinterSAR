@@ -101,6 +101,37 @@ CSLC_GLOBS: tuple[str, ...] = (  # topsStack merged SLCs (Stack.py / mergeBursts
 
 Runner = Callable[[list[str], Path, Path], int]
 
+#: config sections of the canonical stage parameters (``Config.stage_params("timeseries")``)
+#: that carry adapter options; :func:`flatten_stage_params` expands them into flat keys.
+TIMESERIES_SECTION = "timeseries"
+DOLPHIN_SECTION = "dolphin"
+
+
+def flatten_stage_params(params: Mapping[str, Any]) -> dict[str, Any]:
+    """Flatten the canonical stage mapping into one dict of adapter options.
+
+    ``Config.stage_params`` keeps the config **sections nested** and
+    :func:`wintersar.pipeline.dag.canonical_params` merges CLI overrides on top, so the
+    executor hands ``timeseries``/``corrections`` a ``{"timeseries": {..., "dolphin": {...}}}``
+    mapping while tests and API callers may pass the flat form. Precedence, lowest first:
+    ``timeseries`` → ``timeseries.dolphin`` → ``dolphin`` → top-level keys (so an explicit
+    ``--set timeseries.ministack_size=5`` override wins over the config section).
+    """
+    merged: dict[str, Any] = {}
+    section = params.get(TIMESERIES_SECTION)
+    if isinstance(section, Mapping):
+        merged.update({str(k): v for k, v in section.items() if k != DOLPHIN_SECTION})
+        nested = section.get(DOLPHIN_SECTION)
+        if isinstance(nested, Mapping):
+            merged.update({str(k): v for k, v in nested.items()})
+    sub = params.get(DOLPHIN_SECTION)
+    if isinstance(sub, Mapping):
+        merged.update({str(k): v for k, v in sub.items()})
+    merged.update(
+        {k: v for k, v in params.items() if k not in (TIMESERIES_SECTION, DOLPHIN_SECTION)}
+    )
+    return merged
+
 
 class DolphinRunError(RuntimeError):
     def __init__(self, message: str, findings: list[Finding]) -> None:
@@ -526,14 +557,7 @@ class DolphinEngine(Engine):
             raise ValueError(msg)
         if self._runner is _subprocess_runner:
             self.require_available()  # EngineNotAvailableError (ENV-001)
-        p = dict(params)
-        sub = params.get("dolphin")
-        if isinstance(sub, Mapping):
-            p.update(sub)
-        ts_raw = params.get("timeseries")
-        if isinstance(ts_raw, Mapping):  # config section (stage_params) → flat keys
-            for k, v in ts_raw.items():
-                p.setdefault(k, v)
+        p = flatten_stage_params(params)
         out = Path(params.get("_out_dir") or Path(log_dir).parent)
         out.mkdir(parents=True, exist_ok=True)
         log_dir = Path(log_dir)

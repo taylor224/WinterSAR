@@ -1,0 +1,35 @@
+# Synthetic type (c) — strong turbulent atmosphere (ADR-0060 Phase 6 DoD "합성 3종").
+# Here the "signal" the representative phase must carry is itself long-wavelength and the
+# per-pixel noise is high (single look, exact phase distribution), which is the regime where
+# a plain multilook and a coherence-weighted phasor mean separate. Tables only.
+name: S_synth_strong_atmosphere
+kind: repr_phase
+ids: [R-07, PERF-04]
+description: >-
+  Representative (low-resolution) phase of a 96x96 synthetic interferogram with a 3 rad
+  turbulent atmosphere (Kolmogorov-like k^-8/3) over a Gaussian subsidence bowl, base
+  coherence 0.6 and single-look noise drawn from the exact phase distribution
+  (noise_model: exact), at downsample factor 3, compared with the block mean of the true
+  phase.
+requires: []
+factor: 3
+seeds: [0, 1, 2]
+data:
+  kind: synthetic_igram
+  shape: [96, 96]
+  deformation_kind: gaussian
+  deformation_amplitude_m: -0.05
+  atmosphere_std_rad: 3.0
+  coherence_base: 0.6
+  looks: 1
+  noise_model: exact
+methods:
+  - name: ml
+  - name: coh_weighted
+    params: {p: 1.0}
+  - name: coh_weighted
+    params: {p: 2.0}
+    label: coh_weighted(p=2)
+  - name: filtered
+    params: {alpha: 0.5, window: 16, overlap: 0.5}
+metrics: [phase_rmse_rad, phase_mae_rad, mean_magnitude, wall_s, peak_rss_mb]

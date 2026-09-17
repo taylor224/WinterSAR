@@ -570,3 +570,153 @@ def test_workdir_is_stable_across_params_that_do_not_change_geometry(tmp_path: P
         and a.name.startswith("T052D_VV_")
     )
     assert eng.topsstack_workdir({"workdir": "/x/y"}, stack) == Path("/x/y")
+
+
+# ------------------------------------------------------------------ canonical stage params
+
+
+def _cfg(**isce2: Any) -> Any:
+    """Minimal ``Config`` whose engine section differs from every adapter default."""
+    from wintersar.pipeline.config import Config
+
+    return Config.model_validate(
+        {
+            "project": {"name": "t", "workdir": "./work"},
+            "aoi": "aoi.geojson",
+            "time_range": {"start": "2024-01-01", "end": "2024-06-30"},
+            "engine": {
+                "interferogram": "isce2_topsstack",
+                "looks": [5, 1],
+                "esd": False,
+                "filter": {"type": "none"},
+                "isce2": dict(isce2),
+            },
+        }
+    )
+
+
+def _canonical_params(
+    stage: str, tmp_path: Path, overrides: dict[str, Any] | None = None, **isce2: Any
+) -> dict[str, Any]:
+    """Stage params exactly as the executor builds them (``dag.canonical_params`` + private keys)."""
+    from wintersar.pipeline.dag import canonical_params
+
+    p = canonical_params(_cfg(**isce2), stage, overrides)
+    out = tmp_path / "work" / stage / "node"
+    out.mkdir(parents=True, exist_ok=True)
+    p.update(
+        {
+            "_out_dir": str(out),
+            "_workdir": str(tmp_path / "work"),
+            "_cache_dir": str(tmp_path / "cache"),
+            "_cores": 2,
+            "_memory_gb": 4.0,
+            "_gpu": False,
+        }
+    )
+    return p
+
+
+def test_flatten_stage_params_expands_the_nested_config_sections(tmp_path: Path) -> None:
+    p = _canonical_params("coregister", tmp_path, slc_dir="/safes", dem="/dem.wgs84")
+    assert isinstance(p["engine"], dict) and "isce2" in p["engine"]  # sections stay nested
+    flat = ts.flatten_stage_params(p)
+    assert flat["slc_dir"] == "/safes" and flat["dem"] == "/dem.wgs84"  # engine.isce2.*
+    assert flat["looks"] == [5, 1] and flat["esd"] is False  # engine.*
+    assert flat["filter"]["type"] == "none" and flat["target_pixel_m"] == 40.0
+    assert flat["_cores"] == 2 and flat["_out_dir"] == p["_out_dir"]  # private keys survive
+    # precedence: top-level override > isce2 > engine.isce2 > engine > data
+    assert ts.flatten_stage_params({**p, "looks": [9, 3]})["looks"] == [9, 3]
+    assert ts.flatten_stage_params({**p, "isce2": {"dem": "/other"}})["dem"] == "/other"
+    assert ts.flatten_stage_params({"data": {"polarization": "HH"}})["polarization"] == "HH"
+    # the flat shape (tests / wintersar.pipeline.api callers) is unchanged
+    assert ts.flatten_stage_params({"looks": [2, 1]}) == {"looks": [2, 1]}
+
+
+def test_fetch_reads_slc_dir_and_dem_from_the_nested_engine_section(
+    tmp_path: Path, stack_json: Path, dem_file: Path, isce_present: None
+) -> None:
+    """``engine.isce2.{slc_dir,dem}`` must reach fetch through the nested stage mapping.
+
+    ``Config.stage_params("fetch")`` currently carries only the ``data`` section, so on the
+    pipeline path the engine options arrive as an override (``--set fetch.engine.isce2.dem=…``);
+    adding ``engine`` to the fetch sections is pipeline-owned (reported separately).
+    """
+    slc = tmp_path / "myslc"
+    slc.mkdir()
+    for d in DATES:
+        (slc / f"S1A_IW_SLC__1SDV_{d}T092000_{d}T092027_051234_062E5F_ABCD.zip").write_bytes(b"PK")
+    b2s = FakeBurst2Safe()
+    eng = _engine(runner=b2s, version_probe=lambda: "2.6.3")
+    params = _canonical_params(
+        "fetch",
+        tmp_path,
+        overrides={"engine": {"isce2": {"slc_dir": str(slc), "dem": str(dem_file)}}},
+    )
+    assert "slc_dir" not in params and params["engine"]["isce2"]["slc_dir"] == str(slc)
+    arts = eng.run(
+        "fetch",
+        Artifacts().add(Artifact(name="stack", path=stack_json, kind="json")),
+        params,
+        tmp_path / "logs" / "fetch",
+    )
+    m = json.loads(arts["slc_manifest"].path.read_text(encoding="utf-8"))
+    assert m["slc_dir"] == str(slc) and m["dates"] == DATES and m["dem"] == str(dem_file)
+    assert b2s.calls == []  # slc_dir honoured: no burst2safe round trip
+    assert [f.rule_id for f in eng.findings if f.is_fail] == []
+
+
+def test_coregister_reads_looks_esd_and_filter_from_the_nested_engine_section(
+    tmp_path: Path,
+    stack_json: Path,
+    dem_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isce_present: None,
+    job_env: dict[str, str],
+) -> None:
+    slc_manifest = _fetched(tmp_path, stack_json, dem_file, monkeypatch)
+    gen = FakeStackSentinel()
+    eng = _engine(runner=gen, version_probe=lambda: "2.6.3")
+    params = _canonical_params("coregister", tmp_path)
+    params["env"] = {"PATH": job_env["PATH"]}
+    inputs = Artifacts()
+    inputs.add(Artifact(name="slc_manifest", path=slc_manifest, kind="json"))
+    inputs.add(Artifact(name="stack", path=stack_json, kind="json"))
+    arts = eng.run("coregister", inputs, params, tmp_path / "logs" / "coregister")
+    argv = gen.calls[0]
+    assert argv[argv.index("-r") + 1] == "5" and argv[argv.index("-z") + 1] == "1"  # engine.looks
+    assert argv[argv.index("-C") + 1] == "geometry"  # engine.esd: false
+    assert argv[argv.index("-f") + 1] == "0"  # engine.filter.type: none
+    m = json.loads(arts["coreg_manifest"].path.read_text(encoding="utf-8"))
+    assert m["looks"] == [5, 1] and m["looks_info"]["mode"] == "explicit"
+    assert "ISCE2-010" not in [f.rule_id for f in eng.findings]  # looks are explicit, not auto
+
+
+def test_coregister_num_connections_comes_from_the_slc_manifest_pairs(
+    tmp_path: Path,
+    stack_json: Path,
+    dem_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    isce_present: None,
+    job_env: dict[str, str],
+) -> None:
+    """The executor forwards only ``slc_manifest``; ``-c`` must still match the selected network."""
+    slc_manifest = _fetched(tmp_path, stack_json, dem_file, monkeypatch)
+    assert json.loads(slc_manifest.read_text(encoding="utf-8"))["pairs"] == PAIRS
+    gen = FakeStackSentinel()
+    eng = _engine(runner=gen, version_probe=lambda: "2.6.3")
+    inputs = Artifacts().add(Artifact(name="slc_manifest", path=slc_manifest, kind="json"))
+    params = _params(tmp_path, "coregister", env={"PATH": job_env["PATH"]})
+    arts = eng.run("coregister", inputs, params, tmp_path / "logs" / "coregister")
+    argv = gen.calls[0]
+    assert (
+        argv[argv.index("-c") + 1] == "2"
+    )  # pairs span two neighbours, not DEFAULT_NUM_CONNECTIONS
+    m = json.loads(arts["coreg_manifest"].path.read_text(encoding="utf-8"))
+    assert m["num_connections"] == 2
+    info = next(f for f in eng.findings if f.rule_id == "ISCE2-013")
+    assert info.params["n"] == 2
+    # explicit params still win, and an empty/unknown manifest falls back to the default
+    assert ts.num_connections_from_pairs(PAIRS, DATES) == 2
+    assert ts.num_connections_from_pairs([], DATES) == ts.DEFAULT_NUM_CONNECTIONS
+    assert ts.num_connections_from_pairs(["20240101_20240206"], DATES) == 3

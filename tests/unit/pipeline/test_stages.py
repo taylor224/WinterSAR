@@ -42,6 +42,22 @@ def test_python_and_engine_stages() -> None:
     assert STAGES["validate"].optional
 
 
+def test_post_timeseries_stages_belong_to_the_timeseries_engine() -> None:
+    """geocode is MintPy's stage, not the interferogram engine's.
+
+    Keyed on ``engine.interferogram`` it was skipped on every real path (hyp3 and
+    isce2_topsstack do not declare "geocode"), so ``velocity`` was never produced and the
+    validate stage was blocked with PIPELINE-002 at plan time.
+    """
+    assert STAGES["geocode"].engine_key == "timeseries.engine"
+    assert STAGES["corrections"].engine_key == "timeseries.engine"
+    # MintPy's corrections step already writes velocity.h5, so validate has a producer even
+    # when the chosen time-series engine does not geocode.
+    assert "velocity" in STAGES["corrections"].outputs
+    assert STAGES["validate"].inputs == []
+    assert STAGES["validate"].optional_inputs == ["velocity", "timeseries"]
+
+
 def test_resolve_engine_fake_path(tmp_path) -> None:
     cfg = write_fake_config(tmp_path)
     for s in STAGE_ORDER:
@@ -58,7 +74,8 @@ def test_resolve_engine_real_path(tmp_path) -> None:
         unwrap={"method": "auto"},
     )
     assert resolve_engine(cfg, "interferogram") == "hyp3"
-    assert resolve_engine(cfg, "geocode") == "hyp3"
+    assert resolve_engine(cfg, "geocode") == "mintpy"  # post-processing of the ts engine
+    assert resolve_engine(cfg, "corrections") == "mintpy"
     assert resolve_engine(cfg, "unwrap") == "snaphu"  # auto -> snaphu
     assert resolve_engine(cfg, "timeseries") == "mintpy"
     assert resolve_engine(cfg, "search") is None

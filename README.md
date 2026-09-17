@@ -37,11 +37,13 @@ wintersar search   --config config.yaml
 wintersar precheck work/select/candidates.json
 wintersar plan     --config config.yaml
 wintersar run      --config config.yaml
-wintersar diagnose work/logs/
+wintersar diagnose work/                 # logs live in work/<stage>/<hash>/logs (ADR-0032)
 wintersar validate --ts work/ts/timeseries.h5 --leveling data/leveling.csv
 ```
 
-Every command accepts `--json` (stable envelope: `{"ok", "command", "data", "findings"}`) and `--lang ko|en`.
+`--json` (stable envelope: `{"ok", "command", "data", "findings"}`) and `--lang ko|en` are **global**
+options and go *before* the sub-command — `wintersar --json run --config config.yaml`. Placing them
+after it (`wintersar run --json`) is a usage error (`No such option`, exit 2).
 
 ## Licence
 

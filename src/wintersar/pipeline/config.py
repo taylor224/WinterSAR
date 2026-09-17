@@ -218,7 +218,7 @@ class Config(_Strict):
         sections: dict[str, list[str]] = {
             "search": ["aoi", "time_range", "data"],
             "precheck": ["aoi", "time_range", "data", "selection"],
-            "fetch": ["data"],
+            "fetch": ["data", "engine"],
             "coregister": ["engine"],
             "interferogram": ["engine"],
             "multilook": ["engine"],

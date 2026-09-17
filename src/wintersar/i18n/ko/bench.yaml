@@ -44,7 +44,7 @@ bench:
     cause: "사이트 '{site}' 반복 {repeat}회차가 '{stage}' 단계에서 실패했습니다: {error}"
     fix: "작업 디렉터리의 로그를 'wintersar diagnose'로 분석하세요. --workdir를 지정하면 실행 디렉터리가 보존됩니다."
   BENCH-006:
-    cause: "지표 '{metric}'을(를) 사이트 '{site}'에서 계산할 수 없습니다 (입력 산출물 또는 대조군 없음)."
+    cause: "지표 '{metric}'을(를) 사이트 '{site}'에서 계산할 수 없습니다 (입력 산출물·대조군 없음 또는 오류: {reason})."
     fix: "unwrap_error_fraction은 합성 사이트(진실 위상 포함)에서만, gt_rmse는 ground_truth CSV가 있을 때만 계산됩니다. 필요 없으면 site.metrics에서 제거하세요."
   BENCH-007:
     cause: "사이트 '{site}'의 총 wall time {wall_time_s:.1f}초가 예산 {budget_s:.0f}초를 넘었습니다."

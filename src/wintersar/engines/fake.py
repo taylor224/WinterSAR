@@ -10,9 +10,16 @@ Stage outputs are ``.npz`` files inside ``params["_out_dir"]`` (set by the execu
   ``velocity_m_per_yr``) — for the fake engine this is the synthetic truth plus noise, not an
   inversion (the SBAS core is never re-implemented here, rule 11.3).
 
-``params`` understood: ``n_dates``, ``shape``, ``seed``, ``atmosphere_std_rad``,
-``coherence_base``, ``water_fraction``, ``looks``, ``coherence_threshold`` (unwrap mask),
-``fail_stage`` (raise at that stage — used to test diagnose attachment).
+``params`` understood — **top level only** (ADR-0034): ``n_dates``, ``shape``, ``seed``,
+``atmosphere_std_rad``, ``coherence_base``, ``water_fraction``, ``looks``,
+``coherence_threshold`` (unwrap mask), ``fail_stage`` (raise at that stage — used to test
+diagnose attachment).
+
+Per ADR-0034 config values reach an engine nested under their section
+(``params["unwrap"]["coherence_threshold"]``) while experiment overrides land at the top
+level; the fake engine reads only the latter. A ``config.yaml`` value therefore changes the
+node hash on the fake path but not the synthetic output — drive it with
+``--set unwrap.coherence_threshold=…`` (CLI) or ``param_overrides`` (API) instead.
 """
 
 from __future__ import annotations

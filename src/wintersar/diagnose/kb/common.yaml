@@ -50,7 +50,9 @@
 
 - id: KB-ENV-002
   engine: any
-  pattern: 'Out of memory: Killed process|^Killed(?::\s*9)?\b|^MemoryError\b|Cannot allocate memory|Command .+ died with <Signals\.SIGKILL: 9>'
+  # `Command ... died with` is bounded ([^\n\r]{1,500}?) so a multi-hundred-KB carriage-return
+  # progress line cannot make the wildcard backtrack quadratically (diagnose runs on failure).
+  pattern: 'Out of memory: Killed process|^Killed(?::\s*9)?\b|^MemoryError\b|Cannot allocate memory|Command [^\n\r]{1,500}? died with <Signals\.SIGKILL: 9>'
   severity: FAIL
   cause:
     ko: "프로세스가 메모리 부족으로 종료되었습니다(리눅스 OOM killer의 'Killed', Python MemoryError, 또는 errno ENOMEM 'Cannot allocate memory'). 데이터 크기(픽셀 수 x 쌍 수)에 비해 가용 메모리가 작거나 병렬 작업 수가 너무 많습니다."

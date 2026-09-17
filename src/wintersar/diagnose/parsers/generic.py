@@ -57,8 +57,12 @@ EXCEPTION_LINE: Final = re.compile(
     re.MULTILINE,
 )
 # source: CPython Lib/subprocess.py CalledProcessError.__str__
+# The command part is bounded (``[^\n\r]{1,500}?``) instead of ``.+?``: a lone ``\r`` progress
+# line is one "line" to the regex engine, and an unbounded wildcard then backtracks
+# quadratically over it (a few hundred KB already costs seconds).
 SUBPROCESS_EXIT: Final = re.compile(
-    r"Command .+? (?:returned non-zero exit status \d+\.|died with (?:<Signals\.\w+: \d+>|unknown signal \d+)\.)"
+    r"Command [^\n\r]{1,500}? "
+    r"(?:returned non-zero exit status \d+\.|died with (?:<Signals\.\w+: \d+>|unknown signal \d+)\.)"
 )
 # sources: snaphu_util.c MAlloc "Out of memory"; linux mm/oom_kill.c "Out of memory: Killed process";
 # signal.strsignal(SIGKILL) == "Killed" ("Killed: 9" on macOS); os.strerror(errno.ENOMEM);

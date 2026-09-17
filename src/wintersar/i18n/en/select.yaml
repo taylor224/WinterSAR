@@ -89,6 +89,8 @@ select:
     col_n_bursts: "Bursts"
     col_coverage: "AOI coverage"
     col_n_pairs: "Pairs"
+    col_pairs_dropped: "Pairs dropped (B-perp)"
+    col_components: "Network components"
     col_reference: "Reference"
     col_perp: "|B-perp| (m) min/median/max"
     col_temporal: "Temporal (days) min/median/max"
@@ -111,6 +113,7 @@ select:
     res_disk: "Disk (GB)"
     res_network: "Network (GB)"
     unknown: "unknown"
+    network_split: "{n} (not connected; dates outside the largest component: {dates})"
     rule_table: "Rule table"
   cli:
     search_done: "Search done: {n} records ({product_type}) -> {path}"

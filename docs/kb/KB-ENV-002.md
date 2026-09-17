@@ -10,7 +10,7 @@
 ## 패턴 (regex)
 
 ```text
-Out of memory: Killed process|^Killed(?::\s*9)?\b|^MemoryError\b|Cannot allocate memory|Command .+ died with <Signals\.SIGKILL: 9>
+Out of memory: Killed process|^Killed(?::\s*9)?\b|^MemoryError\b|Cannot allocate memory|Command [^\n\r]{1,500}? died with <Signals\.SIGKILL: 9>
 ```
 
 ## 원인 (Cause)

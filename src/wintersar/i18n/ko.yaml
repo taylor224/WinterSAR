@@ -22,6 +22,12 @@ cli:
   invalid_config: "설정 파일 오류: {error}"
   no_findings: "발견된 문제가 없습니다."
   findings_summary: "실패 {n_fail} · 경고 {n_warn} · 정보 {n_info}"
+  CLI-001:
+    cause: "명령 실행 중 예상하지 못한 오류가 발생했습니다: {error}"
+    fix: "입력값(설정 파일 경로·단계 이름·작업 디렉터리 권한)을 확인하고, 전체 추적이 필요하면 -v 를 붙여 다시 실행하세요."
+  CLI-002:
+    cause: "{path} 파일이 이미 있습니다."
+    fix: "덮어쓰려면 --force 를 붙이거나 다른 경로를 지정하세요."
   check_install:
     title: "설치 상태 점검"
     engine: "엔진"

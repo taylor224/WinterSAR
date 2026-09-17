@@ -53,7 +53,7 @@ def test_every_key_used_in_source_exists():
 def test_diagnostics_have_cause_and_fix_in_both_languages():
     ko = load_catalog("ko")
     ids = {k.split(".")[1] for k in ko if k.startswith("research.RES-")}
-    assert ids >= {f"RES-00{i}" for i in range(1, 9)}
+    assert ids >= {f"RES-{i:03d}" for i in range(1, 11)}
     for rid in ids:
         for lang in ("ko", "en"):
             cause = t(f"research.{rid}.cause", lang)
@@ -70,5 +70,19 @@ def test_translations_format_without_errors():
         assert "1" in s and "4" in s and "7" in s
         s = t("research.RES-006.cause", lang, name="factor", value=0, allowed=">= 1")
         assert "factor" in s and ">= 1" in s
+        s = t(
+            "research.RES-009.cause",
+            lang,
+            method="phase_link",
+            value="(48, 48)",
+            expected="(64, 64)",
+            ny=64,
+            nx=64,
+        )
+        assert "phase_link" in s and "(64, 64)" in s and "(48, 48)" in s
+        s = t("research.RES-010.fix", lang, name="nope", bundled="S_synth_repr_phase")
+        assert "S_synth_repr_phase" in s
+        s = t("research.experiment.perf_in_json", lang, metrics="wall_s")
+        assert "wall_s" in s and "bench_result.json" in s
         s = t("research.experiment.generated_from", lang, json="a.json")
         assert "a.json" in s

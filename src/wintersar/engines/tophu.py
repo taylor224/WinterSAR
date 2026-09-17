@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import importlib
 import shutil
-import tempfile
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -35,7 +34,6 @@ from numpy.typing import NDArray
 
 from wintersar.engines._unwrap_common import (
     BoolArray,
-    EngineLog,
     FloatArray,
     UnwrapEngineBase,
     UnwrapError,
@@ -44,10 +42,12 @@ from wintersar.engines._unwrap_common import (
     clean_coherence,
     conncomp_masked,
     conncomp_stats,
+    engine_log,
     make_finding,
     nan_masked,
     resolve_nlooks,
     resolve_tiles,
+    scratch_dir,
     to_complex64,
     unwrap_cfg,
 )
@@ -173,7 +173,7 @@ class TophuEngine(UnwrapEngineBase):
             msg = f"igram must be 2-D and coh the same shape, got {igram.shape} / {coh.shape}"
             raise ValueError(msg)
         shape = (int(igram.shape[0]), int(igram.shape[1]))
-        log = EngineLog(Path(str(cfg["_log_path"]))) if cfg.get("_log_path") else None
+        log = engine_log(cfg, self.name)
         mask_cfg: Mapping[str, Any] = cfg["mask"] if isinstance(cfg.get("mask"), Mapping) else {}
         masked = build_masked(
             igram,
@@ -192,7 +192,7 @@ class TophuEngine(UnwrapEngineBase):
         downsample = (
             (int(ds[0]), int(ds[1])) if isinstance(ds, list | tuple) else (int(ds), int(ds))
         )
-        scratch, scratch_is_temp = self._scratch_dir(cfg)
+        scratch, scratch_is_temp = scratch_dir(cfg, "wintersar-tophu-")
         c64 = to_complex64(igram, coh, masked)
         corr = clean_coherence(coh, masked)
         unw = np.zeros(shape, dtype=np.float32)
@@ -248,12 +248,3 @@ class TophuEngine(UnwrapEngineBase):
         if scratch_is_temp and bool(cfg.get("delete_scratch", True)):
             shutil.rmtree(scratch, ignore_errors=True)
         return UnwrapResult(unw=unw_out, conncomp=cc_out, stats=stats)
-
-    @staticmethod
-    def _scratch_dir(cfg: Mapping[str, Any]) -> tuple[Path, bool]:
-        raw = cfg.get("_scratch_dir") or cfg.get("scratch_dir")
-        if raw:
-            p = Path(str(raw))
-            p.mkdir(parents=True, exist_ok=True)
-            return p, False
-        return Path(tempfile.mkdtemp(prefix="wintersar-tophu-")), True

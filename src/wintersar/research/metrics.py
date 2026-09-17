@@ -6,18 +6,17 @@
   phase against the low-resolution truth.
 * :func:`offsets_recovered` — injected vs estimated integer 2π tile offsets.
 * :func:`seam_jumps` — tile-seam jump count of a merged raster (shared detector,
-  ``wintersar.unwrap.tiling.boundary_jumps``, ADR-0048; local fallback).
-* :func:`closure_rms` — loop-closure RMS on a stack (``wintersar.validate.closure``; local
-  fallback with the same MintPy sign convention ``φ_ij + φ_jk - φ_ik``).
+  ``wintersar.unwrap.tiling.boundary_jumps``, ADR-0048).
+* :func:`closure_rms` — loop-closure RMS on a stack, via ``wintersar.validate.closure``
+  (MintPy sign convention ``φ_ij + φ_jk - φ_ik``).
 * :func:`ground_truth_rmse` — hook to ``wintersar.validate.metrics.compare`` (RMSE against
-  levelling / GNSS), reported as unavailable when the validate module is absent.
+  levelling / GNSS).
 * :class:`ResourceTimer` — wall time, CPU time and RSS (psutil) context manager. Numbers it
   produces belong in a results JSON, never in prose (rule 11.8).
 """
 
 from __future__ import annotations
 
-import itertools
 import os
 import time
 from collections.abc import Sequence
@@ -30,6 +29,8 @@ from numpy.typing import NDArray
 from wintersar.research import synth
 from wintersar.research.repr_phase import wrap
 from wintersar.research.stitching import _seam_report, tiles_from_slices
+from wintersar.validate.closure import closure_from_arrays
+from wintersar.validate.metrics import compare
 
 FloatArray = NDArray[np.float64]
 
@@ -150,34 +151,6 @@ def seam_jumps(
 
 
 # ---------------------------------------------------------------- closure
-def _closure_local(
-    phase: NDArray[Any], pairs: Sequence[str], mask: NDArray[Any] | None, wrapped: bool
-) -> tuple[int, FloatArray]:
-    """Minimal ``φ_ij + φ_jk - φ_ik`` (MintPy sign convention) used when
-    ``wintersar.validate.closure`` is not importable."""
-    ph = np.asarray(phase, dtype=np.float64)
-    idx = {tuple(k.split("_")): i for i, k in enumerate(pairs)}
-    dates = sorted({d for k in pairs for d in k.split("_")})
-    finite = np.isfinite(ph)
-    if mask is not None:
-        m = np.asarray(mask, dtype=bool)
-        finite &= ~(m[None] if m.ndim == 2 else m)
-    values: list[FloatArray] = []
-    for d1, d2, d3 in itertools.combinations(dates, 3):
-        try:
-            ij, jk, ik = idx[(d1, d2)], idx[(d2, d3)], idx[(d1, d3)]
-        except KeyError:
-            continue
-        c = ph[ij] + ph[jk] - ph[ik]
-        if wrapped:
-            c = wrap(c)
-        values.append(np.where(finite[ij] & finite[jk] & finite[ik], c, np.nan))
-    if not values:
-        return 0, np.zeros(0)
-    stack = np.stack(values)
-    return int(stack.shape[0]), np.asarray(stack[np.isfinite(stack)], dtype=np.float64)
-
-
 def closure_rms(
     phase: NDArray[Any],
     pairs: Sequence[str],
@@ -191,14 +164,9 @@ def closure_rms(
     the fraction of non-zero multiples is the unwrap-error indicator), ``wrapped=True``
     wraps the closure (closure-phase bias / noise).
     """
-    try:
-        from wintersar.validate.closure import closure_from_arrays
-
-        tri, closure, valid = closure_from_arrays(phase, list(pairs), mask, wrapped=wrapped)
-        n_tri = len(tri)
-        vals = np.asarray(closure[valid], dtype=np.float64)
-    except ImportError:  # pragma: no cover - same tree
-        n_tri, vals = _closure_local(phase, pairs, mask, wrapped)
+    tri, closure, valid = closure_from_arrays(phase, list(pairs), mask, wrapped=wrapped)
+    n_tri = len(tri)
+    vals = np.asarray(closure[valid], dtype=np.float64)
     out: dict[str, Any] = {
         "n_triplets": n_tri,
         "closure_rms_rad": float(np.sqrt(np.mean(vals * vals))) if vals.size else float("nan"),
@@ -213,12 +181,8 @@ def closure_rms(
 # ---------------------------------------------------------------- ground truth hook
 def ground_truth_rmse(timeseries: Any, ground_truth: Sequence[Any], **kw: Any) -> dict[str, Any]:
     """RMSE / bias of an InSAR :class:`~wintersar.io.timeseries.TimeSeries` against levelling
-    or GNSS records through ``wintersar.validate.metrics.compare`` (R-10). Returns
-    ``{"available": False}`` when that module is not importable."""
-    try:
-        from wintersar.validate.metrics import compare
-    except ImportError:
-        return {"available": False, "rmse_m": float("nan"), "bias_m": float("nan")}
+    or GNSS records through ``wintersar.validate.metrics.compare`` (R-10). ``available`` is
+    part of the contract the experiment runner reads and is always ``True`` here."""
     res = compare(timeseries, list(ground_truth), **kw)
     return {
         "available": True,

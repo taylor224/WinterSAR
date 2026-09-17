@@ -1,11 +1,14 @@
-# 튜토리얼 2 — ISCE2 로컬 경로 (초안, 어댑터 구현 후 확정)
+# 튜토리얼 2 — ISCE2 로컬 경로
 
 목표: 같은 사이트를 **로컬 ISCE2 topsStack** 으로 처리해 파라미터(looks, 필터, ESD, 언래퍼, 타일)를 완전히
 통제하고, HyP3 결과와의 속도 차이 통계를 기록합니다(Phase 2 DoD). 장점은 통제력, 대가는 설치·디스크·시간입니다.
 
-> **상태**: `engines/isce2_topsstack.py` 어댑터는 아직 트리에 없습니다(Phase 2 ⑤). 이 문서는 플랜 §5.2 의
-> 설계와 현재 존재하는 명령(`check-install`, `unwrap plan/run`, `diagnose --engine isce2`, `cache`)만으로
-> 쓴 초안이며, 어댑터가 붙으면 명령 예시를 실제 실행 결과로 교체합니다. 성능 수치는 적지 않습니다.
+> **상태**: `engines/isce2_topsstack.py` 어댑터는 트리에 있고 `engine.interferogram: isce2_topsstack` 으로
+> 등록되어 있습니다(Phase 2 ⑤, [ADR-0026](../adr/0026-isce2-topsstack-flags-and-run-files.md) ·
+> [ADR-0027](../adr/0027-topsstack-parallel-safety-and-cleanup.md)). 다만 이 환경에는 ISCE2 가 설치되어
+> 있지 않아 플래그·`run_files` 이름·업데이트 모드는 상류 소스로만 검증했습니다 — 실제 설치 환경에서의 실행
+> 재확인은 open-questions #46 입니다. 어댑터가 없으면 `wintersar check-install` 이 `ENV-001` 로 알려 줍니다.
+> 성능 수치는 `bench_result.json` 없이는 적지 않습니다.
 
 ## 0. 준비물
 
@@ -23,15 +26,33 @@ wintersar check-install --engine isce2 --engine snaphu --engine tophu --engine m
 
 ## 1. 설정
 
+어댑터 전용 옵션은 `engine.isce2:` 아래에 둡니다(`EngineCfg.isce2`, `pipeline/config.py`). 아래 값은 모두
+어댑터가 실제로 읽는 키이며, 주석의 기본값은 `engines/isce2_topsstack.py` 의 기본값입니다.
+
 ```yaml
 data:
   product: burst              # burst GeoTIFF → burst2safe 로 SAFE 재구성 → topsStack 입력 (플랜 §5.2)
 engine:
   interferogram: isce2_topsstack
   looks: auto                 # SEL-09 의 자동 looks (예: [10, 3]); 직접 지정 가능
-  filter: { type: goldstein, alpha: 0.6, window: 64 }
-  esd: true                   # ESD 미세 보정 (TOPS 정합 개념 참고)
-  cleanup: stage
+  filter: { type: goldstein, alpha: 0.6, window: 64 }   # alpha → stackSentinel --filter_strength
+  esd: true                   # true → -C NESD, false → -C geometry (TOPS 정합 개념 참고)
+  cleanup: stage              # none | stage | aggressive (PERF-07, ADR-0027)
+  isce2:
+    slc_dir: /data/SLC        # 이미 받아 둔 SAFE 디렉터리. 비우면 burst2safe 로 <workdir>/SLC 에 재구성
+    orbit_dir: /data/orbits   # 기본 <workdir>/orbits (비어 있으면 ISCE2-014 INFO)
+    aux_dir: /data/aux_cal    # 기본 <workdir>/aux_cal
+    dem: /data/dem/glo30.dem  # 없으면 sardem 캐시에서 해결 (ADR-0018)
+    bbox: [35.0, 35.5, 128.0, 128.6]   # S, N, W, E. 없으면 AOI WKT → ISCE2-006 WARN
+    reference_date: "2023-01-05"       # 없으면 stack.json 의 참조 날짜
+    num_connections: 4        # 기본: 네트워크 설정에서 산출 (ISCE2-013 INFO 로 표시)
+    num_overlap_connections: 3
+    esd_coherence_threshold: 0.85
+    unwrap_in_isce: false     # true 면 run_files 의 unwrap 단계까지 ISCE2 가 수행
+    workflow: interferogram   # stackSentinel -W
+    max_parallel_per_step: { run_01_unpack_topo_reference: 1 }   # 단계별 동시 실행 상한 (ADR-0027)
+    retries: 1                # 실패 job 재시도 횟수
+    regenerate_run_files: false   # true 면 업데이트 모드를 무시하고 run_files 재생성
 unwrap:
   method: auto                # snaphu | tophu | spurt | auto (스케줄러가 결정, ADR-0045)
   cost: defo
@@ -56,16 +77,19 @@ wintersar precheck work/select/candidates.json --config config.yaml
 ISCE2 경로에서는 `SEL-11`(정밀궤도 가용성)과 `SEL-12`(레이오버·셰도우) 가 특히 중요합니다. topsStack 의
 `geom_reference/IW*/shadowMask_*.rdr` 산출물이 있으면 자체 마스크보다 우선 사용하고 비교합니다(ADR-0019).
 
-## 3. 실행 (어댑터 설계, 플랜 §5.2)
+## 3. 실행
 
 ```bash
 wintersar plan --config config.yaml
 wintersar run  --config config.yaml --until unwrap     # 정합·간섭도·멀티룩·언래핑까지
 ```
 
-어댑터가 하는 일: `stackSentinel.py` 인자 생성(bbox, looks, 네트워크 옵션, ESD, 언래퍼) → `run_files` 를
-**단계 순서는 지키고 단계 안에서만 병렬** 실행(PERF-07, `runfiles.py`) → 산출물을 MintPy `prep_isce` 규약으로
-정리. 실패 job 은 재시도 후 `diagnose` 로 넘깁니다.
+어댑터가 맡는 단계는 `fetch`, `coregister`, `interferogram`, `multilook` 입니다. 하는 일: (burst 제품이면)
+`burst2safe` 로 SAFE 재구성 → `stackSentinel.py` 인자 생성(bbox, looks, 네트워크 옵션, ESD, 언래퍼) →
+`run_files` 를 **단계 순서는 지키고 단계 안에서만 병렬** 실행(PERF-07, `engines/runfiles.py`) → 산출물을
+MintPy `prep_isce` 규약(`igrams_manifest.json`)으로 정리. 이미 끝난 `run_file` 은 건너뛰고
+(`coreg_secondarys/` 기준 업데이트 모드, PERF-11 · ADR-0029), 실패 job 은 `engine.isce2.retries` 만큼
+재시도한 뒤 `diagnose` 로 넘깁니다.
 
 언래핑은 wintersar 스케줄러가 맡습니다([개념: 타일과 다중해상도](../concepts/unwrap-tiling-multiresolution.md)):
 
@@ -77,7 +101,7 @@ wintersar unwrap run igrams.npz --out work/unwrap_manual --method auto     # 스
 ## 4. 실패 진단
 
 ```bash
-wintersar diagnose work/logs/ --engine isce2
+wintersar diagnose work/ --engine isce2      # 또는 work/<stage>/<hash>/logs (ADR-0032)
 ```
 
 | KB | 원인 요지 |
@@ -105,7 +129,12 @@ The local ISCE2 topsStack path gives full control over looks, filtering, ESD, th
 tiling at the cost of installation, disk and time. It needs conda-forge `isce2`, `snaphu`
 (snaphu-py) or `tophu`, `mintpy` (subprocess only), plus `sentineleof`/`sardem` for orbits and DEM
 cached under `~/.cache/wintersar`. Selection is identical to the HyP3 path; the adapter
-(`engines/isce2_topsstack.py`, not yet in the tree) will build `stackSentinel.py` arguments, run the
-`run_files` with intra-step parallelism and hand the products to MintPy via `prep_isce`. Unwrapping is
+(`engines/isce2_topsstack.py`, registered as `isce2_topsstack` and covering `fetch`, `coregister`,
+`interferogram`, `multilook`) builds `stackSentinel.py` arguments from the `engine.isce2:` keys
+(`slc_dir`, `orbit_dir`, `aux_dir`, `dem`, `bbox`, `reference_date`, `num_connections`,
+`esd_coherence_threshold`, `unwrap_in_isce`, `max_parallel_per_step`, `retries`, ...), runs the
+`run_files` with intra-step parallelism and hands the products to MintPy via `prep_isce`. ISCE2 is not
+installed in this environment, so the flags were verified against upstream sources only
+(ADR-0026/0027, open-questions #46). Unwrapping is
 scheduled by wintersar (`wintersar unwrap plan/run`); failures are explained by
-`wintersar diagnose work/logs --engine isce2` through `KB-ISCE2-00x` / `KB-SNAPHU-00x`.
+`wintersar diagnose work/ --engine isce2` through `KB-ISCE2-00x` / `KB-SNAPHU-00x`.

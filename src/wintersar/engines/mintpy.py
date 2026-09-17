@@ -34,18 +34,18 @@ import shutil
 import subprocess
 import time
 from collections.abc import Callable, Mapping
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
-
-import numpy as np
-from numpy.typing import NDArray
 
 from wintersar.engines import aux_cache
 from wintersar.engines import mintpy_template as tpl
 from wintersar.engines.base import Engine, executable_version, register_engine
+
+# the MintPy HDF5 reader lives in wintersar.io.formats (single implementation, ADR-0021);
+# re-exported here so callers of the adapter keep working
+from wintersar.io.formats import read_h5_attrs, read_timeseries_h5
 from wintersar.io.schemas import Artifact, Artifacts, Finding, Severity
-from wintersar.io.timeseries import TimeSeries
 from wintersar.util import sysinfo
 from wintersar.util.masking import mask_mapping, mask_text
 
@@ -71,6 +71,17 @@ _MISSING_RE = re.compile(
 _ERROR_RE = re.compile(r"^(Traceback|.*Error:|ERROR)", re.I)
 
 Runner = Callable[[list[str], Path, Path], int]
+
+#: artifacts whose path points into the MintPy work directory (directly or one level down);
+#: used by :meth:`MintPyEngine._inherit_workdir` when the executor forwards no ``mintpy_workdir``
+WORKDIR_HINT_ARTIFACTS: tuple[str, ...] = (
+    "timeseries",
+    "velocity",
+    "ifgram_stack",
+    "geometry",
+    "temporal_coherence",
+    "mask",
+)
 
 
 class MintPyStepError(RuntimeError):
@@ -311,13 +322,47 @@ class MintPyEngine(Engine):
 
     @staticmethod
     def _inherit_workdir(inputs: Artifacts, params: Mapping[str, Any]) -> Path | None:
-        v = params.get("workdir")
-        if v is None and "mintpy_workdir" in inputs:
-            v = inputs["mintpy_workdir"].path
-        if v is None:
-            return None
-        wd = Path(v)
-        return wd if (wd / TEMPLATE_FILENAME).exists() else None
+        """MintPy work directory of the upstream ``timeseries`` stage.
+
+        ``StageSpec("corrections"/"geocode")`` declares only ``timeseries`` as an input and
+        the executor forwards nothing else, so the work directory is normally derived from
+        the artifacts that *are* forwarded: every MintPy output sits in the work directory
+        itself (``timeseries*.h5``, ``velocity.h5``) or one level below it (``inputs/``,
+        ``geo/``). ``params["workdir"]`` and the ``mintpy_workdir`` artifact stay as explicit
+        overrides. A candidate counts only when it holds :data:`TEMPLATE_FILENAME`.
+        """
+        for wd in MintPyEngine._workdir_candidates(inputs, params):
+            if (wd / TEMPLATE_FILENAME).exists():
+                return wd
+        return None
+
+    @staticmethod
+    def _workdir_candidates(inputs: Artifacts, params: Mapping[str, Any]) -> list[Path]:
+        """Explicit overrides, then every artifact's directory, then their parents."""
+        direct: list[Path] = []
+        parents: list[Path] = []
+
+        def add(into: list[Path], value: Any) -> None:
+            if value is None:
+                return
+            path = Path(value)
+            if path not in into:
+                into.append(path)
+
+        add(direct, params.get("workdir"))
+        if "mintpy_workdir" in inputs:
+            add(direct, inputs["mintpy_workdir"].path)
+        if "mintpy_template" in inputs:
+            add(direct, Path(inputs["mintpy_template"].path).parent)
+        for name in WORKDIR_HINT_ARTIFACTS:
+            if name not in inputs:
+                continue
+            # <workdir>/timeseries*.h5, <workdir>/velocity.h5 -> the work directory itself;
+            # <workdir>/inputs/geometry*.h5, <workdir>/geo/geo_*.h5 -> one level below it
+            parent = Path(inputs[name].path).parent
+            add(direct, parent)
+            add(parents, parent.parent)
+        return direct + [p for p in parents if p not in direct]
 
     @staticmethod
     def _load_entries(workdir: Path) -> dict[str, str]:
@@ -511,143 +556,16 @@ def _h5_meta(path: Path) -> dict[str, Any]:
     return {k: a[k] for k in keep if k in a}
 
 
-# ---------------------------------------------------------------------- HDF5 readers (h5py only)
-
-
-def _decode(v: Any) -> str:
-    if isinstance(v, bytes):
-        return v.decode("utf-8", errors="replace")
-    if isinstance(v, np.ndarray):
-        return " ".join(_decode(x) for x in v.tolist())
-    return str(v)
-
-
-def read_h5_attrs(path: Path) -> dict[str, str]:
-    """Root-level attributes of a MintPy HDF5 file as ``{str: str}`` (MintPy stores str)."""
-    import h5py
-
-    with h5py.File(path, "r") as f:
-        return {str(k): _decode(v) for k, v in f.attrs.items()}
-
-
-def _parse_yyyymmdd(v: Any) -> date:
-    s = _decode(v).strip()[:8]
-    return date(int(s[:4]), int(s[4:6]), int(s[6:8]))
-
-
-def _grid_latlon(
-    attrs: Mapping[str, str], ny: int, nx: int, geometry_path: Path | None
-) -> tuple[NDArray[np.floating], NDArray[np.floating]]:
-    if "Y_FIRST" in attrs and "X_FIRST" in attrs:
-        y0, dy = float(attrs["Y_FIRST"]), float(attrs["Y_STEP"])
-        x0, dx = float(attrs["X_FIRST"]), float(attrs["X_STEP"])
-        # pixel centres, as in mintpy.utils.utils0.get_lat_lon
-        ys = y0 + dy * (np.arange(ny, dtype=np.float64) + 0.5)
-        xs = x0 + dx * (np.arange(nx, dtype=np.float64) + 0.5)
-        unit = attrs.get("Y_UNIT", attrs.get("X_UNIT", "degrees")).lower()
-        epsg = attrs.get("EPSG")
-        if unit.startswith("deg") or not epsg or epsg == "4326":
-            return ys, xs
-        from pyproj import Transformer
-
-        tr = Transformer.from_crs(f"EPSG:{int(float(epsg))}", "EPSG:4326", always_xy=True)
-        xx, yy = np.meshgrid(xs, ys)
-        lon, lat = tr.transform(xx, yy)
-        return np.asarray(lat, dtype=np.float64), np.asarray(lon, dtype=np.float64)
-    if geometry_path is not None:
-        import h5py
-
-        with h5py.File(geometry_path, "r") as g:
-            if "latitude" in g and "longitude" in g:
-                return np.asarray(g["latitude"][:], dtype=np.float64), np.asarray(
-                    g["longitude"][:], dtype=np.float64
-                )
-    msg = "timeseries.h5 is in radar coordinates (no Y_FIRST/X_FIRST); pass geometry_path=geometryRadar.h5 with latitude/longitude datasets"
-    raise ValueError(msg)
-
-
-def _read_dataset(path: Path | None, name: str) -> NDArray[Any] | None:
-    if path is None or not Path(path).exists():
-        return None
-    import h5py
-
-    with h5py.File(path, "r") as f:
-        if name not in f:
-            return None
-        return np.asarray(f[name][:])
-
-
-def read_timeseries_h5(
-    path: Path,
-    *,
-    geometry_path: Path | None = None,
-    velocity_path: Path | None = None,
-    temporal_coherence_path: Path | None = None,
-    mask_path: Path | None = None,
-) -> TimeSeries:
-    """Load MintPy ``timeseries*.h5`` (+ optional sidecars) into :class:`TimeSeries`.
-
-    Datasets ``timeseries`` (n_date, ny, nx, float32, metres) and ``date`` (bytes YYYYMMDD);
-    attributes are root attrs. Sidecars default to the siblings ``velocity.h5``
-    (``velocity``, m/year), ``temporalCoherence.h5`` (``temporalCoherence``),
-    ``maskTempCoh.h5`` (``mask``) and ``inputs/geometry*.h5`` (``height``, ``incidenceAngle``
-    in degrees, ``latitude``/``longitude`` for radar-coded stacks).
-    """
-    import h5py
-
-    path = Path(path)
-    with h5py.File(path, "r") as f:
-        attrs = {str(k): _decode(v) for k, v in f.attrs.items()}
-        data = np.asarray(f["timeseries"][:], dtype=np.float32)
-        dates = [_parse_yyyymmdd(d) for d in f["date"][:]]
-        bperp = np.asarray(f["bperp"][:]) if "bperp" in f else None
-    if data.ndim != 3 or data.shape[0] != len(dates):
-        msg = f"timeseries dataset shape {data.shape} does not match {len(dates)} dates"
-        raise ValueError(msg)
-    ny, nx = int(data.shape[1]), int(data.shape[2])
-    wd = path.parent
-    prefix = "geo_" if path.name.startswith("geo_") else ""
-    if geometry_path is None:
-        geometry_path = _first_existing(
-            wd / f"{prefix}geometryGeo.h5",
-            wd / f"{prefix}geometryRadar.h5",
-            wd / "inputs" / "geometryGeo.h5",
-            wd / "inputs" / "geometryRadar.h5",
-            wd.parent / "inputs" / "geometryGeo.h5",
-            wd.parent / "inputs" / "geometryRadar.h5",
-        )
-    lat, lon = _grid_latlon(attrs, ny, nx, geometry_path)
-    inc = _read_dataset(geometry_path, "incidenceAngle")
-    dem = _read_dataset(geometry_path, "height")
-    vel = _read_dataset(velocity_path or wd / f"{prefix}velocity.h5", "velocity")
-    coh = _read_dataset(
-        temporal_coherence_path or wd / f"{prefix}temporalCoherence.h5", "temporalCoherence"
-    )
-    mask = _read_dataset(mask_path or wd / f"{prefix}maskTempCoh.h5", "mask")
-    heading = float(attrs["HEADING"]) if "HEADING" in attrs else None
-    ref: tuple[float, float] | None = None
-    if "REF_LAT" in attrs and "REF_LON" in attrs:
-        ref = (float(attrs["REF_LAT"]), float(attrs["REF_LON"]))
-    extra: dict[str, Any] = {
-        **attrs,
-        "source": str(path),
-        "REF_DATE": attrs.get("REF_DATE", f"{dates[0]:%Y%m%d}"),
-        "geometry_path": None if geometry_path is None else str(geometry_path),
-    }
-    if bperp is not None:
-        extra["bperp"] = bperp.astype(np.float32)
-    if mask is not None:
-        extra["mask"] = mask.astype(bool)
-    return TimeSeries(
-        dates=dates,
-        displacement_m=data,
-        lat=lat,
-        lon=lon,
-        incidence_deg=None if inc is None else inc.astype(np.float32),
-        heading_deg=heading,
-        coherence=None if coh is None else coh.astype(np.float32),
-        velocity_m_per_yr=None if vel is None else vel.astype(np.float32),
-        reference_latlon=ref,
-        dem_m=None if dem is None else dem.astype(np.float32),
-        attrs=extra,
-    )
+__all__ = [
+    "EXECUTABLE",
+    "STAGE_STEPS",
+    "TEMPLATE_FILENAME",
+    "TEMPLATE_JSON",
+    "MintPyEngine",
+    "MintPyStepError",
+    "find_executable",
+    "parse_version",
+    "read_h5_attrs",
+    "read_timeseries_h5",
+    "tpl_clip",
+]

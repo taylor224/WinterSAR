@@ -356,3 +356,154 @@ def test_experiment_command_runs_and_lists(tmp_path: Path):
         app, ["--json", "research", "experiment", "does_not_exist", "--out", str(tmp_path / "x")]
     )
     assert bad.exit_code == 1
+
+
+def test_repr_phase_mismatched_stack_is_a_finding_and_writes_nothing(tmp_path: Path):
+    """``--method phase_link`` with a stack on another grid used to escape the try block as a
+    raw ValueError from the truth metrics — after the .npz had already been written."""
+    igrams = tmp_path / "igrams.npz"
+    slc = tmp_path / "slc.npz"
+    _json(
+        runner.invoke(
+            app,
+            ["--json", "research", "synth", "--out", str(igrams), "--shape", "48", "48"],
+        )
+    )
+    _json(
+        runner.invoke(
+            app,
+            [
+                "--json",
+                "research",
+                "synth",
+                "--kind",
+                "slc",
+                "--out",
+                str(slc),
+                "--n-dates",
+                "5",
+                "--shape",
+                "36",
+                "36",
+            ],
+        )
+    )
+    for method in ("phase_link", "shp"):
+        out = tmp_path / f"repr_{method}.npz"
+        res = runner.invoke(
+            app,
+            [
+                "--json",
+                "--lang",
+                "en",
+                "research",
+                "repr-phase",
+                "--igram",
+                str(igrams),
+                "--out",
+                str(out),
+                "--method",
+                method,
+                "--stack",
+                str(slc),
+            ],
+        )
+        assert res.exit_code == 1
+        payload = json.loads(res.stdout)
+        assert payload["command"] == "research repr-phase" and not payload["ok"]
+        assert payload["findings"][0]["rule_id"] == "RES-009"
+        assert "(48, 48)" in payload["data"]["error"]
+        assert not out.exists(), "a failed repr-phase must not leave an output .npz"
+    # the matching grid still works end to end
+    ok = tmp_path / "slc48.npz"
+    _json(
+        runner.invoke(
+            app,
+            [
+                "--json",
+                "research",
+                "synth",
+                "--kind",
+                "slc",
+                "--out",
+                str(ok),
+                "--n-dates",
+                "5",
+                "--shape",
+                "48",
+                "48",
+            ],
+        )
+    )
+    good = _json(
+        runner.invoke(
+            app,
+            [
+                "--json",
+                "research",
+                "repr-phase",
+                "--igram",
+                str(igrams),
+                "--out",
+                str(tmp_path / "good.npz"),
+                "--method",
+                "phase_link",
+                "--stack",
+                str(ok),
+            ],
+        )
+    )
+    assert good["data"]["shape"] == [16, 16] and "phase_rmse_rad" in good["data"]
+
+
+def test_unknown_experiment_name_is_res_010_listing_the_bundled_ones(tmp_path: Path):
+    res = runner.invoke(
+        app,
+        ["--json", "--lang", "en", "research", "experiment", "nope", "--out", str(tmp_path / "x")],
+    )
+    assert res.exit_code == 1
+    payload = json.loads(res.stdout)
+    assert payload["findings"][0]["rule_id"] == "RES-010"
+    bundled = payload["findings"][0]["params"]["bundled"]
+    assert "S_synth_repr_phase" in bundled and "S_synth_stitching" in bundled
+    text = runner.invoke(
+        app, ["--lang", "en", "research", "experiment", "nope", "--out", str(tmp_path / "y")]
+    )
+    assert text.exit_code == 1 and "S_synth_repr_phase" in text.output.replace("\n", "")
+
+
+def test_synth_noise_model_option(tmp_path: Path):
+    payload = _json(
+        runner.invoke(
+            app,
+            [
+                "--json",
+                "research",
+                "synth",
+                "--out",
+                str(tmp_path / "exact.npz"),
+                "--shape",
+                "16",
+                "16",
+                "--n-dates",
+                "3",
+                "--noise-model",
+                "exact",
+            ],
+        )
+    )
+    assert payload["data"]["noise_model"] == "exact"
+    bad = runner.invoke(
+        app,
+        [
+            "--json",
+            "research",
+            "synth",
+            "--out",
+            str(tmp_path / "bad.npz"),
+            "--noise-model",
+            "bogus",
+        ],
+    )
+    assert bad.exit_code == 1
+    assert json.loads(bad.stdout)["findings"][0]["rule_id"] == "RES-006"

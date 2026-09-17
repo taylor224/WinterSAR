@@ -18,12 +18,18 @@ from wintersar.bench.runner import (
     compute_metrics,
     fake_engine_runner,
     git_sha,
+    gt_geometry,
     machine_info,
     run_site,
     triplets,
     unwrap_error_fraction,
 )
 from wintersar.bench.sites import Site
+from wintersar.i18n import t
+
+GROUND_TRUTH_CSV = (
+    Path(__file__).resolve().parents[2] / "fixtures" / "ground_truth" / "leveling_synth.csv"
+)
 
 
 def _meas(wall: float, rss: float = 0.1) -> Measurement:
@@ -103,6 +109,90 @@ def test_metric_unavailable_and_budget_findings(tmp_path: Path, synthetic_site: 
     ids = {f.rule_id for f in res.findings}
     assert "BENCH-006" in ids and "BENCH-007" in ids and res.ok  # INFO/WARN only
     assert res.metrics["gt_rmse"] is None
+
+
+def test_gt_rmse_matches_the_validate_stage_on_the_same_timeseries(
+    tmp_path: Path, synthetic_site: Site
+) -> None:
+    """gt_rmse must use validate's reader/geometry: the fake-engine .npz has no lat/lon,
+    incidence or heading, and io.formats' own synthetic grid puts the levelling sites off
+    the raster (bench reported None while the pipeline validate stage reported an RMSE)."""
+    from wintersar.validate.api import load_timeseries
+    from wintersar.validate.ground_truth import load_csv
+    from wintersar.validate.metrics import compare
+
+    site = synthetic_site.model_copy(
+        update={"metrics": ["gt_rmse"], "ground_truth": str(GROUND_TRUTH_CSV)}
+    )
+    outcome = injected_fake_runner(site, tmp_path / "w", 0)
+    metrics = compute_metrics(outcome.artifacts, site)
+    expected = compare(
+        load_timeseries(outcome.artifacts["timeseries"], **gt_geometry(site)),
+        load_csv(GROUND_TRUTH_CSV),
+    )
+    assert expected.n_sites > 0 and np.isfinite(expected.rmse_m)
+    assert metrics["gt_rmse"] == pytest.approx(float(expected.rmse_m))
+
+    res = run_site(site, tmp_path / "gt.json", runner=injected_fake_runner, repeats=1)
+    assert res.ok and [f.rule_id for f in res.findings] == []
+    assert res.metrics["gt_rmse"] == pytest.approx(float(expected.rmse_m))
+
+
+def test_gt_geometry_follows_the_config_the_validate_stage_would_build(tmp_path: Path) -> None:
+    """Same values run_validate derives: engine.target_pixel_m, heading from the orbit
+    direction, AOI north-west corner (absent for the synthetic empty AOI)."""
+    from wintersar.validate.api import SYNTHETIC_PIXEL_M
+    from wintersar.validate.los import S1_HEADING_ASC_DEG, S1_HEADING_DESC_DEG
+
+    site = Site(name="s", size="S", synthetic=True)
+    assert gt_geometry(site) == {
+        "pixel_m": SYNTHETIC_PIXEL_M,
+        "heading_deg": S1_HEADING_DESC_DEG,
+    }
+    aoi = tmp_path / "aoi.geojson"
+    aoi.write_text(
+        json.dumps(
+            {
+                "type": "Polygon",
+                "coordinates": [[[126.9, 37.5], [127.0, 37.5], [127.0, 37.6], [126.9, 37.6]]],
+            }
+        ),
+        encoding="utf-8",
+    )
+    real = Site(
+        name="r",
+        size="S",
+        aoi=str(aoi),
+        config={"engine": {"target_pixel_m": 80.0}, "data": {"orbit_direction": "asc"}},
+    )
+    geom = gt_geometry(real)
+    assert geom["pixel_m"] == 80.0 and geom["heading_deg"] == S1_HEADING_ASC_DEG
+    assert (geom["lat0_deg"], geom["lon0_deg"]) == (37.6, 126.9)
+
+
+def test_bench_006_reports_why_a_metric_is_missing(tmp_path: Path, synthetic_site: Site) -> None:
+    """The reason the metric could not be computed is no longer swallowed by `except Exception`."""
+    far = tmp_path / "far.csv"
+    far.write_text(
+        GROUND_TRUTH_CSV.read_text(encoding="utf-8")
+        .replace("37.5", "10.5")
+        .replace("126.9", "20.9"),
+        encoding="utf-8",
+    )
+    site = synthetic_site.model_copy(update={"metrics": ["gt_rmse"], "ground_truth": str(far)})
+    res = run_site(site, None, runner=injected_fake_runner, repeats=1)
+    assert res.metrics["gt_rmse"] is None and res.ok
+    f = next(x for x in res.findings if x.rule_id == "BENCH-006")
+    assert f.params["metric"] == "gt_rmse" and "n_sites=0" in f.params["reason"]
+    assert t("bench.BENCH-006.cause", "en", **f.params).endswith("n_sites=0 n_points=0).")
+    # no ground truth at all -> no reason, just the plain INFO
+    plain = run_site(
+        synthetic_site.model_copy(update={"metrics": ["gt_rmse"]}),
+        None,
+        runner=injected_fake_runner,
+        repeats=1,
+    )
+    assert next(x for x in plain.findings if x.rule_id == "BENCH-006").params["reason"] == "-"
 
 
 def test_compare_with_baseline_adds_report_and_regression_findings(

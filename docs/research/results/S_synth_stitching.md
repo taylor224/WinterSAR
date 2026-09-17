@@ -10,9 +10,11 @@ R-06, R-07, PERF-04
 - 데이터: `{"atmosphere_std_rad": 1.0, "coherence_base": 0.8, "cols": 3, "max_offset_cycles": 3, "noise_std_rad": 0.3, "overlap": 16, "ref_noise_std_rad": 0.5, "rows": 3, "shape": [144, 144]}`
 - factor: 3
 
-| 방법 | offsets_exact | n_wrong_offsets | seam_boundaries_with_jump | seam_jump_pixels | unwrap_error_fraction | wall_s | peak_rss_mb |
-|---|---|---|---|---|---|---|---|
-| coarse_ref | 1.000 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0017 ± 0.0023 (n=5) | 58.638 ± 0.6778 (n=5) |
-| coarse_ref(median) | 1.000 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0010 ± 0.0001 (n=5) | 58.887 ± 0.1212 (n=5) |
-| overlap_consensus | 1.000 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0011 ± 0.0001 (n=5) | 58.920 ± 0.0483 (n=5) |
-| overlap_consensus(median) | 1.000 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0011 ± 0.0005 (n=5) | 58.933 ± 0.0284 (n=5) |
+실행 시간·메모리(wall_s, peak_rss_mb)는 결과 JSON에만 둔다: 규칙 11.8은 bench_result.json이 있을 때만 성능 수치를 본문·표에 쓸 수 있게 한다.
+
+| 방법 | offsets_exact | n_wrong_offsets | seam_boundaries_with_jump | seam_jump_pixels | unwrap_error_fraction |
+|---|---|---|---|---|---|
+| coarse_ref | 1.000 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) |
+| coarse_ref(median) | 1.000 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) |
+| overlap_consensus | 1.000 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) |
+| overlap_consensus(median) | 1.000 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) |

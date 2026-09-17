@@ -23,6 +23,7 @@ They are kept in a local registry, not in :mod:`wintersar.engines.base`, so that
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Protocol, cast, runtime_checkable
 
@@ -42,8 +43,10 @@ __all__ = [
     "call_unwrapper",
     "coerce_result",
     "get_unwrapper",
+    "is_stack_only",
     "is_test_backend",
     "list_local_backends",
+    "two_d_backends",
     "wrapped_phase",
 ]
 
@@ -207,13 +210,40 @@ def require_available(unwrapper: Unwrapper) -> None:
         check()
 
 
-def available_backends(candidates: tuple[str, ...] = ENGINE_BACKENDS) -> list[str]:
-    """Engine backends that are registered, installed and implement ``unwrap``."""
+def is_stack_only(name: str) -> bool:
+    """Whether ``name`` only unwraps a whole 3-D stack (spurt sets ``stack_only = True``).
+
+    Such an engine cannot serve the per-interferogram unwrap plan: its ``unwrap()`` raises
+    ``StackOnlyEngineError`` (source: ``engines/_unwrap_common.UnwrapEngineBase.stack_only``,
+    ``engines/spurt.py``). Unknown names are not stack-only.
+    """
+    try:
+        eng = get_unwrapper(name)
+    except (KeyError, TypeError):
+        return False
+    return bool(getattr(eng, "stack_only", False))
+
+
+def two_d_backends(names: Iterable[str]) -> list[str]:
+    """``names`` without the stack-only engines (order preserved)."""
+    return [n for n in names if not is_stack_only(n)]
+
+
+def available_backends(
+    candidates: tuple[str, ...] = ENGINE_BACKENDS, *, include_stack_only: bool = False
+) -> list[str]:
+    """Engine backends that are registered, installed and implement ``unwrap``.
+
+    Stack-only engines are left out unless ``include_stack_only``: the scheduler plans one
+    interferogram at a time, so offering it ``spurt`` would plan a run that fails per pair.
+    """
     out: list[str] = []
     for name in candidates:
         try:
             eng = get_unwrapper(name)
         except (KeyError, TypeError):
+            continue
+        if not include_stack_only and bool(getattr(eng, "stack_only", False)):
             continue
         is_available = getattr(eng, "is_available", None)
         try:

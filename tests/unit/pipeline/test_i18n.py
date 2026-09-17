@@ -43,3 +43,28 @@ def test_diagnostic_keys_have_cause_and_fix() -> None:
     for rid in ids:
         assert f"pipeline.{rid}.cause" in ko
         assert f"pipeline.{rid}.fix" in ko
+
+
+def test_message_key_variants_exist_in_both_languages() -> None:
+    """Keys the regex above cannot see: they are built at runtime, not written literally.
+
+    ``PIPELINE-001.fix_auto`` is chosen by an f-string in the executor, and
+    ``PIPELINE-002.cause_no_cache``/``fix_no_cache`` replace the generic "needs input"
+    text for the ``--from`` case.
+    """
+    ko, en = _keys("ko"), _keys("en")
+    for key in (
+        "pipeline.PIPELINE-001.fix_auto",
+        "pipeline.PIPELINE-002.cause_no_cache",
+        "pipeline.PIPELINE-002.fix_no_cache",
+    ):
+        assert key in ko and key in en, key
+
+
+def test_pipeline_001_fix_uses_the_kb_engine_placeholder() -> None:
+    """The KB rejects registry names such as 'fake' or 'isce2_topsstack' with exit 2."""
+    for lang in ("ko", "en"):
+        catalog = load_catalog(lang)
+        assert "{kb_engine}" in catalog["pipeline.PIPELINE-001.fix"]
+        assert "{engine}" not in catalog["pipeline.PIPELINE-001.fix"]
+        assert "--engine" not in catalog["pipeline.PIPELINE-001.fix_auto"]
