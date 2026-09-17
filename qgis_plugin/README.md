@@ -18,7 +18,7 @@ JSON 봉투 `{"ok","command","data","findings"}` 를 파싱합니다.
 1. 툴킷 환경 준비 (예: uv)
 
    ```bash
-   git clone https://github.com/wintersar/wintersar && cd wintersar
+   git clone https://github.com/taylor224/WinterSAR && cd wintersar
    uv sync --extra dev
    .venv/bin/wintersar --json version        # {"ok": true, "command": "version", ...}
    ```

@@ -21,3 +21,6 @@ bench_result*.json
 
 # diagnose log fixtures (tests/fixtures/logs, plan §8) must be versioned despite *.log
 !tests/fixtures/logs/**/*.log
+
+# Claude Code session state (never commit)
+.claude/

@@ -83,7 +83,7 @@
       "peak_rss_mb"
     ],
     "protocol": null,
-    "path": "~/Documents/develop/winterSARS/src/wintersar/research/experiments/S_synth_stitching.yaml",
+    "path": "src/wintersar/research/experiments/S_synth_stitching.yaml",
     "ids": [
       "R-06",
       "R-07",
@@ -94,8 +94,8 @@
     "wintersar": "0.1.0.dev0",
     "python": "3.11.7",
     "numpy": "2.4.6",
-    "os": "Darwin 25.4.0 (arm64)",
-    "timestamp": "2026-09-16T14:11:18+00:00"
+    "os": "darwin-arm64",
+    "timestamp": "2026-09-17T00:26:00+00:00"
   },
   "rows": [
     {
@@ -107,9 +107,9 @@
       "seam_boundaries_with_jump": 0.0,
       "seam_jump_pixels": 0.0,
       "unwrap_error_fraction": 0.0,
-      "wall_s": 0.005722292000427842,
-      "cpu_s": 0.005723000000000034,
-      "peak_rss_mb": 57.212928
+      "wall_s": 0.005912334017921239,
+      "cpu_s": 0.005902999999999992,
+      "peak_rss_mb": 57.42592
     },
     {
       "method": "coarse_ref(median)",
@@ -120,37 +120,37 @@
       "seam_boundaries_with_jump": 0.0,
       "seam_jump_pixels": 0.0,
       "unwrap_error_fraction": 0.0,
-      "wall_s": 0.001271166984224692,
-      "cpu_s": 0.0012719999999999954,
-      "peak_rss_mb": 58.441728
-    },
-    {
-      "method": "overlap_consensus",
-      "seed": 0,
-      "status": "ok",
-      "offsets_exact": 1.0,
-      "n_wrong_offsets": 0,
-      "seam_boundaries_with_jump": 0.0,
-      "seam_jump_pixels": 0.0,
-      "unwrap_error_fraction": 0.0,
-      "wall_s": 0.0012824170116800815,
-      "cpu_s": 0.0012829999999999786,
-      "peak_rss_mb": 58.621952
-    },
-    {
-      "method": "overlap_consensus(median)",
-      "seed": 0,
-      "status": "ok",
-      "offsets_exact": 1.0,
-      "n_wrong_offsets": 0,
-      "seam_boundaries_with_jump": 0.0,
-      "seam_jump_pixels": 0.0,
-      "unwrap_error_fraction": 0.0,
-      "wall_s": 0.0010661249980330467,
-      "cpu_s": 0.0010669999999999846,
+      "wall_s": 0.0013060829951427877,
+      "cpu_s": 0.0013050000000000006,
       "peak_rss_mb": 58.671104
     },
     {
+      "method": "overlap_consensus",
+      "seed": 0,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.0011883749975822866,
+      "cpu_s": 0.0011880000000000224,
+      "peak_rss_mb": 58.834944
+    },
+    {
+      "method": "overlap_consensus(median)",
+      "seed": 0,
+      "status": "ok",
+      "offsets_exact": 1.0,
+      "n_wrong_offsets": 0,
+      "seam_boundaries_with_jump": 0.0,
+      "seam_jump_pixels": 0.0,
+      "unwrap_error_fraction": 0.0,
+      "wall_s": 0.0020157499820925295,
+      "cpu_s": 0.0011160000000000059,
+      "peak_rss_mb": 58.884096
+    },
+    {
       "method": "coarse_ref",
       "seed": 1,
       "status": "ok",
@@ -159,9 +159,9 @@
       "seam_boundaries_with_jump": 0.0,
       "seam_jump_pixels": 0.0,
       "unwrap_error_fraction": 0.0,
-      "wall_s": 0.0008201249875128269,
-      "cpu_s": 0.0008199999999999874,
-      "peak_rss_mb": 58.687488
+      "wall_s": 0.0006827079923823476,
+      "cpu_s": 0.0006820000000000159,
+      "peak_rss_mb": 58.933248
     },
     {
       "method": "coarse_ref(median)",
@@ -172,9 +172,9 @@
       "seam_boundaries_with_jump": 0.0,
       "seam_jump_pixels": 0.0,
       "unwrap_error_fraction": 0.0,
-      "wall_s": 0.0010791660170070827,
-      "cpu_s": 0.0010799999999999699,
-      "peak_rss_mb": 58.687488
+      "wall_s": 0.0010085840185638517,
+      "cpu_s": 0.0010089999999999821,
+      "peak_rss_mb": 58.933248
     },
     {
       "method": "overlap_consensus",
@@ -185,9 +185,9 @@
       "seam_boundaries_with_jump": 0.0,
       "seam_jump_pixels": 0.0,
       "unwrap_error_fraction": 0.0,
-      "wall_s": 0.001108333992306143,
-      "cpu_s": 0.0011090000000000266,
-      "peak_rss_mb": 58.687488
+      "wall_s": 0.0010317919950466603,
+      "cpu_s": 0.0010310000000000041,
+      "peak_rss_mb": 58.933248
     },
     {
       "method": "overlap_consensus(median)",
@@ -198,9 +198,9 @@
       "seam_boundaries_with_jump": 0.0,
       "seam_jump_pixels": 0.0,
       "unwrap_error_fraction": 0.0,
-      "wall_s": 0.0009225420071743429,
-      "cpu_s": 0.0009230000000000071,
-      "peak_rss_mb": 58.687488
+      "wall_s": 0.0009150000114459544,
+      "cpu_s": 0.0009149999999999991,
+      "peak_rss_mb": 58.933248
     },
     {
       "method": "coarse_ref",
@@ -211,9 +211,9 @@
       "seam_boundaries_with_jump": 0.0,
       "seam_jump_pixels": 0.0,
       "unwrap_error_fraction": 0.0,
-      "wall_s": 0.000666000007186085,
-      "cpu_s": 0.0006649999999999712,
-      "peak_rss_mb": 58.703872
+      "wall_s": 0.0006817500106990337,
+      "cpu_s": 0.0006809999999999872,
+      "peak_rss_mb": 58.933248
     },
     {
       "method": "coarse_ref(median)",
@@ -224,9 +224,9 @@
       "seam_boundaries_with_jump": 0.0,
       "seam_jump_pixels": 0.0,
       "unwrap_error_fraction": 0.0,
-      "wall_s": 0.0009858330013230443,
-      "cpu_s": 0.0009859999999999869,
-      "peak_rss_mb": 58.703872
+      "wall_s": 0.0009843329899013042,
+      "cpu_s": 0.0009839999999999849,
+      "peak_rss_mb": 58.933248
     },
     {
       "method": "overlap_consensus",
@@ -237,9 +237,9 @@
       "seam_boundaries_with_jump": 0.0,
       "seam_jump_pixels": 0.0,
       "unwrap_error_fraction": 0.0,
-      "wall_s": 0.0010262910218443722,
-      "cpu_s": 0.0010259999999999714,
-      "peak_rss_mb": 58.703872
+      "wall_s": 0.0010295420070178807,
+      "cpu_s": 0.0010300000000000309,
+      "peak_rss_mb": 58.933248
     },
     {
       "method": "overlap_consensus(median)",
@@ -250,9 +250,9 @@
       "seam_boundaries_with_jump": 0.0,
       "seam_jump_pixels": 0.0,
       "unwrap_error_fraction": 0.0,
-      "wall_s": 0.0008992920047603548,
-      "cpu_s": 0.0008999999999999564,
-      "peak_rss_mb": 58.73664
+      "wall_s": 0.0009025829785969108,
+      "cpu_s": 0.0009029999999999871,
+      "peak_rss_mb": 58.949632
     },
     {
       "method": "coarse_ref",
@@ -263,9 +263,9 @@
       "seam_boundaries_with_jump": 0.0,
       "seam_jump_pixels": 0.0,
       "unwrap_error_fraction": 0.0,
-      "wall_s": 0.0008406249980907887,
-      "cpu_s": 0.0008409999999999807,
-      "peak_rss_mb": 58.73664
+      "wall_s": 0.0006648749986197799,
+      "cpu_s": 0.0006639999999999979,
+      "peak_rss_mb": 58.949632
     },
     {
       "method": "coarse_ref(median)",
@@ -276,9 +276,9 @@
       "seam_boundaries_with_jump": 0.0,
       "seam_jump_pixels": 0.0,
       "unwrap_error_fraction": 0.0,
-      "wall_s": 0.0010171250032726675,
-      "cpu_s": 0.0010169999999999901,
-      "peak_rss_mb": 58.73664
+      "wall_s": 0.000981249992037192,
+      "cpu_s": 0.0009799999999999809,
+      "peak_rss_mb": 58.949632
     },
     {
       "method": "overlap_consensus",
@@ -289,9 +289,9 @@
       "seam_boundaries_with_jump": 0.0,
       "seam_jump_pixels": 0.0,
       "unwrap_error_fraction": 0.0,
-      "wall_s": 0.0010630000033415854,
-      "cpu_s": 0.0010630000000000361,
-      "peak_rss_mb": 58.73664
+      "wall_s": 0.0010023340000770986,
+      "cpu_s": 0.0010020000000000029,
+      "peak_rss_mb": 58.949632
     },
     {
       "method": "overlap_consensus(median)",
@@ -302,9 +302,9 @@
       "seam_boundaries_with_jump": 0.0,
       "seam_jump_pixels": 0.0,
       "unwrap_error_fraction": 0.0,
-      "wall_s": 0.0009080830204766244,
-      "cpu_s": 0.0009080000000000199,
-      "peak_rss_mb": 58.73664
+      "wall_s": 0.0008904580026865005,
+      "cpu_s": 0.0008900000000000019,
+      "peak_rss_mb": 58.949632
     },
     {
       "method": "coarse_ref",
@@ -315,9 +315,9 @@
       "seam_boundaries_with_jump": 0.0,
       "seam_jump_pixels": 0.0,
       "unwrap_error_fraction": 0.0,
-      "wall_s": 0.0006831249920651317,
-      "cpu_s": 0.0006840000000000179,
-      "peak_rss_mb": 58.73664
+      "wall_s": 0.0006651669973507524,
+      "cpu_s": 0.0006639999999999979,
+      "peak_rss_mb": 58.949632
     },
     {
       "method": "coarse_ref(median)",
@@ -328,9 +328,9 @@
       "seam_boundaries_with_jump": 0.0,
       "seam_jump_pixels": 0.0,
       "unwrap_error_fraction": 0.0,
-      "wall_s": 0.0009714170009829104,
-      "cpu_s": 0.0009709999999999996,
-      "peak_rss_mb": 58.73664
+      "wall_s": 0.0009663340169936419,
+      "cpu_s": 0.0009669999999999956,
+      "peak_rss_mb": 58.949632
     },
     {
       "method": "overlap_consensus",
@@ -341,9 +341,9 @@
       "seam_boundaries_with_jump": 0.0,
       "seam_jump_pixels": 0.0,
       "unwrap_error_fraction": 0.0,
-      "wall_s": 0.0010195829963777214,
-      "cpu_s": 0.0010189999999999921,
-      "peak_rss_mb": 58.73664
+      "wall_s": 0.0010021250054705888,
+      "cpu_s": 0.0010020000000000029,
+      "peak_rss_mb": 58.949632
     },
     {
       "method": "overlap_consensus(median)",
@@ -354,9 +354,9 @@
       "seam_boundaries_with_jump": 0.0,
       "seam_jump_pixels": 0.0,
       "unwrap_error_fraction": 0.0,
-      "wall_s": 0.0008974999946076423,
-      "cpu_s": 0.0008969999999999811,
-      "peak_rss_mb": 58.73664
+      "wall_s": 0.0008859170193318278,
+      "cpu_s": 0.0008859999999999979,
+      "peak_rss_mb": 58.949632
     }
   ],
   "summary": {
@@ -397,17 +397,17 @@
         "n": 5.0
       },
       "wall_s": {
-        "mean": 0.001746433397056535,
-        "std": 0.0022239575554235647,
-        "min": 0.000666000007186085,
-        "max": 0.005722292000427842,
+        "mean": 0.0017213668033946306,
+        "std": 0.002342837721569112,
+        "min": 0.0006648749986197799,
+        "max": 0.005912334017921239,
         "n": 5.0
       },
       "peak_rss_mb": {
-        "mean": 58.4155136,
-        "std": 0.6726026122435159,
-        "min": 57.212928,
-        "max": 58.73664,
+        "mean": 58.638336,
+        "std": 0.6778106541977644,
+        "min": 57.42592,
+        "max": 58.949632,
         "n": 5.0
       }
     },
@@ -448,17 +448,17 @@
         "n": 5.0
       },
       "wall_s": {
-        "mean": 0.0010649416013620793,
-        "std": 0.00012249764392258388,
-        "min": 0.0009714170009829104,
-        "max": 0.001271166984224692,
+        "mean": 0.0010493168025277554,
+        "std": 0.00014433482484166684,
+        "min": 0.0009663340169936419,
+        "max": 0.0013060829951427877,
         "n": 5.0
       },
       "peak_rss_mb": {
-        "mean": 58.6612736,
-        "std": 0.12456150832741353,
-        "min": 58.441728,
-        "max": 58.73664,
+        "mean": 58.8873728,
+        "std": 0.1211751601740227,
+        "min": 58.671104,
+        "max": 58.949632,
         "n": 5.0
       }
     },
@@ -499,17 +499,17 @@
         "n": 5.0
       },
       "wall_s": {
-        "mean": 0.0010999250051099807,
-        "std": 0.00010795172664429372,
-        "min": 0.0010195829963777214,
-        "max": 0.0012824170116800815,
+        "mean": 0.001050833601038903,
+        "std": 7.819573049968264e-05,
+        "min": 0.0010021250054705888,
+        "max": 0.0011883749975822866,
         "n": 5.0
       },
       "peak_rss_mb": {
-        "mean": 58.69731839999999,
-        "std": 0.0472018462011818,
-        "min": 58.621952,
-        "max": 58.73664,
+        "mean": 58.9201408,
+        "std": 0.04832585712845676,
+        "min": 58.834944,
+        "max": 58.949632,
         "n": 5.0
       }
     },
@@ -550,22 +550,22 @@
         "n": 5.0
       },
       "wall_s": {
-        "mean": 0.0009387084050104022,
-        "std": 7.191321240030924e-05,
-        "min": 0.0008974999946076423,
-        "max": 0.0010661249980330467,
+        "mean": 0.0011219415988307445,
+        "std": 0.0004997821295976843,
+        "min": 0.0008859170193318278,
+        "max": 0.0020157499820925295,
         "n": 5.0
       },
       "peak_rss_mb": {
-        "mean": 58.7137024,
-        "std": 0.031938295709070426,
-        "min": 58.671104,
-        "max": 58.73664,
+        "mean": 58.933248000000006,
+        "std": 0.028377920431209177,
+        "min": 58.884096,
+        "max": 58.949632,
         "n": 5.0
       }
     }
   },
-  "json_path": "/private/tmp/claude-501/-Users-taylor-Documents-develop-winterSARS/7f6e0840-b238-4f4e-8582-8e87442709ba/scratchpad/results/S_synth_stitching.json",
-  "md_path": "/private/tmp/claude-501/-Users-taylor-Documents-develop-winterSARS/7f6e0840-b238-4f4e-8582-8e87442709ba/scratchpad/results/S_synth_stitching.md",
+  "json_path": "S_synth_stitching.json",
+  "md_path": "S_synth_stitching.md",
   "docs_md_path": null
 }

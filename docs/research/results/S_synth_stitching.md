@@ -4,15 +4,15 @@
 
 R-06, R-07, PERF-04
 
-Generated from `S_synth_stitching.json` (tables only — interpretation belongs in ADRs / research notes, rule 11.8)
+생성 원본: `S_synth_stitching.json` (표만 기록 — 수치 해석은 ADR·연구 노트에서, 규칙 11.8)
 
-- Seeds: 0, 1, 2, 3, 4
-- Data: `{"atmosphere_std_rad": 1.0, "coherence_base": 0.8, "cols": 3, "max_offset_cycles": 3, "noise_std_rad": 0.3, "overlap": 16, "ref_noise_std_rad": 0.5, "rows": 3, "shape": [144, 144]}`
+- 시드: 0, 1, 2, 3, 4
+- 데이터: `{"atmosphere_std_rad": 1.0, "coherence_base": 0.8, "cols": 3, "max_offset_cycles": 3, "noise_std_rad": 0.3, "overlap": 16, "ref_noise_std_rad": 0.5, "rows": 3, "shape": [144, 144]}`
 - factor: 3
 
-| method | offsets_exact | n_wrong_offsets | seam_boundaries_with_jump | seam_jump_pixels | unwrap_error_fraction | wall_s | peak_rss_mb |
+| 방법 | offsets_exact | n_wrong_offsets | seam_boundaries_with_jump | seam_jump_pixels | unwrap_error_fraction | wall_s | peak_rss_mb |
 |---|---|---|---|---|---|---|---|
-| coarse_ref | 1.000 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0017 ± 0.0022 (n=5) | 58.416 ± 0.6726 (n=5) |
-| coarse_ref(median) | 1.000 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0011 ± 0.0001 (n=5) | 58.661 ± 0.1246 (n=5) |
-| overlap_consensus | 1.000 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0011 ± 0.0001 (n=5) | 58.697 ± 0.0472 (n=5) |
-| overlap_consensus(median) | 1.000 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0009 ± 0.0001 (n=5) | 58.714 ± 0.0319 (n=5) |
+| coarse_ref | 1.000 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0017 ± 0.0023 (n=5) | 58.638 ± 0.6778 (n=5) |
+| coarse_ref(median) | 1.000 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0010 ± 0.0001 (n=5) | 58.887 ± 0.1212 (n=5) |
+| overlap_consensus | 1.000 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0011 ± 0.0001 (n=5) | 58.920 ± 0.0483 (n=5) |
+| overlap_consensus(median) | 1.000 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0 ± 0.0 (n=5) | 0.0011 ± 0.0005 (n=5) | 58.933 ± 0.0284 (n=5) |

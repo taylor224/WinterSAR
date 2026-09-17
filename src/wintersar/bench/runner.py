@@ -361,7 +361,8 @@ def machine_info() -> dict[str, Any]:
         "python": spec.python,
         "os": spec.os,
         "machine": platform.machine(),
-        "node": platform.node(),
+        # Deliberately NOT platform.node(): bench_result.json is meant to be shared
+        # (plan 6.3) and the hostname identifies the operator, not the hardware.
     }
 
 

@@ -148,9 +148,10 @@ class ExperimentResult:
             "environment": self.environment,
             "rows": self.rows,
             "summary": self.summary,
-            "json_path": str(self.json_path) if self.json_path else None,
-            "md_path": str(self.md_path) if self.md_path else None,
-            "docs_md_path": str(self.docs_md_path) if self.docs_md_path else None,
+            # file names only: committed results must not carry the author's directory layout
+            "json_path": self.json_path.name if self.json_path else None,
+            "md_path": self.md_path.name if self.md_path else None,
+            "docs_md_path": self.docs_md_path.name if self.docs_md_path else None,
         }
         return dict(mask_mapping(d))
 
@@ -538,7 +539,8 @@ def _environment() -> dict[str, Any]:
         "wintersar": __version__,
         "python": platform.python_version(),
         "numpy": np.__version__,
-        "os": f"{platform.system()} {platform.release()} ({platform.machine()})",
+        # platform family + architecture only: the kernel release fingerprints the machine
+        "os": f"{platform.system().lower()}-{platform.machine()}",
         "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
     }
 

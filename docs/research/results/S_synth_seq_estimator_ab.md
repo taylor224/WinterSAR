@@ -4,13 +4,13 @@ A/B of the sequential estimator path (dolphin: mini-stack phase linking, compres
 
 R-15, PERF-05, PERF-06
 
-Generated from `S_synth_seq_estimator_ab.json` (tables only — interpretation belongs in ADRs / research notes, rule 11.8)
+생성 원본: `S_synth_seq_estimator_ab.json` (표만 기록 — 수치 해석은 ADR·연구 노트에서, 규칙 11.8)
 
-Status: skipped — required packages dolphin, mintpy are not installed
+상태: 건너뜀 — 필요 패키지 dolphin, mintpy 가 설치되어 있지 않습니다
 
-Missing packages: dolphin, mintpy
+미설치 패키지: dolphin, mintpy
 
-## Protocol
+## 프로토콜
 
 1. Inputs: identical coregistered SLC stack (S site, 2 bursts x 30 days) for A and B; same
    DEM, orbits, water/layover masks (wintersar select geometry), same reference point.

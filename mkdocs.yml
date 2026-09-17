@@ -1,6 +1,6 @@
 site_name: wintersar
 site_description: Open-source Sentinel-1 InSAR (SBAS) toolkit — selection, precheck, pipeline, diagnosis, validation
-repo_url: https://github.com/wintersar/wintersar
+repo_url: https://github.com/taylor224/WinterSAR
 docs_dir: docs
 theme:
   name: material

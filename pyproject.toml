@@ -76,8 +76,8 @@ docs = ["mkdocs>=1.6", "mkdocs-material>=9.5"]
 wintersar = "wintersar.cli:main"
 
 [project.urls]
-Documentation = "https://github.com/wintersar/wintersar"
-Source = "https://github.com/wintersar/wintersar"
+Documentation = "https://github.com/taylor224/WinterSAR"
+Source = "https://github.com/taylor224/WinterSAR"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/wintersar"]

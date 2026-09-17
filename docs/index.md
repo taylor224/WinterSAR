@@ -19,7 +19,7 @@ DAG 노드, 메시지는 한국어/영어로 "원인 + 조치", 성능 주장은
 ## 설치
 
 ```bash
-git clone https://github.com/wintersar/wintersar && cd wintersar
+git clone https://github.com/taylor224/WinterSAR && cd wintersar
 uv sync --extra dev                 # Python 3.11 venv (.venv)
 uv run wintersar --help
 uv run wintersar check-install      # 엔진·인증·하드웨어 상태 (미설치 엔진은 ENV-001 Finding)
