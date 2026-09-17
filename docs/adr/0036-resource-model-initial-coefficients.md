@@ -48,7 +48,7 @@ disk_gb        = disk_bytes_per_pixel * pixels * n_pairs / 1e9
     20x4: 1–4쌍 1, 5–12쌍 5, 13–15쌍 10 · 10x2: 1–3쌍 1, 4–9쌍 5, 10–15쌍 10 ·
     5x1: 1쌍 1, 2쌍 5, 3쌍 10, 4쌍 15, 5쌍 20, 6쌍 25, 7쌍 30, 8쌍 35, 9쌍 40, 10쌍 45, 11쌍 90, 12쌍 95, 13쌍 100, 14쌍 105, 15쌍 110.
   - 표에 없는 looks/burst 수는 `credits = None` + `notes["credits_unknown"] = True`.
-  - 크레딧 리셋 시점은 문서에 없음 → open question #23.
+  - 크레딧 리셋 시점은 문서에 없음 → open question #30.
 - 알 수 없는 엔진은 `default` 표로, 알 수 없는 단계는 `notes["model"] == "none"` 으로 응답한다.
 
 ## 결과 (Consequences)

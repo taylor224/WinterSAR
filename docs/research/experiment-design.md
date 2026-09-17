@@ -15,7 +15,7 @@
 
 | 요소 | 구현 | 파라미터 |
 |---|---|---|
-| 변형 | 가우시안 침하 그릇, 선형 램프, 여러 변형원의 합(`deformation_sources`); Okada는 훅만(#60) | `amplitude_m`, `sigma_px`, `ramp` |
+| 변형 | 가우시안 침하 그릇, 선형 램프, 여러 변형원의 합(`deformation_sources`); Okada는 훅만(#50) | `amplitude_m`, `sigma_px`, `ramp` |
 | 대기 | 파워법칙 스펙트럼(β = 8/3) 난류 위상(`turbulent_atmosphere`) | `std_rad` |
 | DEM 오차 | 높이 오차 `dh` × 높이-위상 계수 `-4π/λ · B⊥/(R sin θ)` → **B⊥에 비례**(`dem_error_phase`) | `std_m`, `bperp_m` |
 | 잡음 | `noise_model: crlb`(기본) 코히어런스 기반 원형 가우시안, 표준편차 = 크라메르-라오 **하한** `sqrt((1−γ²)/(2Lγ²))` — `looks=1`에서 실제보다 최대 ~2.2배 낙관적; `noise_model: exact` 는 실제 위상 분포(`angle(mean_L(s1·conj(s2)))`)를 표본 추출(`_phase_noise`) | `coherence_base`, `looks`, `noise_model` |
@@ -32,7 +32,7 @@
 
 ## 3. 방법
 
-- 대표위상(`repr_phase.METHODS`): `ml`(tophu 기준선, 저역통과 없음 — #62), `coh_weighted`(p),
+- 대표위상(`repr_phase.METHODS`): `ml`(tophu 기준선, 저역통과 없음 — #52), `coh_weighted`(p),
   `shp`(KS 또는 t 검정, 창 ≤ 15, `centre`/`pixelwise` 모드), `phase_link`(EVD/EMI, 순차 미니스택),
   `filtered`(Goldstein α, 창, 오버랩). 세부와 참고문헌: ADR-0061, ADR-0062.
 - 스티칭(`stitching.METHODS`): `coarse_ref`(tophu `round(mean(Δ)/2π)`), `overlap_consensus`
@@ -71,6 +71,6 @@
 
 - [ ] 합성 3종의 파라미터 범위(변형 진폭, 대기 std, 코히어런스)가 현장 조건을 대표하는가
 - [ ] 대표위상 품질 지표로 저해상도 진 위상 RMSE가 적절한가(대안: 언래핑 후 오류율만)
-- [ ] SHP 검정(KS, α = 0.05)과 창 기본값(#61)
+- [ ] SHP 검정(KS, α = 0.05)과 창 기본값(#51)
 - [ ] 스티칭 판정 규칙의 허용 오차(단차 0개 요구 vs 비율)
 - [ ] R-15 A/B의 미니스택 크기(10)·EMI 선택·동일 언래퍼 조건(ADR-0064)

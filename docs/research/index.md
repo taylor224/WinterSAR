@@ -86,5 +86,5 @@ wintersar research experiment S_synth_repr_phase --out results/ --docs-dir docs/
 
 ## 미확정 사항
 
-`docs/open-questions.md` #60(Okada 변형원), #61(SHP 기본값), #62(tophu 저역통과 기준선),
-#63(dolphin·MintPy 설치 정책), #64(연결성분 단위 coarse_ref).
+`docs/open-questions.md` #50(Okada 변형원), #51(SHP 기본값), #52(tophu 저역통과 기준선),
+#53(dolphin·MintPy 설치 정책), #54(연결성분 단위 coarse_ref).

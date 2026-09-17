@@ -81,7 +81,10 @@ subprocess로 호출한다(규칙 11.2).
   `params["spurt"][...]`만 전달하고 나머지는 spurt 기본값에 맡긴다. `_cores`는 `--t-workers`.
   **`unwrap.coherence_threshold`(공간 코히어런스)는 `--coh`(시간 코히어런스)에 매핑하지 않는다.**
 - stdout/stderr는 `log_dir/spurt.log`, `--log-file`은 `log_dir/spurt-emcf.log`. 실패 시
-  `EngineRunError`(`UNW-003`). 산출물: `unw_stack`(dir) + `unw_stats`(json).
+  `EngineRunError`(`UNW-003`). 산출물은 3개다(`engines/spurt.py` `run()` 확인): `unw`(dir,
+  snaphu/tophu 와 공유하는 `StageSpec("unwrap")` 출력 이름)·`unw_stack`(dir, 같은 `<out>/emcf`
+  디렉터리를 가리키는 spurt 전용 별칭)·`unw_stats`(json, `<out>/stats.json`). 앞의 두 dir 아티팩트는
+  `meta["layout"] = "spurt_stack"`(쌍별 `*.unw.tif`, snaphu/tophu 의 `unw.npz` 아님)를 갖는다.
 - 검증: 가짜 `spurt-emcf` 스크립트(동일 argparse)로 명령 생성·실행·로그·실패 경로 테스트
   (`tests/unit/engines_unwrap/test_spurt.py`).
 

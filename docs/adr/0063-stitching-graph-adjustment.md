@@ -31,7 +31,7 @@
 - 입력 `tiles = [(unw_tile, slice_y, slice_x)]`(익스텐트 좌표, `tile_grid` 배치), 출력
   `(merged, offsets_cycles, report)`; `offsets_cycles[i]`는 타일 `i`에서 **뺀** 사이클 수.
 - **coarse_ref**: `k_i = round(stat(unw_tile − upsample_nearest(lowres_ref)) / 2π)`, `stat` = mean
-  (tophu) 또는 median. 타일 단위(tophu는 연결성분 단위 — 오픈 항목 #64).
+  (tophu) 또는 median. 타일 단위(tophu는 연결성분 단위 — 오픈 항목 #54).
 - **overlap_consensus**: 인접 쌍(`unwrap.tiling.adjacent_pairs`)마다 익스텐트 교집합에서
   `d = round((A − B)/2π)`; 가중 최빈값(동률이면 |k| 작은 쪽) 또는 가중 중앙값, 가중치 = 코히어런스
   (`coh`) 또는 임의 품질 맵(`weights`). 간선 가중 `W_ab = Σw · 합의 비율`. 미지수 `o_i`,
@@ -49,5 +49,5 @@
 
 - 실행기(`unwrap.api`)와의 연결은 `merge_tiles` 입력 형식(타일별 배열·익스텐트)이 같으므로
   옵션 승격 시 어댑터만 필요하다(ADR-0060 판정 후).
-- 연결성분 단위 오프셋(#64)은 백엔드 conncomp 라스터를 받아야 한다.
+- 연결성분 단위 오프셋(#54)은 백엔드 conncomp 라스터를 받아야 한다.
 - 오버랩이 없는 타일(오버랩 0)은 `overlap_consensus`로 결정할 수 없다 — `coarse_ref` 사용.

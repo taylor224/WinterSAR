@@ -39,8 +39,9 @@ mkdocs-material 의 다국어 플러그인(`mkdocs-static-i18n` 등)을 넣으�
 - **수치 금지**: 문서에는 `bench_result.json` 이 없는 성능 수치·시간 예상을 쓰지 않는다(규칙 11.8).
   플랜의 "기대 효과"는 가설로만 언급한다.
 - **명령은 트리에서**: 튜토리얼의 명령줄은 `src/wintersar/cli.py` 와 각 모듈 `cli.py` 에 실제로 있는
-  옵션만 쓴다. 아직 없는 명령(`validate`, `refpoint`, `sweep`, `bench`, `research`)은 "플랜 §4.5, 구현 예정"
-  으로 표시한다.
+  옵션만 쓴다. 이 ADR 작성 시점에 없던 `validate`·`refpoint`·`sweep`·`bench`·`research` 는 모두
+  구현됐다(2026-09-17 `COLUMNS=200 .venv/bin/wintersar --help` 확인 — `closure` 도 함께 있다).
+  앞으로 트리에 없는 명령을 문서에 쓸 때만 "플랜 §4.5, 구현 예정" 으로 표시한다.
 - **사용자 문구의 단일 원본**은 계속 `src/wintersar/i18n/{ko,en}{,/<module>}.yaml` 이다. 문서는 문구를
   복사하지 않고 ID(`SEL-01`, `KB-SNAPHU-001`)로 참조한다. QGIS 플러그인 문구는 `i18n/{ko,en}/qgis.yaml` 에
   두고 `build_zip.py` 가 JSON 으로 평탄화해 동봉한다(ADR-0070).
@@ -52,7 +53,7 @@ mkdocs-material 의 다국어 플러그인(`mkdocs-static-i18n` 등)을 넣으�
 
 - 영어 독자에게는 요약만 제공되므로 v0.1 릴리스 노트에 이를 명시한다. 완전한 영어판이 필요해지면
   `mkdocs-static-i18n` 도입 여부를 별도 ADR 로 결정한다(의존성 정책 검증 포함).
-- `mkdocs.yml` 은 공유 파일이라 이 ADR 에서 수정하지 않는다. 현재 nav 가 가리키는
-  `plan/wintersar_implementation_plan.md` 는 저장소 루트의 플랜을 `docs/plan/` 으로 복사해야 빌드된다
-  (통합자 작업, open-questions).
+- `mkdocs.yml` 은 공유 파일이라 이 ADR 에서 수정하지 않는다. nav 가 가리키는
+  `plan/wintersar_implementation_plan.md` 와 `research/index.md` 는 2026-09-17 기준 `docs/` 아래에
+  실재하므로 복사·심볼릭 링크 작업이 필요 없다(open-questions #65 완료).
 - 개념 페이지 `concepts/geometry.md` 는 select/geometry 담당이 소유하며 `concepts/index.md` 에서 링크만 한다.

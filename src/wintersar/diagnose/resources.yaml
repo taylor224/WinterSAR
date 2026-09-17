@@ -74,7 +74,7 @@ hyp3_credits:
   source: "https://hyp3-docs.asf.alaska.edu/using/credits/"
   fetched: "2026-09-16"
   monthly_free_allotment: 8000
-  reset_timing: null            # not stated on the credits page -> docs/open-questions.md #23
+  reset_timing: null            # not stated on the credits page -> docs/open-questions.md #30
   looks_to_pixel_m: {"20x4": 80, "10x2": 40, "5x1": 20}
   insar:                        # Sentinel-1 SLC InSAR (one job = one pair)
     "20x4": 10

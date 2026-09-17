@@ -1,6 +1,6 @@
 # ADR-0064: R-15 순차 추정기(dolphin) vs 전통 SBAS(MintPy) A/B 프로토콜
 
-- 상태(Status): 제안 (실행은 dolphin·MintPy 설치 승인 후 — 오픈 항목 #63)
+- 상태(Status): 제안 (실행은 dolphin·MintPy 설치 승인 후 — 오픈 항목 #53)
 - 날짜(Date): 2026-09-16
 - 관련 ID: R-15, PERF-05, PERF-06, R-10, 규칙 11.2·11.8·11.10
 - 검증 출처(Sources):
@@ -54,7 +54,7 @@ reason: requires`(+ `RES-002` WARN, 결과 md에 프로토콜 본문 포함); �
 ## 결과 (Consequences)
 
 - dolphin(pip 설치 가능, 채택 기준 확인 필요)과 MintPy(GPL-3: **import 금지**, 서브프로세스
-  실행·h5py 읽기만)의 설치 정책 예외 승인이 선행된다(#63, ADR-0001).
+  실행·h5py 읽기만)의 설치 정책 예외 승인이 선행된다(#53, ADR-0001).
 - 실행 후 결과 표는 `docs/research/results/S_synth_seq_estimator_ab.md`에 채워지고, 채택/기각은
   이 ADR을 갱신(상태 변경)해 기록한다.
 - 합성 순차 추정기 비교(선택지 1)는 `S_synth_repr_phase`의 `phase_link(evd, sequential m=4)`

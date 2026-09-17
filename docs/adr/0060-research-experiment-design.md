@@ -37,14 +37,14 @@
 선택지 2. 구성 요소와 정의:
 
 - **합성 진값**(`synth.py`, Phase 0 API 유지): 변형원 합(`deformation_sources`; Okada는
-  `NotImplementedError` 훅, 오픈 항목 #60), DEM 오차 `dh` × `-4π/λ · B⊥/(R sin θ)`(**B⊥에 비례**,
+  `NotImplementedError` 훅, 오픈 항목 #50), DEM 오차 `dh` × `-4π/λ · B⊥/(R sin θ)`(**B⊥에 비례**,
   `R = H/cos θ`, `H = 693 km`, `θ = 39°` IW 명목값), 영역별 Rayleigh 진폭 스택(`shp_amplitude_stack`),
   능선 레이오버(`layover_mask_from_ridge`: ADR-0017 규약 "센서를 향한 사면 = 내리막이 센서 쪽",
   좌측 센서에서 `dz/dx > 0`, 경사 > 입사각), 타일 진값(`make_tiled_truth`: `tile_grid` 익스텐트 +
   정수 오프셋 주입, 타일 0 = 게이지 0), 공분산이 알려진 SLC 스택(`make_slc_stack`:
   `s = diag(e^{jφ})·chol(Γ)·w`, `w ~ CN(0, I)`; Ansari 2018 §II의 분산 산란체 모델).
 - **기준선**: 대표위상 `ml` = tophu `do_lowpass_filter=False` 경로의 블록 평균(잘라낸 뒤 비중첩
-  평균, `multilook` 검증 완료). tophu 기본값의 equiripple 저역통과는 재현하지 않았다(#62).
+  평균, `multilook` 검증 완료). tophu 기본값의 equiripple 저역통과는 재현하지 않았다(#52).
   스티칭 기준선 `coarse_ref` = tophu `round(mean(hires − lores)/2π)`(ADR-0063).
 - **지표**(`metrics.py`): 저해상도 진 위상(언래핑 진값의 블록 평균) 대비 `wrap` 차이의 RMS/MAE,
   언래핑 오류 픽셀 비율(`synth.unwrap_error_fraction`), 경계 단차(`unwrap.tiling.boundary_jumps`
@@ -63,4 +63,4 @@
   항목은 experiment-design.md §7 체크리스트.
 - 실데이터 사이트(`data.kind: site`)와 합성 (b)(c) 유형 YAML은 후속 작업이다(Phase 6 DoD).
 - 수치는 `docs/research/results/<name>.json`에만 근거를 두고, 문서 산문에는 쓰지 않는다.
-- 오픈 항목 #60(Okada), #62(tophu 저역통과 기준선).
+- 오픈 항목 #50(Okada), #52(tophu 저역통과 기준선).

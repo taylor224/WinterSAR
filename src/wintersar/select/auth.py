@@ -7,7 +7,7 @@ Two credential sources are supported, in this order of preference:
 2. An Earthdata *user token* in an environment variable (``EARTHDATA_TOKEN`` by default,
    configurable via ``data.credentials: env:VAR``). ``auth_with_token`` does **not** set the
    ``asf-urs`` cookie (see the docstring of ``ASFSession.auth_with_token``), so burst
-   downloads may still fail with token-only auth (open-questions #20, ADR-0013).
+   downloads may still fail with token-only auth (open-questions #26, ADR-0013).
 
 Searching CMR needs no credentials at all; a session is only required for downloads.
 :func:`find_credentials` is therefore side-effect free (no network) and is what the search

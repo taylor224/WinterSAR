@@ -55,5 +55,5 @@
 
 ## 결과 (Consequences)
 
-- open-questions #5는 본 ADR로 "완료". 실데이터에서 업데이트 모드가 실제로 topo를 건너뛰는지(run_files 목록)는 Phase 5에서 확인한다(#27).
-- dolphin 참조점을 lat/lon으로 받는 변환(row/col ↔ lat/lon)은 io 모듈의 래스터 지오레퍼런스 유틸이 생기면 추가한다(#29).
+- open-questions #5는 본 ADR로 "완료". 실데이터에서 업데이트 모드가 실제로 topo를 건너뛰는지(run_files 목록)는 Phase 5에서 확인한다(#46).
+- dolphin 참조점을 lat/lon으로 받는 변환(row/col ↔ lat/lon)은 io 모듈의 래스터 지오레퍼런스 유틸이 생기면 추가한다(#49).

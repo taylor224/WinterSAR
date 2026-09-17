@@ -103,4 +103,4 @@ ISCE2/topsStack 호환 "Yes | 2.6.3 | None". 미설치 → ENV-006(WARN) + fetch
 
 - `-c` 유도로 선택 네트워크보다 많은 쌍이 생성될 수 있다(디스크·시간 증가). 정확한 쌍 제어가 필요하면 후속으로 config 파일
   편집 방식(run_files 생성 후 불필요 쌍 제거)을 검토한다.
-- 실제 ISCE2 설치 환경에서의 실행 검증(플래그 파싱·경로)은 Phase 5 S 사이트 벤치에서 수행한다(open-questions #27).
+- 실제 ISCE2 설치 환경에서의 실행 검증(플래그 파싱·경로)은 Phase 5 S 사이트 벤치에서 수행한다(open-questions #46).

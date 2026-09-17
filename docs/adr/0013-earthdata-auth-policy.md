@@ -32,6 +32,6 @@
 ## 결과
 
 - 토큰만 설정한 사용자는 검색·사전검증까지는 문제없지만 burst 다운로드에서 실패할 수 있다 →
-  `docs/open-questions.md` #20(토큰만으로 burst 추출기 다운로드 가능 여부 실측)로 남긴다.
+  `docs/open-questions.md` #26(토큰만으로 burst 추출기 다운로드 가능 여부 실측)로 남긴다.
 - 기존 공통 키 `env.ENV-003`(자격증명 없음)은 `check-install`용으로 유지하고, 검색 흐름에서는
   KB-AUTH-001만 사용한다.

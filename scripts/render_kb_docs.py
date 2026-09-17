@@ -104,7 +104,9 @@ def render_entry(e: KBEntry) -> str:
 def render_index(entries: list[KBEntry]) -> str:
     lines = [HEADER, "# 진단 지식 베이스 (Diagnosis KB)", ""]
     lines.append(
-        "`wintersar diagnose work/logs/` 는 엔진 로그를 아래 항목과 대조해 **원인 → 조치 → 참고** 순서로 설명합니다 (R-02, R-14, PERF-13). "
+        "`wintersar diagnose work/<stage>/<hash>/logs` 는 엔진 로그를 아래 항목과 대조해 **원인 → 조치 → 참고** 순서로 설명합니다 (R-02, R-14, PERF-13). "
+        "로그는 단계·해시별 노드 아래에 있으므로(ADR-0032) 작업 디렉터리 전체를 주는 `wintersar diagnose work/` 도 됩니다 — "
+        "`work/logs/` 라는 경로는 존재하지 않습니다. "
         "패턴이 일치하지 않으면 `KB-UNKNOWN` 과 함께 마스킹된 로그 발췌를 남깁니다."
     )
     lines.append("")

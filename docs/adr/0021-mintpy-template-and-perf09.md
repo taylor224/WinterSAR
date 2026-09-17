@@ -81,7 +81,7 @@ h5py로 읽어야 한다(ADR-0001). PERF-09는 `mintpy.compute.*` 기본값(maxM
   `height_correlation`, `none→no`; `deramp`, `unwrap_error_correction` 1:1;
   `selection.max_temporal_baseline_days/max_perp_baseline_m` → `mintpy.network.tempBaseMax/perpBaseMax`;
   `timeseries.coherence_threshold` → `mintpy.network.coherenceBased=yes` + `minCoherence`
-  (MST 유지) — **도메인 검토 항목**(open-questions #14; 연구자 확인 전까지 기본값 0.7 유지).
+  (MST 유지) — **도메인 검토 항목**(open-questions #36; 연구자 확인 전까지 기본값 0.7 유지).
 - `read_timeseries_h5(path, geometry_path=…)`는 `wintersar.io.timeseries.TimeSeries`를 반환하며
   lat/lon은 픽셀 중심, UTM은 pyproj로 변환, 레이더 좌표는 geometry의 `latitude/longitude` 필요.
 

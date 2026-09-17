@@ -85,16 +85,16 @@ HyP3 Basic 월 8,000 크레딧 무료, HyP3+ 1 크레딧 = $0.05. Burst InSAR �
   80/40/20 m, 그 외는 가장 가까운 값 + HYP3-003 WARN.
 - 인증: `EARTHDATA_TOKEN`(Bearer) 또는 `~/.netrc`(urs.earthdata.nasa.gov); 없으면 ENV-003 WARN.
 - 입력: `candidates.json`(`StackCandidate`)의 `notes.granules = {date_iso: {burst_id: granule}}`
-  또는 `params.jobs`(명시 granule 목록). select 모듈이 이 계약을 채워야 한다(open-questions #13).
+  또는 `params.jobs`(명시 granule 목록). select 모듈이 이 계약을 채워야 한다(open-questions #35).
 - 진단 ID: HYP3-001(작업 실패) … HYP3-013(공통 범위 없음), 텍스트는 `i18n/{ko,en}/engines_hyp3_mintpy.yaml`.
 
 ## 결과 (Consequences)
 
 - `hyp3-sdk` 설치 승인(open-questions #10) 전까지 실제 제출은 `-m network` 수동 테스트로만 확인한다.
   SDK 7.x 메이저 변경 시 `version_constraint='>=7,<8'`이 먼저 경고한다.
-- 작업 이름 길이 제한, 다중 burst 산출물의 실제 지리 범위 편차는 실데이터로 확인해야 한다(open-questions #12, #15).
+- 작업 이름 길이 제한, 다중 burst 산출물의 실제 지리 범위 편차는 실데이터로 확인해야 한다(open-questions #34, #37).
 - `mintpy.load.connCompFile = */*/*_conncomp.tif`는 MintPy 문서의 HyP3 예시에 없는 선택 키다(cfg에서 optional).
-  실데이터 load_data에서 문제가 나면 패턴에서 제외한다(open-questions #27).
+  실데이터 load_data에서 문제가 나면 패턴에서 제외한다(open-questions #38).
 - 2026-09-16 재검증: PyPI JSON `releases['7.7.8'][0].upload_time = 2026-09-02T23:41:28`, 크레딧 표·제품 접미사·
   `prep_hyp3` 정규식/키·`util.chunk(n=200)`·`Job.expired()` 모두 위 표와 일치.
 - 크레딧 표는 문서 갱신 시 `hyp3_costs.yaml`의 `fetched` 날짜와 함께 갱신한다.
