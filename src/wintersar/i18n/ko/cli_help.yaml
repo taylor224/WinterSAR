@@ -1,0 +1,222 @@
+# 명령줄 도움말 문구(규칙 11.6, ADR-0090)와 CLI-003 이후 오류 카탈로그(ADR-0091).
+#
+# ``cli_help.<command>.help`` 는 명령 설명, ``cli_help.<command>.<option>`` 은 옵션/인자 하나의
+# 도움말, ``cli_help.common.*`` 은 여러 명령이 공유하는 문구다. 코드는
+# ``wintersar.util.clihelp.h`` 로 읽는다(임포트 시점의 ``t`` 호출 금지).
+# ``cli.CLI-00x`` 항목은 ko.yaml 의 루트 ``cli:`` 네임스페이스를 확장한다(깊은 병합).
+cli:
+  CLI-003:
+    cause: "'{command}' 명령의 사용법이 잘못되었습니다: {detail}"
+    fix: "'wintersar {command} --help' 로 인자를 확인하세요(--json/--lang 같은 전역 옵션은 명령 앞에 둡니다)."
+  CLI-004:
+    cause: "설정 파일을 찾을 수 없습니다: {path}"
+    fix: "'wintersar init' 으로 설정 파일을 만들거나(플랜 §4.4) --config 에 올바른 경로를 지정하세요."
+  CLI-005:
+    cause: "설정 파일 오류: {error}"
+    fix: "오류에 나온 키를 고치세요. 'wintersar init' 이 주석이 달린 예시 파일을 씁니다(플랜 §4.4)."
+  CLI-006:
+    cause: "입력 파일을 찾을 수 없습니다: {path} ({option})"
+    fix: "{option} 에 지정한 경로를 확인하세요. 명령을 실행하기 전에 파일이 있어야 합니다."
+  CLI-007:
+    cause: "입력 파일을 읽을 수 없습니다: {path} ({option}) — {error}"
+    fix: "{option} 이 올바른 형식의 파일을 가리키는지 확인하세요('wintersar {command} --help' 참고)."
+  CLI-008:
+    cause: "{option} 값이 잘못되었습니다: '{value}' (허용: {allowed})"
+    fix: "허용된 값 중 하나를 사용하세요('wintersar {command} --help' 참고)."
+  CLI-009:
+    cause: "입력 {path} ({option}) 에 레코드가 없습니다."
+    fix: "앞 단계 명령으로 파일을 다시 만드세요(candidates.json 은 'wintersar search')."
+  CLI-010:
+    cause: "'{command}' 명령에 필요한 구성 요소를 불러올 수 없습니다: {error}"
+    fix: "wintersar 를 의존성과 함께 다시 설치하고(uv sync --extra dev) 'wintersar check-install' 로 환경을 확인하세요."
+
+cli_help:
+  common:
+    config: "config.yaml (플랜 §4.4)"
+    config_optional: "config.yaml"
+    ts: "시계열(fake 엔진의 .npz 또는 io.formats 가 읽는 모든 형식)."
+    until: "이 단계까지만 실행하고 멈춥니다."
+    from: "이 단계부터 시작합니다. 상류 단계는 캐시에서 가져옵니다."
+    force: "이 단계와 하류 단계를 모두 다시 실행합니다(반복 지정 가능)."
+    set: "단계 파라미터 덮어쓰기: stage.key=value (YAML 스칼라, 점으로 구분한 키는 중첩)."
+    workdir: "작업 디렉터리(기본값: --config 에서 읽음)."
+    out_dir: "리포트 디렉터리(기본값: <ts 디렉터리>/validate)."
+    method_unwrap: "auto | snaphu | tophu | spurt | truth | identity"
+  root:
+    help: "오픈소스 Sentinel-1 InSAR(SBAS) 툴킷: select · precheck · run · diagnose · validate."
+    json: "표준 출력에 JSON 봉투를 냅니다."
+    lang: "메시지 언어: ko | en (기본값: WINTERSAR_LANG 또는 ko)."
+    verbose: "더 자세히 출력합니다(-vv 는 추적 정보 포함)."
+  version:
+    help: "wintersar 버전을 출력합니다."
+  check_install:
+    help: "엔진 설치 여부·버전·인증 정보·하드웨어를 보고합니다(PERF-12). 다른 리포트 명령(search, diagnose, validate)처럼 리포트를 만들 수 있으면 종료 코드 0이며, 실패(FAIL) 항목(예: 엔진 미설치)이 있으면 봉투의 'ok' 가 false 가 되고 --strict 를 주면 종료 코드 1이 됩니다."
+    engine: "이 엔진만 점검합니다(기본값: 전부)."
+    strict: "실패(FAIL) 항목이 있으면 종료 코드 1(기본값: 항상 0)."
+  init:
+    help: "예시 config.yaml 을 씁니다(플랜 §4.4)."
+    path: "예시 config.yaml 을 쓸 경로"
+    force: "파일이 있으면 덮어씁니다."
+  search:
+    help: "AOI 와 기간에 맞는 후보 burst/씬을 조회합니다 -> work/select/candidates.json."
+    config: "프로젝트 config.yaml (플랜 4.4절)."
+  precheck:
+    help: "후보에 SEL-01..SEL-13 규칙을 적용합니다 -> precheck_report.{md,html,json}."
+    candidates: "`wintersar search` 가 쓴 candidates.json."
+    config: "프로젝트 config.yaml (AOI, selection)."
+    out: "리포트 디렉터리(기본값 work/select)."
+    geometry: "스택 또는 궤도 방향별 레이오버/섀도 통계 JSON (SEL-12)."
+    no_fail: "실패(FAIL) 항목이 있어도 종료 코드 0."
+    baseline: "수직 기선: auto (ASF stack API, 궤도 계산으로 대체) | asf | orbit | none."
+  plan:
+    help: "DAG 를 구성해 캐시된 단계·실행할 단계와 예상 리소스를 출력합니다(실행하지 않음)."
+    incremental: "날짜가 늘어난 단계의 쌍 단위 결과를 재사용하고, 캐시된 쌍·신규 쌍 수를 보여줍니다(PERF-06)."
+  run:
+    help: "파이프라인을 실행합니다. 캐시된 단계는 건너뛰고 바뀐 단계와 그 하류만 다시 실행합니다(PERF-03)."
+    dry_run: "계획만 출력합니다(`plan` 과 동일)."
+    incremental: "날짜가 늘어난 단계의 쌍 단위 결과를 재사용하고 시계열만 다시 역산합니다(PERF-06)."
+  cache:
+    help: "작업 디렉터리 캐시(work/<stage>/<hash>)를 조회하고 정리합니다."
+  cache_ls:
+    help: "캐시된 단계 결과를 나열합니다."
+    stage: "이 단계만."
+  cache_gc:
+    help: "단계별로 최근 N개 항목(및 선택적 --max-size 예산)만 남기고 나머지를 삭제합니다."
+    keep: "단계별로 남길 항목 수."
+    max_size: "캐시 예산(GB): 작업 디렉터리가 예산에 들어갈 때까지 가장 오래된 항목부터 삭제합니다(PERF-03). 기본값: 크기 제한 없음."
+    dry_run: "보고만 하고 삭제하지 않습니다."
+  unwrap:
+    help: "위상 언래핑 스케줄러: 메모리 모델, 타일 분할, 병렬화(R-06, PERF-04)."
+  unwrap_plan:
+    help: "드라이런: 주어진 크기의 스택에 대한 언래핑 전략을 출력합니다(플랜 §5.4)."
+    shape: "간섭도 한 장의 행·열 수."
+    n: "스택의 간섭도 수."
+    memory_gb: "메모리 예산(기본값: 감지값 x 0.8)."
+    cores: "CPU 코어 수(기본값: 감지값)."
+    tiles: "타일 수를 ROWSxCOLS 로 직접 지정(기본값: auto)."
+    overlap: "--tiles 의 타일 겹침 비율."
+    min_overlap_px: "타일 겹침의 최소 픽셀 수(ADR-0046)."
+    memory_mb_per_mpixel: "메모리 모델 상수 c."
+    nproc: "간섭도 하나당 타일 프로세스 수."
+    fringe: "프린지 밀도 0-1(측정 생략)."
+    available: "이 백엔드가 설치되어 있다고 가정합니다(반복 지정 가능)."
+  unwrap_run:
+    help: "스케줄된 전략으로 스택의 모든 간섭도를 언래핑합니다."
+    igrams: "igrams.npz (wintersar.io.igrams 형식)."
+    out: "출력 디렉터리(unw.npz, stats.json)."
+    coherence_threshold: "이 긴밀도(coherence) 미만 픽셀을 마스킹합니다."
+    memory_gb: "메모리 예산(GB, 기본값: 감지값 x 0.8)."
+    cores: "CPU 코어 수(기본값: 감지값)."
+    tiles: "타일 수를 ROWSxCOLS 로 직접 지정."
+    overlap: "--tiles 의 타일 겹침 비율."
+    min_overlap_px: "타일 겹침의 최소 픽셀 수(ADR-0046)."
+    nproc: "간섭도 하나당 타일 프로세스 수."
+    n_parallel: "계획된 병렬 수를 덮어씁니다."
+    cost: "defo | smooth | topo"
+    init: "mst | mcf"
+    log_dir: "백엔드 로그 디렉터리(기본값: <out>/logs)."
+  diagnose:
+    help: "엔진 로그의 실패를 설명합니다: KB 매칭 -> 원인 -> 조치(R-02, R-14)."
+    path: "로그 파일 또는 디렉터리(예: work/ 또는 work/<stage>/<hash>/logs). --list-kb 와 함께면 생략합니다. 디렉터리를 훑을 때는 wintersar 자체 기록(manifest.json, runs/*.json)을 건너뛰어 실패를 한 번만 보고합니다. 그런 파일도 진단하려면 파일을 직접 지정하세요."
+    engine: "이 엔진의 KB 를 먼저 시도합니다: {engines}"
+    out: "이 경로에 Markdown 리포트를 씁니다."
+    assume_failed: "오류 표식이 없어도 KB-UNKNOWN 을 냅니다(단계가 실패한 경우)."
+    list_kb: "지식 베이스 항목을 나열하고 종료합니다."
+  validate:
+    help: "InSAR 시계열을 수준측량/GNSS 대조군과 비교합니다(R-10)."
+    leveling: "수준측량 CSV (플랜 §5.6 스키마)."
+    gnss: "GNSS CSV (ENU 열)."
+    radius: "관측점 주변 픽셀 평균 반경(m)."
+    method: "mean | median"
+    align: "nearest | interp"
+    max_gap_days: "최근접 날짜 정렬의 허용 간격(일)."
+    heading: "위성 헤딩 덮어쓰기(도, 북쪽 기준 시계 방향)."
+    incidence: "입사각 덮어쓰기(도, 연직 기준)."
+    no_plots: "PNG 그림을 만들지 않습니다."
+  refpoint:
+    help: "기준점 후보를 추천하고 MintPy 자동 규칙과 비교합니다(R-09)."
+    aoi: "AOI GeoJSON (lon/lat). 기본값: 유효 픽셀 전체."
+    top: "후보 수."
+    coherence: "평균 긴밀도 지도(.npy/.npz)."
+    conncomp: "연결 성분 지도(.npy/.npz)."
+    dem: "고도 지도(.npy/.npz, 미터)."
+    weights: "가중치 덮어쓰기, 예: coherence=0.4,conncomp=0.3 (ADR-0041)."
+    min_coherence: "이 평균 긴밀도 미만 픽셀을 제외합니다."
+    mintpy_threshold: "비교에 쓸 MintPy minCoherence."
+    out: "후보 JSON 을 이 경로에 씁니다."
+  sweep:
+    help: "파라미터 격자를 캐시된 DAG 로 실행하고 결과 순위를 매깁니다(R-08, R-11)."
+    grid: "sweep.yaml (점 표기 설정 키의 격자)."
+    out: "출력 디렉터리(기본값: <workdir>/sweep)."
+    leveling: "gt_rmse 용 수준측량 CSV (기본값: 설정의 validate.leveling_csv)."
+    gnss: "gt_rmse 용 GNSS CSV."
+    radius: "관측점 평균 반경(m)."
+    set: "단계 파라미터 덮어쓰기 stage.key=value ('wintersar run --set' 과 동일)."
+  closure:
+    help: "폐합(loop closure) 통계: 삼중항/픽셀별 RMS 와 의심 간섭도(§12.1)."
+    igrams: "간섭도 스택 .npz (wrapped, coherence, pairs, dates)."
+    unw: "언래핑 스택 .npz (unw, 선택적 conncomp)."
+    out: "closure_dashboard.json (+ 지도 .npz)을 이 경로에 씁니다."
+    wrapped: "unw 가 있어도 래핑 위상을 사용합니다."
+    top: "출력할 행 수."
+  bench:
+    help: "벤치마크 사이트를 실행하고(N회 반복의 중앙값) bench_result.json 을 씁니다(플랜 §5.9)."
+    site: "사이트 YAML (benchmarks/sites/*.yaml)."
+    compare: "비교 기준이 되는 bench_result.json."
+    out: "결과 JSON 을 쓸 경로."
+    repeats: "사이트의 반복 횟수를 덮어씁니다."
+    fail_on_regression: "어느 단계든 기준선보다 임계값 이상 느리면 종료 코드 1."
+    threshold: "회귀 임계값(비율, 사이트 기본값 0.15)."
+    runner: "pipeline | fake (기본값: 사이트의 'runner')."
+    workdir: "실행 디렉터리를 이 경로에 보존합니다(기본값: 임시)."
+    allow_network: "'network: true' 인 사이트를 허용합니다."
+    markdown: "비교 표를 Markdown 으로도 씁니다."
+  research:
+    help: "대표 위상, 타일 스티칭, A/B 실험(R-07, R-15)."
+  research_repr_phase:
+    help: "간섭도 한 장의 저해상도 대표 위상을 추정합니다(R-07)."
+    igram: "igrams.npz (wintersar.io.igrams)."
+    out: "출력 .npz (repr_complex, repr_phase)."
+    method: "ml | coh_weighted | shp | phase_link | filtered"
+    factor: "다운샘플 계수(축당 looks)."
+    index: "스택 안의 간섭도 인덱스."
+    stack: "shp/phase_link 용 'slc' 또는 'amplitude' (n_dates, ny, nx) NPZ."
+    pair: "phase_link 용 날짜 인덱스 (i j) (기본값: 쌍 키에서 추정)."
+    param: "추가 방법 파라미터 k=v (반복 지정 가능)."
+  research_stitch:
+    help: "독립적으로 언래핑한 타일 사이의 정수 2π 오프셋을 결정해 제거합니다."
+    tiles: "tiles.npz (research.stitching.save_tiles_npz)."
+    out: "출력 .npz (merged, offsets) + .json 리포트."
+    method: "coarse_ref | overlap_consensus"
+    lowres_ref: "저해상도 언래핑 기준을 담은 NPZ."
+    ref_key: "--lowres-ref 안의 배열 키."
+    consensus: "mode | median (overlap_consensus)"
+    ref_stat: "mean | median (coarse_ref)"
+    merge: "feather | core"
+  research_synth:
+    help: "합성 정답 데이터를 씁니다(igrams.npz / tiles.npz / slc.npz)."
+    out: "출력 .npz"
+    kind: "igrams | tiles | slc"
+    n_dates: "촬영 날짜 수(igrams, slc)."
+    shape: "행·열 수."
+    seed: "난수 시드."
+    atmosphere_std_rad: "대기 위상 스크린의 표준편차(rad)."
+    coherence_base: "합성 간섭도의 기본 긴밀도(0-1)."
+    looks: "위상 잡음 모델에 쓰는 looks 수."
+    noise_model: "crlb (Cramer-Rao 하한, 기본값) | exact (실제 위상 분포)."
+    water_fraction: "수역으로 마스킹할 장면 비율(0-1)."
+    rows: "tiles: 타일 행 수"
+    cols: "tiles: 타일 열 수"
+    overlap: "tiles: 겹침 픽셀 수"
+    max_offset_cycles: "tiles: 주입하는 최대 2π 오프셋(사이클)."
+    noise_std_rad: "tiles: 타일에 더하는 잡음"
+    factor: "tiles: 저해상도 기준 계수"
+    tau_dates: "slc: 긴밀도 감쇠(날짜 수)"
+    coherence_floor: "slc: 장기 긴밀도"
+  research_experiment:
+    help: "YAML 로 정의한 실험을 실행합니다(결과 JSON + Markdown 표)."
+    yaml_path: "실험 YAML 경로 또는 번들 이름(S_synth_repr_phase)."
+    out: "<name>.json / <name>.md 를 쓸 출력 디렉터리"
+    docs_dir: "표를 이 디렉터리에도 복사합니다(docs/research/results)."
+  research_experiments:
+    help: "번들된 실험 정의를 나열합니다."

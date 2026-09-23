@@ -64,6 +64,15 @@ doi:10.3390/rs12111867)
 These are the *active* (per-pixel) criteria. Passive layover/shadow (areas hidden behind a
 neighbouring slope) needs a ray-cast along range; ISCE2's ``shadowMask`` includes it — see
 ADR-0019 for the comparison plan.
+
+Backend (PERF-10, ADR-0095/0097)
+--------------------------------
+The per-pixel math (:func:`slope_aspect`, :func:`local_incidence`, :func:`range_slope`,
+:func:`compute_geometry_masks`) is written against the ``xp`` array module and runs on CuPy
+when the backend policy selects it (``gpu=`` argument, ``WINTERSAR_GPU``, stage context,
+auto-detect) and on numpy otherwise; every public function returns numpy arrays. On the CPU
+the operations are the same numpy calls in the same order as before the port, so the golden
+file (``tests/regression/golden/geometry``) is unchanged.
 """
 
 from __future__ import annotations
@@ -73,11 +82,13 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 
+from wintersar.compute.xp import GpuRequest, asarray, resolve_backend, to_numpy
 from wintersar.i18n import t
 from wintersar.io.schemas import Finding
 from wintersar.util.masking import mask_text
@@ -176,36 +187,66 @@ def sensor_azimuth(heading_deg: float, right_looking: bool = True) -> float:
     return float((look_azimuth(heading_deg, right_looking) + 180.0) % 360.0)
 
 
-def slope_aspect(dem: npt.ArrayLike, dx_m: float, dy_m: float) -> tuple[FloatArray, FloatArray]:
-    """Slope (deg, 0-90) and aspect (deg, downslope direction clockwise from north).
-
-    ``dx_m``/``dy_m`` are the pixel spacings in metres. ``dy_m > 0`` means north-up (row index
-    increases southward); ``dy_m < 0`` means rows increase northward. Central differences
-    (``np.gradient``) inside, one-sided at the edges. Flat pixels get aspect 0; NaN in the DEM
-    propagates to the neighbouring pixels.
-    """
-    z = np.asarray(dem, dtype=np.float64)
+def _check_dem(z: Any, dx_m: float, dy_m: float) -> None:
     if z.ndim != 2:
         raise ValueError(t("select_geometry.error.dem_ndim", ndim=z.ndim))
     if dx_m == 0 or dy_m == 0 or not (math.isfinite(dx_m) and math.isfinite(dy_m)):
         raise ValueError(t("select_geometry.error.invalid_spacing", dx_m=dx_m, dy_m=dy_m))
     if z.shape[0] < 2 or z.shape[1] < 2:
-        raise ValueError(t("select_geometry.error.dem_too_small", shape=z.shape))
-    dz_dcol = np.gradient(z, axis=1) / abs(dx_m)
+        raise ValueError(t("select_geometry.error.dem_too_small", shape=tuple(z.shape)))
+
+
+def _slope_aspect_xp(z: Any, dx_m: float, dy_m: float, xp: ModuleType) -> tuple[Any, Any]:
+    """:func:`slope_aspect` on an ``xp`` array (already float64, validated)."""
+    # source: https://docs.cupy.dev/en/stable/reference/generated/cupy.gradient.html
+    #   (central differences inside, one-sided at the boundaries; ``axis`` keyword)
+    dz_dcol = xp.gradient(z, axis=1) / abs(dx_m)
     if dx_m < 0:
         dz_dcol = -dz_dcol
-    dz_drow = np.gradient(z, axis=0)
+    dz_drow = xp.gradient(z, axis=0)
     # rows increase southward for dy_m > 0 → d/dnorth = -d/drow
     dz_dnorth = -dz_drow / dy_m
-    slope = np.degrees(np.arctan(np.hypot(dz_dcol, dz_dnorth)))
+    slope = xp.degrees(xp.arctan(xp.hypot(dz_dcol, dz_dnorth)))
     # downslope vector = -(dz/dE, dz/dN); azimuth clockwise from north = atan2(E, N)
-    aspect = np.degrees(np.arctan2(-dz_dcol, -dz_dnorth)) % 360.0
-    aspect = np.where(slope == 0.0, 0.0, aspect)
+    aspect = xp.degrees(xp.arctan2(-dz_dcol, -dz_dnorth)) % 360.0
+    aspect = xp.where(slope == 0.0, 0.0, aspect)
     # a nodata pixel must not inherit a finite gradient from its two finite neighbours
-    invalid = ~np.isfinite(z) | ~np.isfinite(slope)
-    slope = np.where(invalid, np.nan, slope)
-    aspect = np.where(invalid, np.nan, aspect)
+    invalid = ~xp.isfinite(z) | ~xp.isfinite(slope)
+    slope = xp.where(invalid, np.nan, slope)
+    aspect = xp.where(invalid, np.nan, aspect)
     return slope, aspect
+
+
+def slope_aspect(
+    dem: npt.ArrayLike, dx_m: float, dy_m: float, *, gpu: GpuRequest = None
+) -> tuple[FloatArray, FloatArray]:
+    """Slope (deg, 0-90) and aspect (deg, downslope direction clockwise from north).
+
+    ``dx_m``/``dy_m`` are the pixel spacings in metres. ``dy_m > 0`` means north-up (row index
+    increases southward); ``dy_m < 0`` means rows increase northward. Central differences
+    (``np.gradient``) inside, one-sided at the edges. Flat pixels get aspect 0; NaN in the DEM
+    propagates to the neighbouring pixels. ``gpu`` selects the backend (module docstring).
+    """
+    xp = resolve_backend(gpu).xp
+    z = asarray(dem, xp, dtype=np.float64)
+    _check_dem(z, dx_m, dy_m)
+    slope, aspect = _slope_aspect_xp(z, dx_m, dy_m, xp)
+    return _f64(slope), _f64(aspect)
+
+
+def _f64(a: Any) -> FloatArray:
+    return np.asarray(to_numpy(a), dtype=np.float64)
+
+
+def _local_incidence_xp(
+    slope_deg: Any, aspect_deg: Any, sensor_azimuth_deg: float, incidence_deg: Any, xp: ModuleType
+) -> Any:
+    s = xp.radians(asarray(slope_deg, xp, dtype=np.float64))
+    a = xp.radians(asarray(aspect_deg, xp, dtype=np.float64))
+    th = xp.radians(asarray(incidence_deg, xp, dtype=np.float64))
+    phi = math.radians(sensor_azimuth_deg)
+    cos_loc = xp.cos(s) * xp.cos(th) + xp.sin(s) * xp.sin(th) * xp.cos(phi - a)
+    return xp.degrees(xp.arccos(xp.clip(cos_loc, -1.0, 1.0)))
 
 
 def local_incidence(
@@ -213,33 +254,40 @@ def local_incidence(
     aspect_deg: npt.ArrayLike,
     sensor_azimuth_deg: float,
     incidence_deg: float | npt.ArrayLike,
+    *,
+    gpu: GpuRequest = None,
 ) -> FloatArray:
     """Local incidence angle θ_loc (deg, 0-180) from the exact normal · LOS dot product.
 
     ``cos θ_loc = cos s cos θ + sin s sin θ cos(φ_sen - a)`` with ``φ_sen`` the azimuth from
     the ground toward the sensor (see module docstring for the derivation and references).
     """
-    s = np.radians(np.asarray(slope_deg, dtype=np.float64))
-    a = np.radians(np.asarray(aspect_deg, dtype=np.float64))
-    th = np.radians(np.asarray(incidence_deg, dtype=np.float64))
+    xp = resolve_backend(gpu).xp
+    return _f64(_local_incidence_xp(slope_deg, aspect_deg, sensor_azimuth_deg, incidence_deg, xp))
+
+
+def _range_slope_xp(
+    slope_deg: Any, aspect_deg: Any, sensor_azimuth_deg: float, xp: ModuleType
+) -> Any:
+    s = xp.radians(asarray(slope_deg, xp, dtype=np.float64))
+    a = xp.radians(asarray(aspect_deg, xp, dtype=np.float64))
     phi = math.radians(sensor_azimuth_deg)
-    cos_loc = np.cos(s) * np.cos(th) + np.sin(s) * np.sin(th) * np.cos(phi - a)
-    out: FloatArray = np.degrees(np.arccos(np.clip(cos_loc, -1.0, 1.0)))
-    return out
+    return xp.degrees(xp.arctan(xp.tan(s) * xp.cos(phi - a)))
 
 
 def range_slope(
-    slope_deg: npt.ArrayLike, aspect_deg: npt.ArrayLike, sensor_azimuth_deg: float
+    slope_deg: npt.ArrayLike,
+    aspect_deg: npt.ArrayLike,
+    sensor_azimuth_deg: float,
+    *,
+    gpu: GpuRequest = None,
 ) -> FloatArray:
     """Slope component along the range direction (deg; positive = facing the sensor).
 
     ``alpha_r = atan(tan s · cos(φ_sen - a))``.
     """
-    s = np.radians(np.asarray(slope_deg, dtype=np.float64))
-    a = np.radians(np.asarray(aspect_deg, dtype=np.float64))
-    phi = math.radians(sensor_azimuth_deg)
-    out: FloatArray = np.degrees(np.arctan(np.tan(s) * np.cos(phi - a)))
-    return out
+    xp = resolve_backend(gpu).xp
+    return _f64(_range_slope_xp(slope_deg, aspect_deg, sensor_azimuth_deg, xp))
 
 
 # ---------------------------------------------------------------------------- masks
@@ -291,6 +339,8 @@ def compute_geometry_masks(
     transform: Any | None = None,
     crs: Any | None = None,
     right_looking: bool = True,
+    *,
+    gpu: GpuRequest = None,
 ) -> GeometryMaskResult:
     """Layover, shadow, foreshortening and local incidence for one orbit direction.
 
@@ -311,49 +361,61 @@ def compute_geometry_masks(
         Optional boolean array (True inside the AOI) used for the statistics.
     transform, crs
         Optional georeferencing carried into :func:`write_mask_geotiff`.
+    gpu
+        Backend request (``None`` = ``WINTERSAR_GPU`` / stage context / auto-detect). The
+        whole per-pixel chain runs on one backend; the result holds numpy arrays.
     """
     fd = _validate_direction(flight_direction)
-    z = np.asarray(dem, dtype=np.float64)
-    slope, aspect = slope_aspect(z, dx_m, dy_m)
-    theta = _validate_incidence(incidence_deg, z.shape)
+    xp = resolve_backend(gpu).xp
+    z_host = np.asarray(dem, dtype=np.float64)
+    z = asarray(z_host, xp)
+    _check_dem(z, dx_m, dy_m)
+    slope, aspect = _slope_aspect_xp(z, dx_m, dy_m, xp)
+    theta = _validate_incidence(incidence_deg, z_host.shape)
     phi_sen = sensor_azimuth(heading_deg, right_looking)
 
-    theta_loc = local_incidence(slope, aspect, phi_sen, theta)
-    alpha_r = range_slope(slope, aspect, phi_sen)
-    valid = np.isfinite(theta_loc) & np.isfinite(alpha_r)
+    theta_loc = _local_incidence_xp(slope, aspect, phi_sen, theta, xp)
+    alpha_r = _range_slope_xp(slope, aspect, phi_sen, xp)
+    valid = xp.isfinite(theta_loc) & xp.isfinite(alpha_r)
 
-    theta_arr = np.broadcast_to(np.asarray(theta, dtype=np.float64), z.shape)
+    theta_arr = xp.broadcast_to(asarray(theta, xp, dtype=np.float64), z.shape)
     layover = valid & (alpha_r > theta_arr)
     shadow = valid & (alpha_r < theta_arr - 90.0)
 
     with np.errstate(invalid="ignore"):
-        sin_loc = np.sin(np.radians(np.clip(theta_loc, 0.0, 90.0)))
-        fore = 1.0 - sin_loc / np.sin(np.radians(theta_arr))
-    fore = np.clip(fore, 0.0, 1.0)
-    fore = np.where(layover, 1.0, fore)
-    fore = np.where(valid, fore, np.nan)
+        sin_loc = xp.sin(xp.radians(xp.clip(theta_loc, 0.0, 90.0)))
+        fore = 1.0 - sin_loc / xp.sin(xp.radians(theta_arr))
+    fore = xp.clip(fore, 0.0, 1.0)
+    fore = xp.where(layover, 1.0, fore)
+    fore = xp.where(valid, fore, np.nan)
+
+    layover_np = np.asarray(to_numpy(layover), dtype=bool)
+    shadow_np = np.asarray(to_numpy(shadow), dtype=bool)
+    fore_np = _f64(fore)
+    theta_loc_np = _f64(theta_loc)
+    valid_np = np.asarray(to_numpy(valid), dtype=bool)
 
     if aoi_mask is None:
-        aoi = valid
+        aoi = valid_np
     else:
         aoi_arr = np.asarray(aoi_mask, dtype=bool)
-        if aoi_arr.shape != z.shape:
+        if aoi_arr.shape != z_host.shape:
             raise ValueError(
                 t(
                     "select_geometry.error.shape_mismatch",
                     what="aoi_mask",
                     a=aoi_arr.shape,
-                    b=z.shape,
+                    b=z_host.shape,
                 )
             )
-        aoi = aoi_arr & valid
+        aoi = aoi_arr & valid_np
 
-    stats = _stats(layover, shadow, fore, aoi)
+    stats = _stats(layover_np, shadow_np, fore_np, aoi)
     return GeometryMaskResult(
-        layover=layover,
-        shadow=shadow,
-        foreshortening=fore,
-        local_incidence_deg=theta_loc,
+        layover=layover_np,
+        shadow=shadow_np,
+        foreshortening=fore_np,
+        local_incidence_deg=theta_loc_np,
         flight_direction=fd,
         heading_deg=float(heading_deg),
         incidence_deg=theta,
@@ -392,14 +454,16 @@ def masks_for_both_directions(
     aoi_mask: npt.ArrayLike | None = None,
     transform: Any | None = None,
     crs: Any | None = None,
+    *,
+    gpu: GpuRequest = None,
 ) -> dict[str, GeometryMaskResult]:
     """Masks for ascending and descending passes (defaults: typical Sentinel-1 headings)."""
     return {
         ASCENDING: compute_geometry_masks(
-            dem, dx, dy, heading_asc, incidence_deg, ASCENDING, aoi_mask, transform, crs
+            dem, dx, dy, heading_asc, incidence_deg, ASCENDING, aoi_mask, transform, crs, gpu=gpu
         ),
         DESCENDING: compute_geometry_masks(
-            dem, dx, dy, heading_desc, incidence_deg, DESCENDING, aoi_mask, transform, crs
+            dem, dx, dy, heading_desc, incidence_deg, DESCENDING, aoi_mask, transform, crs, gpu=gpu
         ),
     }
 

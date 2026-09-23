@@ -38,6 +38,19 @@ jobs:
           name: bench-${{ matrix.python-version }}
           path: bench_result.json
 
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+      - name: Sync (docs extra)
+        run: uv sync --extra docs
+      # --strict turns broken links / missing nav targets into failures (ADR-0112, OQ #73)
+      - name: mkdocs build --strict
+        run: uv run mkdocs build --strict
+
   docker:
     runs-on: ubuntu-latest
     steps:

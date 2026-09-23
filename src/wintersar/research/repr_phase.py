@@ -36,9 +36,14 @@ Methods (``METHODS`` registry, :func:`representative_phase`):
 * ``filtered`` — Goldstein & Werner 1998 (GRL 25(21):4035-4038, doi:10.1029/1998GL900033)
   spectral filter on overlapping patches, then multilook.
 
-Everything is numpy (research code; dolphin/tophu are not installed, rule 11.2). Masked
-pixels should be zeroed by the caller (the tophu/dolphin convention ``zero_where_masked``);
-zeros drop out of every complex average.
+The pixel primitives (block multilook, Goldstein filter) are the shared
+:mod:`wintersar.compute.kernels` — no private re-implementation here (PERF-10, ADR-0097):
+:func:`multilook` runs on whatever backend owns its input (numpy → CPU, CuPy → device) and
+:func:`goldstein_filter` / :func:`repr_filtered` accept ``gpu=`` (``None`` = ``WINTERSAR_GPU``
+/ stage context / auto-detect) and always return numpy ``complex128``. The rest is numpy
+(dolphin/tophu are not installed, rule 11.2). Masked pixels should be zeroed by the caller
+(the tophu/dolphin convention ``zero_where_masked``); zeros drop out of every complex
+average.
 """
 
 from __future__ import annotations
@@ -49,6 +54,8 @@ from typing import Any, Literal
 import numpy as np
 from numpy.typing import NDArray
 
+from wintersar.compute import kernels
+from wintersar.compute.xp import GpuRequest, asarray, resolve_backend, to_numpy, xp_of
 from wintersar.i18n import t
 
 FloatArray = NDArray[np.float64]
@@ -130,21 +137,27 @@ def crop_to_multiple(arr: NDArray[Any], factor: int) -> NDArray[Any]:
     return arr[..., : ny - ny % factor, : nx - nx % factor]
 
 
-def multilook(arr: NDArray[Any], factor: int) -> NDArray[Any]:
+def multilook(arr: Any, factor: int) -> Any:
     """Block mean over the last two axes (``factor x factor`` non-overlapping boxes).
 
     Works for real and complex arrays; ``factor == 1`` returns a copy. NaNs propagate (zero
-    masked pixels first, tophu/dolphin convention).
+    masked pixels first, tophu/dolphin convention). Delegates to
+    :func:`wintersar.compute.kernels.multilook` (same crop-then-``mean`` arithmetic, so the
+    result is bit-identical to the former block mean). The result lives on the backend that
+    owns ``arr``: a numpy input gives ``numpy.ndarray``, a CuPy input stays on the device.
     """
     if factor < 1:
         raise ResearchError("RES-006", name="factor", value=factor, allowed=">= 1")
-    a = crop_to_multiple(np.asarray(arr), factor)
+    xp = xp_of(arr)
+    a = crop_to_multiple(xp.asarray(arr), factor)
     if factor == 1:
-        return np.array(a, copy=True)
+        return xp.array(a, copy=True)
     ny, nx = a.shape[-2], a.shape[-1]
-    lead = a.shape[:-2]
-    blocks = a.reshape(*lead, ny // factor, factor, nx // factor, factor)
-    return np.asarray(blocks.mean(axis=(-3, -1)))
+    if ny == 0 or nx == 0:
+        # smaller than one block: nothing to average (historical empty result, not an error)
+        dtype = a.dtype if np.issubdtype(a.dtype, np.inexact) else np.float64
+        return xp.zeros((*a.shape[:-2], ny // factor, nx // factor), dtype=dtype)
+    return kernels.multilook(a, factor, factor, xp)
 
 
 def upsample_nearest(arr: NDArray[Any], shape: tuple[int, int]) -> NDArray[Any]:
@@ -630,16 +643,34 @@ def repr_phase_link(
 
 
 # ---------------------------------------------------------------- Goldstein filter
-def _bartlett2d(size: int) -> FloatArray:
-    """Symmetric triangular weight (dolphin ``goldstein``: mirrored quadrant of a linear
-    ramp), used to overlap-add the filtered patches."""
-    half = size // 2
-    # strictly positive at the patch edge (0.5/half) so border pixels covered by a single
-    # patch still get a weight; dolphin's ramp reaches exactly 0 there
-    ramp = 1.0 - np.abs(np.arange(half) - (half - 0.5)) / half
-    quad = np.outer(ramp, ramp)
-    top = np.concatenate([quad, quad[:, ::-1]], axis=1)
-    return np.asarray(np.concatenate([top, top[::-1, :]], axis=0), dtype=np.float64)
+def _check_goldstein_args(alpha: float, window: int, overlap: float) -> int:
+    """Validate the research-facing parameters; returns the patch step in pixels."""
+    if alpha < 0:
+        raise ResearchError("RES-006", name="alpha", value=alpha, allowed=">= 0")
+    if window < 4 or window % 2:
+        raise ResearchError("RES-006", name="window", value=window, allowed="even, >= 4")
+    if not 0.0 <= overlap < 1.0:
+        raise ResearchError("RES-006", name="overlap", value=overlap, allowed="[0, 1)")
+    return max(1, round(window * (1.0 - overlap)))
+
+
+def _goldstein_xp(
+    z: Any, alpha: float, window: int, step: int, spectrum_smooth: int, xp: Any
+) -> Any:
+    """The shared kernel in its research configuration (ADR-0096/0097): Bartlett blend,
+    zero-padded patch grid, periodic spectrum smoothing, input magnitude kept."""
+    return kernels.goldstein_filter(
+        z,
+        alpha=alpha,
+        window=window,
+        overlap=window - step,
+        smooth=spectrum_smooth,
+        xp=xp,
+        weight="bartlett",
+        pad="zero",
+        smooth_mode="wrap",
+        keep_magnitude=True,
+    )
 
 
 def goldstein_filter(
@@ -648,14 +679,22 @@ def goldstein_filter(
     window: int = 32,
     overlap: float = 0.5,
     spectrum_smooth: int = 1,
+    *,
+    gpu: GpuRequest = None,
 ) -> ComplexArray:
     """Goldstein & Werner 1998 adaptive spectral filter.
 
     Each ``window x window`` patch (step ``window·(1 - overlap)``) is multiplied in the
     frequency domain by ``|S|^alpha`` (``S`` = its 2-D spectrum, optionally smoothed with a
-    ``spectrum_smooth x spectrum_smooth`` box, 1 = none), transformed back and overlap-added
-    with a triangular weight. The output keeps the input magnitude and takes the filtered
-    phase, so it can be multilooked like the original.
+    periodic ``spectrum_smooth x spectrum_smooth`` box, 1 = none), transformed back and
+    overlap-added with a triangular weight. The output keeps the input magnitude and takes the
+    filtered phase, so it can be multilooked like the original.
+
+    Implemented by :func:`wintersar.compute.kernels.goldstein_filter` with
+    ``weight='bartlett', pad='zero', smooth_mode='wrap', keep_magnitude=True`` — the
+    numerical equivalence with the former private implementation is pinned by
+    ``tests/unit/research/test_repr_phase_kernels.py`` (ADR-0096). ``gpu`` selects the
+    backend; the result is numpy ``complex128``.
     # source: https://raw.githubusercontent.com/isce-framework/dolphin/main/src/dolphin/goldstein.py
     #   (psize=32, step=psize//2, weight=|fft2(patch)|^alpha, overlap-add / weight_sum)
     """
@@ -665,39 +704,10 @@ def goldstein_filter(
     z = np.asarray(np.where(np.isfinite(z), z, 0.0), dtype=np.complex128)
     if z.ndim != 2:
         raise ResearchError("RES-006", name="igram.ndim", value=z.ndim, allowed="2")
-    if alpha < 0:
-        raise ResearchError("RES-006", name="alpha", value=alpha, allowed=">= 0")
-    if window < 4 or window % 2:
-        raise ResearchError("RES-006", name="window", value=window, allowed="even, >= 4")
-    if not 0.0 <= overlap < 1.0:
-        raise ResearchError("RES-006", name="overlap", value=overlap, allowed="[0, 1)")
-    ny, nx = z.shape
-    step = max(1, round(window * (1.0 - overlap)))
-    ny_p = window + step * int(np.ceil(max(ny - window, 0) / step))
-    nx_p = window + step * int(np.ceil(max(nx - window, 0) / step))
-    padded = np.zeros((ny_p, nx_p), dtype=np.complex128)
-    padded[:ny, :nx] = z
-    weight = _bartlett2d(window)
-    acc = np.zeros_like(padded)
-    wsum = np.zeros((ny_p, nx_p), dtype=np.float64)
-    if spectrum_smooth > 1:
-        from scipy.ndimage import uniform_filter
-    for y0 in range(0, ny_p - window + 1, step):
-        for x0 in range(0, nx_p - window + 1, step):
-            patch = padded[y0 : y0 + window, x0 : x0 + window]
-            if not patch.any():
-                continue
-            spec = np.fft.fft2(patch)
-            power = np.abs(spec)
-            if spectrum_smooth > 1:
-                power = uniform_filter(power, size=spectrum_smooth, mode="wrap")
-            filtered = np.fft.ifft2(spec * power**alpha)
-            acc[y0 : y0 + window, x0 : x0 + window] += filtered * weight
-            wsum[y0 : y0 + window, x0 : x0 + window] += weight
-    out = np.where(wsum > 0, acc / np.where(wsum > 0, wsum, 1.0), 0.0)[:ny, :nx]
-    mag = np.abs(z)
-    unit = np.where(np.abs(out) > 0, out / np.where(np.abs(out) > 0, np.abs(out), 1.0), 0.0)
-    return np.asarray(mag * unit, dtype=np.complex128)
+    step = _check_goldstein_args(alpha, window, overlap)
+    xp = resolve_backend(gpu).xp
+    out = _goldstein_xp(asarray(z, xp), alpha, window, step, spectrum_smooth, xp)
+    return np.asarray(to_numpy(out), dtype=np.complex128)
 
 
 def repr_filtered(
@@ -708,12 +718,15 @@ def repr_filtered(
     window: int = 32,
     overlap: float = 0.5,
     spectrum_smooth: int = 1,
+    gpu: GpuRequest = None,
     **_: Any,
 ) -> ComplexArray:
-    """Goldstein-filtered interferogram, then complex multilook."""
+    """Goldstein-filtered interferogram, then complex multilook (one backend for both)."""
     z = _as_complex(igram, factor, "filtered")
-    filt = goldstein_filter(z, alpha, window, overlap, spectrum_smooth)
-    return np.asarray(multilook(filt, factor), dtype=np.complex128)
+    step = _check_goldstein_args(alpha, window, overlap)
+    xp = resolve_backend(gpu).xp
+    filt = _goldstein_xp(asarray(z, xp), alpha, window, step, spectrum_smooth, xp)
+    return np.asarray(to_numpy(multilook(filt, factor)), dtype=np.complex128)
 
 
 # ---------------------------------------------------------------- registry / dispatcher

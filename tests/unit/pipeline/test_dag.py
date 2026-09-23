@@ -56,7 +56,13 @@ def test_build_fake_path_marks_skips_and_resolution(tmp_path: Path, cache_dir: P
     assert by["validate"].skip_reason == "not_configured"
     assert by["validate"].findings[0].rule_id == "PIPELINE-010"
     assert by["fetch"].resolved and by["fetch"].status == "to_run"  # no inputs -> hash known
-    assert by["coregister"].node_hash is None  # upstream not cached yet
+    # incremental stages take their identity from the producer's node hash (ADR-0080), so
+    # the whole engine chain up to unwrap is identified before anything ran; the time-series
+    # stages hash the *content* of their inputs and stay unresolved until unwrap has run
+    assert by["coregister"].resolved and by["unwrap"].resolved
+    assert by["coregister"].identity_inputs == {"slc_manifest": by["fetch"].node_hash}
+    assert by["coregister"].input_hashes == {}  # no content yet
+    assert by["timeseries"].node_hash is None  # upstream not cached yet
     assert by["interferogram"].params["n_dates"] == 5
     assert all(n.engine == "fake" for n in nodes if not n.spec.is_python)
     assert all(n.engine_version for n in nodes if not n.spec.is_python)

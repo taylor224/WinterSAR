@@ -45,6 +45,12 @@ pipeline:
   PIPELINE-014:
     cause: "'{command}' 명령을 시작할 수 없습니다: {detail}"
     fix: "'wintersar {command} --help'로 인자를 확인하세요 (설정 파일 경로, 단계 이름, --set 형식)."
+  PIPELINE-015:
+    cause: "단계 '{stage}'는 증분 모드로 실행됩니다: 캐시된 쌍 {n_cached}개 재사용, 새 쌍 {n_new}개 계산."
+    fix: "쌍 단위 캐시를 무시하고 전부 다시 계산하려면 'wintersar run --force {stage}'를 사용하세요."
+  PIPELINE-016:
+    cause: "단계 '{stage}'의 엔진 '{engine}'은(는) 쌍 단위 재사용(_pairs_done)을 지원하지 않아 전체를 다시 계산했습니다."
+    fix: "정상 동작입니다. 엔진이 증분 처리에 참여하려면 ADR-0082의 계약(_pairs_done 읽기, pairs/ 매니페스트 쓰기)을 구현해야 합니다."
   cli:
     plan_title: "실행 계획: {project} ({workdir})"
     run_title: "실행: {project} ({workdir})"
@@ -75,3 +81,8 @@ pipeline:
     cache_total: "총 {n}개 항목 · {size}"
     gc_summary: "삭제 {n_removed}개 ({freed}) · 유지 {n_kept}개{dry}"
     gc_dry_suffix: " [dry-run: 실제로 삭제하지 않음]"
+    status_incremental: "부분 캐시"
+    incremental_pairs: "쌍 캐시 {n_cached}개 · 신규 {n_new}개"
+    incremental_mode: "증분 모드: 새 날짜에 닿는 쌍만 계산하고 시계열을 다시 역산합니다 (PERF-06)."
+    cache_budget: "예산 {budget} 중 {total} 사용 · 보호 항목(단계별 최신 ok) {protected}"
+    cache_over_budget: "보호 항목만으로도 예산을 {over} 초과합니다 — 예산을 늘리거나 작업 디렉터리를 나누세요."

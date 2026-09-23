@@ -5,7 +5,7 @@ Every function accepts numpy *or* CuPy arrays: the backend is taken from the inp
 both libraries are used — verified against the CuPy reference (2026-09-16):
 
 * ``fft.fft2`` / ``fft.ifft2`` — https://docs.cupy.dev/en/stable/reference/fft.html
-* ``pad`` (modes constant/reflect/edge) — https://docs.cupy.dev/en/stable/reference/generated/cupy.pad.html
+* ``pad`` (modes constant/reflect/edge/wrap) — https://docs.cupy.dev/en/stable/reference/generated/cupy.pad.html
 * ``cumsum``, ``angle``, ``exp``, ``abs``, ``conj``, ``isfinite``, ``hanning`` —
   https://docs.cupy.dev/en/stable/reference/comparison.html
 
@@ -17,6 +17,10 @@ Kernels
 * :func:`multilook` — coherent (complex) or incoherent averaging by ``(az, rg)`` looks.
 * :func:`goldstein_filter` — Goldstein & Werner (1998) adaptive spectral filter
   ``H(u,v) = S{|Z(u,v)|}^alpha * Z(u,v)`` on overlapping patches, doi:10.1029/1998GL900033.
+  Two documented variants share the loop (ADR-0096): the pipeline default (Hann blend,
+  last patch clamped to the edge, zero-padded box smoothing of the spectrum) and the
+  research/dolphin-style variant (Bartlett blend, zero-padded patch grid, periodic
+  smoothing, input magnitude kept) that ``wintersar.research.repr_phase`` uses.
 * :func:`coherence_estimate` — ``|sum(s1*conj(s2))| / sqrt(sum|s1|^2 * sum|s2|^2)`` over a moving window
   (the standard sample coherence magnitude estimator, e.g. Hanssen 2001 §4.3).
 * :func:`box_filter` / :func:`box_sum` — moving-window sums/means shared by the above.
@@ -24,6 +28,7 @@ Kernels
 
 from __future__ import annotations
 
+import math
 from types import ModuleType
 from typing import Any
 
@@ -124,10 +129,57 @@ def multilook(
 # ---------------------------------------------------------------- Goldstein filter
 
 
-def _hann2d(n: int, xp: ModuleType) -> Any:
+def _hann2d(n: int, xp: ModuleType, dtype: Any = np.float32) -> Any:
     # Computed with numpy (tiny) and uploaded: avoids any backend difference in window formulas.
     w = np.hanning(n + 2)[1:-1]  # strictly positive taper so every pixel gets weight
-    return xp.asarray(np.outer(w, w).astype(np.float32))
+    return xp.asarray(np.outer(w, w).astype(dtype))
+
+
+def _bartlett2d(n: int, xp: ModuleType, dtype: Any = np.float64) -> Any:
+    """Symmetric triangular blend weight (dolphin ``goldstein`` style: a linear ramp on one
+    quadrant mirrored to the other three). ``n`` must be even.
+
+    The ramp is ``1 - |k - (half - 0.5)| / half`` so the patch edge keeps a strictly positive
+    weight (``0.5 / half``) and a border pixel covered by a single patch is still defined;
+    dolphin's ramp reaches exactly 0 there.
+    # source: https://raw.githubusercontent.com/isce-framework/dolphin/main/src/dolphin/goldstein.py
+    #   (make_weight: linear ramp ``1 - |arange(n/2) - (n/2 - 1)| / (n/2 - 1)`` mirrored with
+    #   np.block; psize=32, step=psize//2, out /= weight_sum)
+    """
+    half = n // 2
+    ramp = 1.0 - np.abs(np.arange(half) - (half - 0.5)) / half
+    quad = np.outer(ramp, ramp)
+    top = np.concatenate([quad, quad[:, ::-1]], axis=1)
+    full = np.concatenate([top, top[::-1, :]], axis=0)
+    return xp.asarray(full.astype(dtype))
+
+
+def _smooth_spectrum(mag: Any, size: int, mode: str, xp: ModuleType) -> Any:
+    """``size x size`` box mean of a patch spectrum magnitude.
+
+    ``mode='box'`` zero-pads the spectrum edges (divides by ``size²`` everywhere);
+    ``mode='wrap'`` treats the spectrum as periodic, which is what
+    ``scipy.ndimage.uniform_filter(..., mode='wrap')`` does — the window covers ``size // 2``
+    bins before and ``size - 1 - size // 2`` after the centre, the same placement as
+    :func:`box_sum`.
+    """
+    if mode == "box":
+        return box_filter(mag, size, xp, normalize="full")
+    ny, nx = mag.shape[-2], mag.shape[-1]
+    before = size // 2
+    after = size - 1 - before
+    pad = [(0, 0)] * (mag.ndim - 2) + [(before, after), (before, after)]
+    # source: https://docs.cupy.dev/en/stable/reference/generated/cupy.pad.html (mode='wrap')
+    p = xp.pad(mag, pad, mode="wrap")
+    return box_sum(p, size, xp)[..., before : before + ny, before : before + nx] / float(
+        size * size
+    )
+
+
+def _padded_length(n: int, window: int, step: int) -> int:
+    """Smallest ``window + k·step`` (``k >= 0``) that is ``>= n``: the zero-padded extent
+    on which a regular patch grid stepped by ``step`` covers every pixel."""
+    return window + step * math.ceil(max(n - window, 0) / step)
 
 
 def goldstein_filter(
@@ -137,16 +189,38 @@ def goldstein_filter(
     overlap: int | None = None,
     smooth: int = 3,
     xp: ModuleType | None = None,
+    *,
+    weight: str = "hann",
+    pad: str = "clamp",
+    smooth_mode: str = "box",
+    keep_magnitude: bool = False,
 ) -> Any:
     """Goldstein-Werner adaptive filter of a complex interferogram (2-D, last two axes).
 
     Patches of ``window`` x ``window`` pixels, stepped by ``window - overlap`` (default overlap
     ``window // 2``), are transformed with ``fft2``; the spectrum is multiplied by the
     ``smooth`` x ``smooth`` box-smoothed magnitude raised to ``alpha`` (``alpha=0`` → identity)
-    and the filtered patches are blended with a 2-D Hann weight (normalised by the summed
-    weights). The last patch row/column is clamped to the image edge, so no data outside the
-    image is synthesised and the output has the input shape. Returns a complex array; the
-    phase is ``xp.angle(result)``.
+    and the filtered patches are blended with a 2-D window weight (normalised by the summed
+    weights). Returns a complex array; the phase is ``xp.angle(result)``.
+
+    Variants (ADR-0096; the defaults are the pipeline filter, the alternatives reproduce the
+    research module's historical implementation bit-for-bit on CPU):
+
+    * ``weight``: ``'hann'`` (2-D Hann, strictly positive) or ``'bartlett'`` (mirrored linear
+      ramp, dolphin style; ``window`` must be even).
+    * ``pad``: ``'clamp'`` — the last patch row/column is shifted back onto the image edge,
+      so nothing outside the image is synthesised and arrays smaller than ``window`` are
+      rejected; ``'zero'`` — the image is zero-padded to a regular grid of patches and the
+      result is cropped (arrays smaller than ``window`` are padded).
+    * ``smooth_mode``: ``'box'`` — zero-padded box mean of the spectrum magnitude; ``'wrap'``
+      — periodic box mean (``scipy.ndimage.uniform_filter(mode='wrap')`` semantics).
+    * ``keep_magnitude``: return ``|igram| · filtered / |filtered|`` (filtered phase, original
+      magnitude — masked zeros stay zero) instead of the blended filtered values.
+
+    Patches that are entirely zero (masked / nodata) contribute neither data nor weight, so a
+    masked area never attenuates its neighbours. dtype: ``complex64`` in → ``complex64`` out,
+    ``complex128`` in → ``complex128`` out (accumulation and blend weights in the matching real
+    precision); real input is taken as wrapped phase → ``complex64``.
 
     Reference: Goldstein & Werner (1998), Radar interferogram filtering for geophysical
     applications, GRL 25(21), doi:10.1029/1998GL900033 — ``H = S{|Z|}^alpha * Z``. Patch size,
@@ -159,6 +233,18 @@ def goldstein_filter(
     if window < 4:
         msg = f"window must be >= 4, got {window}"
         raise ValueError(msg)
+    if weight not in ("hann", "bartlett"):
+        msg = f"unknown weight {weight!r} (hann | bartlett)"
+        raise ValueError(msg)
+    if pad not in ("clamp", "zero"):
+        msg = f"unknown pad mode {pad!r} (clamp | zero)"
+        raise ValueError(msg)
+    if smooth_mode not in ("box", "wrap"):
+        msg = f"unknown smooth_mode {smooth_mode!r} (box | wrap)"
+        raise ValueError(msg)
+    if weight == "bartlett" and window % 2:
+        msg = f"window must be even for the bartlett weight, got {window}"
+        raise ValueError(msg)
     ov = window // 2 if overlap is None else int(overlap)
     if not 0 <= ov < window:
         msg = f"overlap must be in [0, window), got {ov}"
@@ -170,32 +256,53 @@ def goldstein_filter(
         raise ValueError(msg)
     if not np.issubdtype(z.dtype, np.complexfloating):
         z = xp.exp(1j * z.astype(np.float32))
-    z = z.astype(np.complex64)
+    if z.dtype != np.complex128:
+        z = z.astype(np.complex64)
+    cdtype = z.dtype
+    rdtype = np.float64 if cdtype == np.complex128 else np.float32
     ny, nx = z.shape
-    if ny < window or nx < window:
-        msg = f"array {z.shape} smaller than the filter window {window}"
-        raise ValueError(msg)
-    # patch origins stepped by ``step``; the last patch is clamped to the image edge so every
-    # pixel is covered without synthesising data outside the image (no padding)
-    ys = _patch_origins(ny, window, step)
-    xs = _patch_origins(nx, window, step)
-    acc = xp.zeros((ny, nx), dtype=np.complex64)
-    wacc = xp.zeros((ny, nx), dtype=np.float32)
-    w2 = _hann2d(window, xp)
+    if pad == "clamp":
+        if ny < window or nx < window:
+            msg = f"array {z.shape} smaller than the filter window {window}"
+            raise ValueError(msg)
+        work = z
+        # patch origins stepped by ``step``; the last patch is clamped to the image edge so
+        # every pixel is covered without synthesising data outside the image (no padding)
+        ys = _patch_origins(ny, window, step)
+        xs = _patch_origins(nx, window, step)
+    else:
+        ny_p, nx_p = _padded_length(ny, window, step), _padded_length(nx, window, step)
+        work = z
+        if (ny_p, nx_p) != (ny, nx):
+            work = xp.pad(z, [(0, ny_p - ny), (0, nx_p - nx)], mode="constant")
+        ys = list(range(0, ny_p - window + 1, step))
+        xs = list(range(0, nx_p - window + 1, step))
+    acc = xp.zeros(work.shape, dtype=cdtype)
+    wacc = xp.zeros(work.shape, dtype=rdtype)
+    w2 = _hann2d(window, xp, rdtype) if weight == "hann" else _bartlett2d(window, xp, rdtype)
     for y0 in ys:
         for x0 in xs:
-            patch = z[y0 : y0 + window, x0 : x0 + window]
+            patch = work[y0 : y0 + window, x0 : x0 + window]
+            # 0-d device flag (no host sync): an all-zero patch adds neither data nor weight
+            live = xp.any(patch != 0)
             spec = xp.fft.fft2(patch)
             if alpha > 0:
                 mag = xp.abs(spec)
                 if smooth > 1:
                     # box sums can produce tiny negatives where the true value is 0
-                    mag = xp.maximum(box_filter(mag, smooth, xp, normalize="full"), 0.0)
+                    mag = xp.maximum(_smooth_spectrum(mag, smooth, smooth_mode, xp), 0.0)
                 spec = spec * (mag**alpha)
             filt = xp.fft.ifft2(spec)
-            acc[y0 : y0 + window, x0 : x0 + window] += filt * w2
-            wacc[y0 : y0 + window, x0 : x0 + window] += w2
-    return acc / xp.maximum(wacc, np.float32(1e-12))
+            acc[y0 : y0 + window, x0 : x0 + window] += filt * (w2 * live)
+            wacc[y0 : y0 + window, x0 : x0 + window] += w2 * live
+    out = acc / xp.maximum(wacc, rdtype(1e-12))
+    if pad == "zero":
+        out = out[:ny, :nx]
+    if keep_magnitude:
+        mag_out = xp.abs(out)
+        unit = xp.where(mag_out > 0, out / xp.where(mag_out > 0, mag_out, 1.0), 0.0)
+        out = xp.abs(z) * unit
+    return out.astype(cdtype, copy=False)
 
 
 def _patch_origins(n: int, window: int, step: int) -> list[int]:

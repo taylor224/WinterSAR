@@ -21,32 +21,46 @@ from rich.table import Table
 from wintersar.i18n import t
 from wintersar.io.igrams import load_igram_stack
 from wintersar.io.schemas import Finding
+from wintersar.util.clihelp import h
 from wintersar.util.clistate import state
 from wintersar.util.masking import mask_text
-from wintersar.util.output import console, emit_json, err_console, print_findings
+from wintersar.util.output import (
+    CLI_BAD_VALUE,
+    CLI_CONFIG_INVALID,
+    CLI_CONFIG_MISSING,
+    CLI_INPUT_MISSING,
+    cli_finding,
+    console,
+    emit_json,
+    exit_with_findings,
+    print_findings,
+)
 
-TsOpt = Annotated[
-    Path,
-    typer.Option(
-        "--ts", help="Time series (.npz from the fake engine, or any format io.formats reads)."
-    ),
-]
+TsOpt = Annotated[Path, typer.Option("--ts", help=h("cli_help.common.ts"))]
 
 
-def _require(path: Path | None, key: str) -> None:
+def _require(path: Path | None, key: str, command: str, option: str) -> None:
+    """A named input must exist: CLI-006 with the module's own cause text, exit 2."""
     if path is not None and not path.exists():
-        err_console.print(f"[red]{t(key, path=mask_text(str(path)))}[/]")
-        raise typer.Exit(code=2)
+        finding = cli_finding(CLI_INPUT_MISSING, message_key=key, path=str(path), option=option)
+        raise exit_with_findings(command, [finding])
 
 
-def _load_ts(ts: Path, heading: float | None, incidence: float | None) -> Any:
+def _bad_value(command: str, option: str, value: Any, allowed: str) -> typer.Exit:
+    finding = cli_finding(
+        CLI_BAD_VALUE, option=option, value=str(value), allowed=allowed, command=command
+    )
+    return exit_with_findings(command, [finding])
+
+
+def _load_ts(ts: Path, heading: float | None, incidence: float | None, command: str) -> Any:
     from wintersar.validate.api import ValidateError, load_timeseries
 
-    _require(ts, "validate.cli.ts_not_found")
+    _require(ts, "validate.cli.ts_not_found", command, "--ts")
     try:
         return load_timeseries(ts, heading_deg=heading, incidence_deg=incidence)
     except ValidateError as exc:
-        _fail([exc.finding], "validate")
+        _fail([exc.finding], command)
 
 
 def _fail(findings: list[Finding], command: str) -> None:
@@ -69,40 +83,40 @@ def _load_npy(path: Path | None) -> Any:
 def validate_cmd(
     ts: TsOpt,
     leveling: Annotated[
-        Path | None, typer.Option("--leveling", help="Levelling CSV (plan §5.6 schema).")
+        Path | None, typer.Option("--leveling", help=h("cli_help.validate.leveling"))
     ] = None,
-    gnss: Annotated[Path | None, typer.Option("--gnss", help="GNSS CSV (ENU columns).")] = None,
+    gnss: Annotated[Path | None, typer.Option("--gnss", help=h("cli_help.validate.gnss"))] = None,
     out: Annotated[
-        Path | None,
-        typer.Option("--out", "-o", help="Report directory (default: <ts dir>/validate)."),
+        Path | None, typer.Option("--out", "-o", help=h("cli_help.common.out_dir"))
     ] = None,
-    radius: Annotated[
-        float, typer.Option("--radius", help="Pixel averaging radius around each site (m).")
-    ] = 100.0,
-    method: Annotated[str, typer.Option("--method", help="mean | median")] = "mean",
-    align: Annotated[str, typer.Option("--align", help="nearest | interp")] = "nearest",
+    radius: Annotated[float, typer.Option("--radius", help=h("cli_help.validate.radius"))] = 100.0,
+    method: Annotated[str, typer.Option("--method", help=h("cli_help.validate.method"))] = "mean",
+    align: Annotated[str, typer.Option("--align", help=h("cli_help.validate.align"))] = "nearest",
     max_gap_days: Annotated[
-        int, typer.Option("--max-gap-days", help="Tolerance for nearest-date alignment.")
+        int, typer.Option("--max-gap-days", help=h("cli_help.validate.max_gap_days"))
     ] = 6,
     heading: Annotated[
-        float | None,
-        typer.Option("--heading", help="Override satellite heading (deg, clockwise from north)."),
+        float | None, typer.Option("--heading", help=h("cli_help.validate.heading"))
     ] = None,
     incidence: Annotated[
-        float | None,
-        typer.Option("--incidence", help="Override incidence angle (deg from vertical)."),
+        float | None, typer.Option("--incidence", help=h("cli_help.validate.incidence"))
     ] = None,
-    no_plots: Annotated[bool, typer.Option("--no-plots", help="Skip PNG plots.")] = False,
+    no_plots: Annotated[
+        bool, typer.Option("--no-plots", help=h("cli_help.validate.no_plots"))
+    ] = False,
 ) -> None:
     """Compare the InSAR time series with levelling / GNSS ground truth (R-10)."""
     from wintersar.validate.api import ValidateError, validate_timeseries
     from wintersar.validate.ground_truth import GroundTruthError
 
-    _require(ts, "validate.cli.ts_not_found")
-    _require(leveling, "validate.cli.csv_not_found")
-    _require(gnss, "validate.cli.csv_not_found")
-    if method not in ("mean", "median") or align not in ("nearest", "interp"):
-        raise typer.BadParameter("--method mean|median, --align nearest|interp")
+    command = "validate"
+    _require(ts, "validate.cli.ts_not_found", command, "--ts")
+    _require(leveling, "validate.cli.csv_not_found", command, "--leveling")
+    _require(gnss, "validate.cli.csv_not_found", command, "--gnss")
+    if method not in ("mean", "median"):
+        raise _bad_value(command, "--method", method, "mean | median")
+    if align not in ("nearest", "interp"):
+        raise _bad_value(command, "--align", align, "nearest | interp")
     try:
         result, paths = validate_timeseries(
             ts,
@@ -176,35 +190,26 @@ def validate_cmd(
 
 def refpoint_cmd(
     ts: TsOpt,
-    aoi: Annotated[
-        Path | None,
-        typer.Option("--aoi", help="AOI GeoJSON (lon/lat); default: all valid pixels."),
-    ] = None,
-    top: Annotated[int, typer.Option("--top", help="Number of candidates.")] = 5,
+    aoi: Annotated[Path | None, typer.Option("--aoi", help=h("cli_help.refpoint.aoi"))] = None,
+    top: Annotated[int, typer.Option("--top", help=h("cli_help.refpoint.top"))] = 5,
     coherence: Annotated[
-        Path | None, typer.Option("--coherence", help="Mean coherence map (.npy/.npz).")
+        Path | None, typer.Option("--coherence", help=h("cli_help.refpoint.coherence"))
     ] = None,
     conncomp: Annotated[
-        Path | None, typer.Option("--conncomp", help="Connected-component map (.npy/.npz).")
+        Path | None, typer.Option("--conncomp", help=h("cli_help.refpoint.conncomp"))
     ] = None,
-    dem: Annotated[
-        Path | None, typer.Option("--dem", help="Elevation map (.npy/.npz, metres).")
-    ] = None,
+    dem: Annotated[Path | None, typer.Option("--dem", help=h("cli_help.refpoint.dem"))] = None,
     weights: Annotated[
-        str | None,
-        typer.Option(
-            "--weights", help="Override weights, e.g. coherence=0.4,conncomp=0.3 (ADR-0041)."
-        ),
+        str | None, typer.Option("--weights", help=h("cli_help.refpoint.weights"))
     ] = None,
     min_coherence: Annotated[
-        float, typer.Option("--min-coherence", help="Discard pixels below this mean coherence.")
+        float, typer.Option("--min-coherence", help=h("cli_help.refpoint.min_coherence"))
     ] = 0.0,
     mintpy_threshold: Annotated[
-        float,
-        typer.Option("--mintpy-threshold", help="MintPy minCoherence for the comparison."),
+        float, typer.Option("--mintpy-threshold", help=h("cli_help.refpoint.mintpy_threshold"))
     ] = 0.85,
     out: Annotated[
-        Path | None, typer.Option("--out", "-o", help="Write candidates JSON here.")
+        Path | None, typer.Option("--out", "-o", help=h("cli_help.refpoint.out"))
     ] = None,
 ) -> None:
     """Recommend reference-point candidates and compare with MintPy's auto rule (R-09)."""
@@ -215,14 +220,21 @@ def refpoint_cmd(
         recommend,
     )
 
-    _require(aoi, "validate.cli.aoi_not_found")
-    tsobj = _load_ts(ts, None, None)
+    command = "refpoint"
+    _require(aoi, "validate.cli.aoi_not_found", command, "--aoi")
+    for opt, p in (("--coherence", coherence), ("--conncomp", conncomp), ("--dem", dem)):
+        _require(p, "cli.CLI-006.cause", command, opt)
+    tsobj = _load_ts(ts, None, None, command)
     w: dict[str, float] | None = None
     if weights:
         w = dict(DEFAULT_WEIGHTS)
         for item in weights.split(","):
             k, _, v = item.partition("=")
-            w[k.strip()] = float(v)
+            try:
+                w[k.strip()] = float(v)
+            except ValueError:
+                allowed = ", ".join(f"{name}=<float>" for name in DEFAULT_WEIGHTS)
+                raise _bad_value(command, "--weights", weights, allowed) from None
     mask = aoi_mask_from_geojson(aoi, tsobj) if aoi is not None else None
     coh = _load_npy(coherence)
     kw: dict[str, Any] = {
@@ -234,8 +246,9 @@ def refpoint_cmd(
     try:
         candidates = recommend(tsobj, mask, w, top_k=top, **kw)
     except ValueError as exc:
-        err_console.print(f"[red]{mask_text(str(exc))}[/]")
-        raise typer.Exit(code=2) from None
+        # e.g. an unknown weight name; the module's message is the detail
+        allowed = f"{', '.join(DEFAULT_WEIGHTS)} — {mask_text(str(exc))}"
+        raise _bad_value(command, "--weights", weights, allowed) from None
     comparison: dict[str, Any] | None = None
     if coh is not None or tsobj.coherence is not None:
         comparison = compare_with_mintpy_auto(
@@ -315,28 +328,15 @@ def refpoint_cmd(
 
 
 def sweep_cmd(
-    config: Annotated[Path, typer.Option("--config", "-c", help="config.yaml (plan §4.4)")],
-    grid: Annotated[Path, typer.Option("--grid", help="sweep.yaml (grid of dotted config keys).")],
-    out: Annotated[
-        Path | None,
-        typer.Option("--out", "-o", help="Output directory (default: <workdir>/sweep)."),
-    ] = None,
+    config: Annotated[Path, typer.Option("--config", "-c", help=h("cli_help.common.config"))],
+    grid: Annotated[Path, typer.Option("--grid", help=h("cli_help.sweep.grid"))],
+    out: Annotated[Path | None, typer.Option("--out", "-o", help=h("cli_help.sweep.out"))] = None,
     leveling: Annotated[
-        Path | None,
-        typer.Option(
-            "--leveling",
-            help="Levelling CSV for gt_rmse (default: config validate.leveling_csv).",
-        ),
+        Path | None, typer.Option("--leveling", help=h("cli_help.sweep.leveling"))
     ] = None,
-    gnss: Annotated[Path | None, typer.Option("--gnss", help="GNSS CSV for gt_rmse.")] = None,
-    radius: Annotated[float, typer.Option("--radius", help="Site averaging radius (m).")] = 100.0,
-    set_: Annotated[
-        list[str] | None,
-        typer.Option(
-            "--set",
-            help="Stage parameter override stage.key=value (same as 'wintersar run --set').",
-        ),
-    ] = None,
+    gnss: Annotated[Path | None, typer.Option("--gnss", help=h("cli_help.sweep.gnss"))] = None,
+    radius: Annotated[float, typer.Option("--radius", help=h("cli_help.sweep.radius"))] = 100.0,
+    set_: Annotated[list[str] | None, typer.Option("--set", help=h("cli_help.sweep.set"))] = None,
 ) -> None:
     """Run the parameter grid through the cached DAG and rank the results (R-08, R-11)."""
     from wintersar.pipeline.cli import parse_set
@@ -352,17 +352,20 @@ def sweep_cmd(
         write_sweep,
     )
 
-    _require(grid, "validate.cli.grid_not_found")
-    _require(leveling, "validate.cli.csv_not_found")
-    _require(gnss, "validate.cli.csv_not_found")
+    command = "sweep"
+    _require(grid, "validate.cli.grid_not_found", command, "--grid")
+    _require(leveling, "validate.cli.csv_not_found", command, "--leveling")
+    _require(gnss, "validate.cli.csv_not_found", command, "--gnss")
     try:
         cfg = load_config(config)
     except FileNotFoundError:
-        err_console.print(f"[red]{t('cli.config_not_found', path=mask_text(str(config)))}[/]")
-        raise typer.Exit(code=2) from None
+        finding = cli_finding(CLI_CONFIG_MISSING, path=str(config), option="--config")
+        raise exit_with_findings(command, [finding]) from None
     except ValueError as exc:  # pydantic ValidationError is a ValueError
-        err_console.print(f"[red]{t('cli.invalid_config', error=mask_text(str(exc)))}[/]")
-        raise typer.Exit(code=2) from None
+        finding = cli_finding(
+            CLI_CONFIG_INVALID, path=str(config), error=str(exc), option="--config"
+        )
+        raise exit_with_findings(command, [finding]) from None
     try:
         spec = load_sweep_yaml(grid)
         points = grid_points(spec)
@@ -390,7 +393,7 @@ def sweep_cmd(
             _fail([exc.finding], "sweep")
             return
     out_dir = out if out is not None else cfg.workdir / "sweep"
-    overrides = parse_set(set_)
+    overrides = parse_set(set_, command)
     if not state.json:
         console.print(
             f"[bold]{t('validate.cli.sweep_title')}[/] — {t('validate.cli.sweep_points', n=len(points))}"
@@ -441,25 +444,11 @@ def sweep_cmd(
 
 
 def closure_cmd(
-    igrams: Annotated[
-        Path,
-        typer.Option(
-            "--igrams", help="Interferogram stack .npz (wrapped, coherence, pairs, dates)."
-        ),
-    ],
-    unw: Annotated[
-        Path | None,
-        typer.Option("--unw", help="Unwrapped stack .npz (unw, optional conncomp)."),
-    ] = None,
-    out: Annotated[
-        Path | None,
-        typer.Option("--out", "-o", help="Write closure_dashboard.json (+ maps .npz) here."),
-    ] = None,
-    wrapped: Annotated[
-        bool,
-        typer.Option("--wrapped", help="Use the wrapped phase even when unw is available."),
-    ] = False,
-    top: Annotated[int, typer.Option("--top", help="Rows to print.")] = 10,
+    igrams: Annotated[Path, typer.Option("--igrams", help=h("cli_help.closure.igrams"))],
+    unw: Annotated[Path | None, typer.Option("--unw", help=h("cli_help.closure.unw"))] = None,
+    out: Annotated[Path | None, typer.Option("--out", "-o", help=h("cli_help.closure.out"))] = None,
+    wrapped: Annotated[bool, typer.Option("--wrapped", help=h("cli_help.closure.wrapped"))] = False,
+    top: Annotated[int, typer.Option("--top", help=h("cli_help.closure.top"))] = 10,
 ) -> None:
     """Loop-closure statistics: per-triplet/pixel RMS and suspicious interferograms (§12.1)."""
     from wintersar.validate.closure import (
@@ -468,8 +457,9 @@ def closure_cmd(
         write_dashboard_json,
     )
 
-    _require(igrams, "validate.cli.igrams_not_found")
-    _require(unw, "validate.cli.unw_not_found")
+    command = "closure"
+    _require(igrams, "validate.cli.igrams_not_found", command, "--igrams")
+    _require(unw, "validate.cli.unw_not_found", command, "--unw")
     stack = load_igram_stack(igrams)
     if unw is not None:
         with np.load(unw, allow_pickle=False) as z:
@@ -522,7 +512,7 @@ def closure_cmd(
 
 def register(app: typer.Typer) -> None:
     """Mount the four commands on the root app (same shape as pipeline/cli.py)."""
-    app.command("validate")(validate_cmd)
-    app.command("refpoint")(refpoint_cmd)
-    app.command("sweep")(sweep_cmd)
-    app.command("closure")(closure_cmd)
+    app.command("validate", help=h("cli_help.validate.help"))(validate_cmd)
+    app.command("refpoint", help=h("cli_help.refpoint.help"))(refpoint_cmd)
+    app.command("sweep", help=h("cli_help.sweep.help"))(sweep_cmd)
+    app.command("closure", help=h("cli_help.closure.help"))(closure_cmd)

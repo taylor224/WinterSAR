@@ -8,6 +8,11 @@ private params (``_cores``, ``_memory_gb``, ``_gpu``) together with ``_out_dir``
 memory against the budget (sum of reservations <= budget) so that a future stage-parallel
 executor keeps the same accounting.
 
+Incremental mode (PERF-06, ADR-0080): with ``dag.incremental`` a stale incremental node is
+re-run in its own directory with ``pairs/`` kept; the engine receives ``_pairs_dir`` and
+``_pairs_done`` (per-pair results already there) and reports what it reused/computed in the
+artifact meta, which lands in ``record.extra["incremental"]``.
+
 On failure the manifest is written with ``status: failed``, the engine logs are handed to
 ``wintersar.diagnose.api.diagnose_logs`` (lazy; absent -> no extra findings), a generic
 ``PIPELINE-001`` finding with the masked log excerpt is attached, an optional
@@ -27,9 +32,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from wintersar.compute.xp import stage_gpu
 from wintersar.engines.base import EngineNotAvailableError
 from wintersar.io.schemas import Artifact, Artifacts, Finding, Resources, StageRecord
-from wintersar.pipeline import cache
+from wintersar.pipeline import cache, incremental
 from wintersar.pipeline.config import Config
 from wintersar.pipeline.dag import Dag, Node
 from wintersar.pipeline.stages import (
@@ -264,6 +270,11 @@ class Executor:
         self.estimates = estimates or {}
         self.run_id = _now().strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:6]
 
+    @property
+    def incremental(self) -> bool:
+        """PERF-06 mode is a property of the DAG the executor was built for."""
+        return self.dag.incremental
+
     # -------------------------------------------------------------- run
     def run(self) -> tuple[list[StageRecord], Artifacts, list[Finding]]:
         records: list[StageRecord] = []
@@ -286,12 +297,19 @@ class Executor:
                 available = available.merged(cache.record_artifacts(node.record))
                 continue
             resolved = self.dag.resolve(node, available)
-            record = self.dag.lookup_cache(node) if resolved else None
+            node.pairs_expected = self.dag.expected_pairs(node, available)
+            record = None
+            if resolved:
+                record, fresh = self.dag.lookup(node, available)
+                if record is not None and not fresh:
+                    node.stale = True
+                    record = None
             if record is not None:
                 node.record = record
                 records.append(_cache_hit(record))
                 available = available.merged(cache.record_artifacts(record))
                 continue
+            node.partial = self.dag.partial_cache(node) if resolved else None
             if not resolved or node.blocked or before_start:
                 if before_start and not node.blocked:
                     node.findings.append(self.dag.no_cached_result(node))
@@ -323,7 +341,8 @@ class Executor:
             with cache.node_lock(node_dir):
                 return self._execute_locked(node, node_dir, available)
         except cache.NodeBusyError:
-            record = self.dag.lookup_cache(node)  # the other run may have just finished it
+            # the other run may have just finished it
+            record = self.dag.lookup_cache(node, available)
             if record is not None:
                 node.record = record
                 return _cache_hit(record)
@@ -349,7 +368,10 @@ class Executor:
 
     def _execute_locked(self, node: Node, node_dir: Path, available: Artifacts) -> StageRecord:
         assert node.node_hash is not None
-        out_dir, log_dir = cache.prepare_node_dir(node_dir, clean=True)
+        partial = self.incremental and node.incremental and not node.forced
+        # a full re-run (default mode, --force) starts from an empty directory; an incremental
+        # one keeps pairs/ so the engine can pick up the results that are still valid
+        out_dir, log_dir = cache.prepare_node_dir(node_dir, clean=True, keep_pairs=partial)
         record = StageRecord(
             stage=node.stage,
             node_hash=node.node_hash,
@@ -400,15 +422,25 @@ class Executor:
             "_memory_gb": float(granted),
             "_gpu": bool(self.machine.gpu),
         }
+        if partial:
+            done = incremental.PairCache.load(node_dir, node.stage)
+            params[incremental.PAIRS_DIR_KEY] = str(incremental.pairs_dir(node_dir))
+            params[incremental.PAIRS_DONE_KEY] = done.done_entries()
+            record.extra["incremental"] = {
+                "requested": True,
+                **incremental.pair_counts(node.pairs_expected, done.done),
+            }
         t0 = time.perf_counter()
         try:
-            outputs, extra_findings = self._dispatch(node, inputs, params, out_dir, log_dir)
+            with stage_gpu(params.get("_gpu")):
+                outputs, extra_findings = self._dispatch(node, inputs, params, out_dir, log_dir)
             record.findings.extend(extra_findings)
             outputs = self._hash_outputs(node, outputs)
             record.outputs = {n: str(a.path) for n, a in outputs.items.items()}
             record.extra[cache.ARTIFACTS_KEY] = cache.artifacts_to_extra(outputs)
             self._lift_tile_dirs(record, outputs)
             self._record_actual_unwrap_engine(node, record, outputs)
+            self._record_pairs(node, record, outputs, requested=partial)
             record.status = "ok"
         except Exception as exc:
             self._on_failure(node, record, log_dir, exc)
@@ -436,6 +468,49 @@ class Executor:
             if isinstance(dirs, dict) and dirs:
                 record.extra["tile_dirs"] = {str(k): str(v) for k, v in dirs.items()}
                 return
+
+    def _record_pairs(
+        self, node: Node, record: StageRecord, outputs: Artifacts, requested: bool
+    ) -> None:
+        """Copy the per-pair accounting an incremental engine reports into the manifest.
+
+        ``meta["pairs"]`` (the pair set the artifact holds) is always recorded when present;
+        ``pairs_reused``/``pairs_computed`` fill ``extra["incremental"]``. An engine that was
+        asked for sub-caching but reported nothing recomputed everything: say so
+        (``PIPELINE-016``, INFO) instead of letting the run look incremental.
+        # source: src/wintersar/pipeline/incremental.py::PairCache.summary (meta keys)
+        """
+        pairs: list[str] | None = None
+        reused: list[str] | None = None
+        computed: list[str] | None = None
+        for art in outputs.items.values():
+            got = art.meta.get(incremental.META_PAIRS)
+            if pairs is None and isinstance(got, list | tuple):
+                pairs = [str(k) for k in got]
+            r, c = art.meta.get(incremental.META_REUSED), art.meta.get(incremental.META_COMPUTED)
+            if reused is None and isinstance(r, list | tuple) and isinstance(c, list | tuple):
+                reused, computed = [str(k) for k in r], [str(k) for k in c]
+        if pairs is not None:
+            record.extra["pairs"] = pairs
+        if not requested:
+            return
+        info = record.extra.setdefault("incremental", {"requested": True})
+        if reused is not None and computed is not None:
+            info.update({"supported": True, "reused": len(reused), "computed": len(computed)})
+            info["computed_pairs"] = computed
+            return
+        info.update({"supported": False, "reused": 0, "computed": len(pairs or [])})
+        record.findings.append(
+            Finding(
+                rule_id="PIPELINE-016",
+                severity="INFO",
+                message_key="pipeline.PIPELINE-016.cause",
+                fix_key="pipeline.PIPELINE-016.fix",
+                params={"stage": node.stage, "engine": node.engine or "python"},
+                evidence={"node_hash": node.node_hash},
+                scope=node.stage,
+            )
+        )
 
     def _record_actual_unwrap_engine(
         self, node: Node, record: StageRecord, outputs: Artifacts

@@ -25,6 +25,7 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from wintersar.compute.xp import GpuRequest, asarray, resolve_backend
 from wintersar.i18n import t
 from wintersar.pipeline.config import TilesCfg, UnwrapCfg
 from wintersar.util.sysinfo import MachineSpec
@@ -143,7 +144,9 @@ def estimate_memory_mb(
 # ---------------------------------------------------------------------------- fringes
 
 
-def fringe_density(wrapped: NDArray[Any], mask: NDArray[np.bool_] | None = None) -> float:
+def fringe_density(
+    wrapped: NDArray[Any], mask: NDArray[np.bool_] | None = None, *, gpu: GpuRequest = None
+) -> float:
     """Mean absolute phase gradient of a wrapped interferogram, normalised to [0, 1].
 
     The gradient is taken as the angle of complex neighbour differences
@@ -159,28 +162,38 @@ def fringe_density(wrapped: NDArray[Any], mask: NDArray[np.bool_] | None = None)
 
     Pixels under ``mask`` (``True`` = masked) or with non-finite phase are ignored; returns
     NaN when nothing is valid.
+
+    Runs on CuPy or numpy according to the backend policy (PERF-10, ADR-0095; ``gpu`` =
+    executor ``_gpu`` param inside a stage, ``None`` = env / stage context / auto).
     """
-    w = np.asarray(wrapped)
+    xp = resolve_backend(gpu).xp
+    w = asarray(wrapped, xp)
     if w.ndim != 2:
         msg = f"wrapped must be 2-D, got shape {w.shape}"
         raise ValueError(msg)
-    phase = np.angle(w).astype(np.float64) if np.iscomplexobj(w) else w.astype(np.float64)
-    valid = np.isfinite(phase)
+    phase = (
+        xp.angle(w).astype(np.float64)
+        if np.issubdtype(w.dtype, np.complexfloating)
+        else w.astype(np.float64)
+    )
+    valid = xp.isfinite(phase)
     if mask is not None:
-        m = np.asarray(mask, dtype=bool)
-        if m.shape != phase.shape:
+        m = asarray(mask, xp, dtype=bool)
+        if tuple(m.shape) != tuple(phase.shape):
             msg = f"mask shape {m.shape} != wrapped shape {phase.shape}"
             raise ValueError(msg)
         valid &= ~m
-    z = np.exp(1j * np.where(valid, phase, 0.0))
-    dy = np.angle(z[1:, :] * np.conj(z[:-1, :]))
-    dx = np.angle(z[:, 1:] * np.conj(z[:, :-1]))
+    z = xp.exp(1j * xp.where(valid, phase, 0.0))
+    dy = xp.angle(z[1:, :] * xp.conj(z[:-1, :]))
+    dx = xp.angle(z[:, 1:] * xp.conj(z[:, :-1]))
     vy = valid[1:, :] & valid[:-1, :]
     vx = valid[:, 1:] & valid[:, :-1]
-    vals = np.concatenate([np.abs(dy[vy]), np.abs(dx[vx])])
+    # ``extract`` == boolean indexing in C order on both backends
+    # source: https://docs.cupy.dev/en/stable/reference/generated/cupy.extract.html
+    vals = xp.concatenate([xp.extract(vy, xp.abs(dy)), xp.extract(vx, xp.abs(dx))])
     if vals.size == 0:
         return float("nan")
-    return float(np.mean(vals) / np.pi)
+    return float(vals.mean() / np.pi)
 
 
 # ---------------------------------------------------------------------------- tiles

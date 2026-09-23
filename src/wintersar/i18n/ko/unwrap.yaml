@@ -37,6 +37,7 @@ unwrap:
     conncomp: "연결성분 수(중앙값) {median_conncomp} · 마스크 비율 {masked_fraction:.1%}"
     jumps: "타일 경계 단차: {n_jump} / {n_boundaries} 경계"
     outputs: "산출물: {unw} · {stats}"
+    reused: "캐시된 언래핑 결과 재사용 {n_reused}개 · 새로 계산 {n_new}개 (증분 모드, PERF-06)"
   UNW-001:
     cause: "언래핑 백엔드 '{method}'을(를) 사용할 수 없습니다 ({detail})."
     fix: "설치하거나({install_hint}) wintersar check-install로 설치 상태를 확인하고, unwrap.method를 설치된 엔진(snaphu, tophu)으로 바꾸세요."

@@ -1,0 +1,361 @@
+{
+  "artifacts": {
+    "coreg_manifest": {
+      "keys": [
+        "status"
+      ],
+      "kind": "json"
+    },
+    "igrams": {
+      "arrays": {
+        "coherence": {
+          "dtype": "float32",
+          "shape": [
+            14,
+            96,
+            96
+          ]
+        },
+        "dates": {
+          "dtype": "<U10",
+          "shape": [
+            6
+          ]
+        },
+        "displacement_true": {
+          "dtype": "float32",
+          "shape": [
+            6,
+            96,
+            96
+          ]
+        },
+        "mask": {
+          "dtype": "bool",
+          "shape": [
+            14,
+            96,
+            96
+          ]
+        },
+        "pairs": {
+          "dtype": "<U17",
+          "shape": [
+            14
+          ]
+        },
+        "unw_true": {
+          "dtype": "float32",
+          "shape": [
+            14,
+            96,
+            96
+          ]
+        },
+        "velocity_true": {
+          "dtype": "float32",
+          "shape": [
+            96,
+            96
+          ]
+        },
+        "wrapped": {
+          "dtype": "float32",
+          "shape": [
+            14,
+            96,
+            96
+          ]
+        }
+      },
+      "kind": "npz"
+    },
+    "slc_manifest": {
+      "keys": [
+        "n_dates",
+        "source"
+      ],
+      "kind": "json"
+    },
+    "timeseries": {
+      "arrays": {
+        "dates": {
+          "dtype": "<U10",
+          "shape": [
+            6
+          ]
+        },
+        "displacement_m": {
+          "dtype": "float32",
+          "shape": [
+            6,
+            96,
+            96
+          ]
+        },
+        "velocity_m_per_yr": {
+          "dtype": "float32",
+          "shape": [
+            96,
+            96
+          ]
+        }
+      },
+      "kind": "npz"
+    },
+    "unw": {
+      "arrays": {
+        "conncomp": {
+          "dtype": "uint8",
+          "shape": [
+            14,
+            96,
+            96
+          ]
+        },
+        "dates": {
+          "dtype": "<U10",
+          "shape": [
+            6
+          ]
+        },
+        "pairs": {
+          "dtype": "<U17",
+          "shape": [
+            14
+          ]
+        },
+        "unw": {
+          "dtype": "float32",
+          "shape": [
+            14,
+            96,
+            96
+          ]
+        }
+      },
+      "kind": "npz"
+    },
+    "velocity": {
+      "arrays": {
+        "velocity": {
+          "dtype": "float32",
+          "shape": [
+            96,
+            96
+          ]
+        }
+      },
+      "kind": "npy"
+    }
+  },
+  "generator": "wintersar.bench.golden",
+  "igrams": {
+    "coherence": {
+      "max": 0.9233704805374146,
+      "mean": 0.5817379250664176,
+      "min": 0.019999999552965164,
+      "n": 129024,
+      "n_finite": 129024,
+      "nan_fraction": 0.0,
+      "p05": 0.019999999552965164,
+      "p25": 0.4150753319263458,
+      "p50": 0.6767749488353729,
+      "p75": 0.7758641391992569,
+      "p95": 0.8246827036142348,
+      "std": 0.2383525225121927
+    },
+    "dates": [
+      "2024-01-01",
+      "2024-01-13",
+      "2024-01-25",
+      "2024-02-06",
+      "2024-02-18",
+      "2024-03-01"
+    ],
+    "mask_fraction": 0.052083333333333336,
+    "pairs": [
+      "20240101_20240113",
+      "20240101_20240125",
+      "20240101_20240206",
+      "20240101_20240218",
+      "20240113_20240125",
+      "20240113_20240206",
+      "20240113_20240218",
+      "20240113_20240301",
+      "20240125_20240206",
+      "20240125_20240218",
+      "20240125_20240301",
+      "20240206_20240218",
+      "20240206_20240301",
+      "20240218_20240301"
+    ],
+    "wrapped_abs_mean": 0.8533105859874538
+  },
+  "metrics": {
+    "closure_rms": 1.5051396276164137,
+    "unwrap_error_fraction": 0.0
+  },
+  "n_dates": 6,
+  "n_pairs": 14,
+  "run": {
+    "failed_stage": null,
+    "findings": [],
+    "ok": true
+  },
+  "schema_version": 1,
+  "seed": 0,
+  "site": {
+    "config": {
+      "compute": {
+        "cores": 2,
+        "memory_gb": 4
+      },
+      "engine": {
+        "interferogram": "fake"
+      },
+      "timeseries": {
+        "engine": "fake"
+      },
+      "unwrap": {
+        "coherence_threshold": 0.3,
+        "method": "auto"
+      }
+    },
+    "metrics": [
+      "closure_rms",
+      "unwrap_error_fraction"
+    ],
+    "name": "S_synthetic",
+    "param_overrides": {
+      "interferogram": {
+        "atmosphere_std_rad": 0.3,
+        "coherence_base": 0.8,
+        "n_dates": 6,
+        "shape": [
+          96,
+          96
+        ],
+        "water_fraction": 0.05
+      }
+    },
+    "runner": "pipeline",
+    "size": "S",
+    "stages": [
+      "fetch",
+      "coregister",
+      "interferogram",
+      "multilook",
+      "unwrap",
+      "timeseries",
+      "corrections",
+      "geocode"
+    ]
+  },
+  "stages": {
+    "coregister": {
+      "engine": "fake",
+      "findings": [],
+      "status": "ok"
+    },
+    "corrections": {
+      "engine": "fake",
+      "findings": [],
+      "status": "ok"
+    },
+    "fetch": {
+      "engine": "fake",
+      "findings": [],
+      "status": "ok"
+    },
+    "geocode": {
+      "engine": "fake",
+      "findings": [],
+      "status": "ok"
+    },
+    "interferogram": {
+      "engine": "fake",
+      "findings": [],
+      "status": "ok"
+    },
+    "multilook": {
+      "engine": "fake",
+      "findings": [],
+      "status": "ok"
+    },
+    "precheck": {
+      "engine": null,
+      "findings": [],
+      "status": "skipped"
+    },
+    "search": {
+      "engine": null,
+      "findings": [],
+      "status": "skipped"
+    },
+    "timeseries": {
+      "engine": "fake",
+      "findings": [],
+      "status": "ok"
+    },
+    "unwrap": {
+      "engine": "fake",
+      "findings": [],
+      "status": "ok"
+    }
+  },
+  "timeseries": {
+    "displacement_last_epoch": {
+      "max": 0.003826772328466177,
+      "mean": -0.000854052431402266,
+      "min": -0.007989594712853432,
+      "n": 9216,
+      "n_finite": 9216,
+      "nan_fraction": 0.0,
+      "p05": -0.003841085243038833,
+      "p25": -0.0016598936927039176,
+      "p50": -0.0006411775830201805,
+      "p75": 0.00019837689251289703,
+      "p95": 0.001288106432184577,
+      "std": 0.0015407954808357915
+    },
+    "n_dates": 6
+  },
+  "unwrap": {
+    "conncomp_n_labels": 2,
+    "conncomp_nonzero_fraction": 0.8306904141865079,
+    "masked_fraction": 0.16930958581349206,
+    "unw": {
+      "max": 2.0937929153442383,
+      "mean": 0.09084867695371718,
+      "min": -1.6391555070877075,
+      "n": 129024,
+      "n_finite": 107179,
+      "nan_fraction": 0.1693095858134921,
+      "p05": -0.6136362791061402,
+      "p25": -0.19974196702241898,
+      "p50": 0.08500223606824875,
+      "p75": 0.3715279698371887,
+      "p95": 0.824813264608383,
+      "std": 0.43524138381207544
+    }
+  },
+  "velocity": {
+    "max": -3.7022941796749365e-06,
+    "mean": -0.005207663363833752,
+    "min": -0.029999999329447746,
+    "n": 9216,
+    "n_finite": 9216,
+    "nan_fraction": 0.0,
+    "p05": -0.022556902840733528,
+    "p25": -0.007209619041532278,
+    "p50": -0.0017157825641334057,
+    "p75": -0.000404362624976784,
+    "p95": -4.7662547331128735e-05,
+    "shape": [
+      96,
+      96
+    ],
+    "std": 0.007170533191056235
+  }
+}

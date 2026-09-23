@@ -20,12 +20,18 @@ def test_stage_size_from_meta_then_params(tmp_path: Path, cache_dir: Path) -> No
     dag = Dag(write_fake_config(tmp_path))
     dag.build({"interferogram": {"shape": [24, 32]}})
     node = dag.node("unwrap")
+    # nothing cached: the pair count falls back to the pair set the fake engine will produce
+    assert node.pairs_expected is not None
+    assert planmod.stage_size(node, Artifacts()) == (len(node.pairs_expected), 0)
+    node.pairs_expected = None
     assert planmod.stage_size(node, Artifacts()) == (0, 0)
     arts = Artifacts().add(
         Artifact(name="igrams", path=tmp_path / "x", meta={"n_pairs": 7, "shape": [10, 20]})
     )
     assert planmod.stage_size(node, arts) == (7, 200)
-    assert planmod.stage_size(dag.node("interferogram"), Artifacts()) == (0, 24 * 32)
+    ig = dag.node("interferogram")
+    assert ig.pairs_expected is not None
+    assert planmod.stage_size(ig, Artifacts()) == (len(ig.pairs_expected), 24 * 32)
 
 
 def test_model_params_maps_config_names(tmp_path: Path, cache_dir: Path) -> None:

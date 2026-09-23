@@ -18,6 +18,10 @@ summary 가 있습니다([ADR-0072](../adr/0072-docs-structure-and-i18n.md)).
 
 읽는 순서 제안: 1 → 2 → 3 → 4 (선별) · 5 → 6 (처리) · 7 → 8 (검증) · 9 (연구).
 
+개념을 명령으로 옮기려면 [설치 안내](../install.md) 뒤에 튜토리얼 [HyP3 빠른 시작](../tutorials/hyp3-quickstart.md)
+→ [ISCE2 로컬](../tutorials/isce2-local.md) → [검증·튠](../tutorials/validate-tune.md) 순서로 읽습니다. 실패
+메시지의 `KB-xxx` 는 [진단 KB](../kb/index.md), 이 버전이 무엇을 못 하는지는 [릴리스 노트](../release-notes.md).
+
 ## 용어 표기
 
 용어는 처음에 "한국어(영어)" 로 병기하고 이후에는 영어 원어를 그대로 씁니다. 엔진 로그·논문·설정 키가

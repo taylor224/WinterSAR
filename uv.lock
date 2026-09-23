@@ -3443,7 +3443,7 @@ requires-dist = [
     { name = "shapely", specifier = ">=2.0" },
     { name = "snaphu", marker = "extra == 'unwrap'", specifier = ">=0.4,<1" },
     { name = "spurt", marker = "extra == 'spurt'", specifier = ">=0.1,<1" },
-    { name = "typer", specifier = ">=0.12" },
+    { name = "typer", specifier = ">=0.26" },
     { name = "types-markdown", marker = "extra == 'dev'" },
     { name = "types-psutil", marker = "extra == 'dev'" },
     { name = "types-pyyaml", marker = "extra == 'dev'" },

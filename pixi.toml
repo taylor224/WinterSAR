@@ -1,0 +1,152 @@
+# =============================================================================
+# wintersar — pixi manifest for the ENGINE path (plan §4.2, §6.1 PERF-12, §7 Phase 0)
+#
+# * pyproject.toml (uv) stays the source of truth for the *core* dependency list.
+#   [pypi-dependencies] below mirrors it name-for-name and scripts/check_env.py (run by
+#   tests/unit/test_pixi_manifest.py) fails as soon as the two drift (ADR-0107).
+# * Engines that exist only on conda-forge (isce2, snaphu-py, tophu, mintpy, dolphin,
+#   sentineleof, sardem) are pixi *features*. Package names, latest versions and platform
+#   availability were verified against anaconda.org / the conda-forge feedstocks on
+#   2026-09-23 and are tabulated in ADR-0105.
+# * Written on a machine without pixi (CLAUDE.md Environment): the first `pixi lock` run on a
+#   machine that has pixi must be committed as pixi.lock (docs/open-questions.md #70).
+#
+# source: https://pixi.prefix.dev/latest/reference/pixi_manifest/  (every table/key used here)
+# source: https://pixi.prefix.dev/latest/CHANGELOG/  ([project] -> [workspace] in 0.43.0
+#         (2025-03-20); [project] deprecated with a warning in 0.57.0 (2025-10-20))
+# =============================================================================
+
+[workspace]
+name = "wintersar"
+description = "Sentinel-1 InSAR (SBAS) toolkit — engine environments (ISCE2, SNAPHU, tophu, MintPy, dolphin)"
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-arm64", "osx-64"]
+license = "Apache-2.0"
+license-file = "LICENSE"
+readme = "README.md"
+requires-pixi = ">=0.43"
+
+# --------------------------------------------------------------------------- default feature
+# The default environment is the *core* toolkit, the same thing `uv sync` builds: conda
+# provides the interpreter only, every core package comes from PyPI with exactly the
+# pyproject.toml [project].dependencies names and specifiers (checked, see header).
+[dependencies]
+python = ">=3.11,<3.12"
+
+[pypi-dependencies]
+wintersar = { path = ".", editable = true }
+numpy = ">=1.26"
+scipy = ">=1.11"
+pydantic = ">=2.6"
+typer = ">=0.26"
+pyyaml = ">=6.0"
+shapely = ">=2.0"
+pyproj = ">=3.6"
+xarray = ">=2024.1"
+zarr = ">=3.0"
+h5py = ">=3.10"
+rasterio = ">=1.3"
+rich = ">=13.0"
+psutil = ">=5.9"
+jinja2 = ">=3.1"
+markdown = ">=3.5"
+requests = ">=2.31"
+asf-search = ">=8.0"
+
+[tasks]
+check-install = "wintersar check-install"
+
+# --------------------------------------------------------------------------- features
+# geo: conda builds of the GDAL/PROJ stack. pixi treats already-resolved conda packages as
+# locked while resolving [pypi-dependencies], so inside the engine environments these satisfy
+# the core entries above and every engine shares ONE GDAL/PROJ instead of the wheels' bundled
+# copies (what `wintersar check-install` reports as ENV-004 when they disagree).
+[feature.geo.dependencies]
+gdal = ">=3.5"
+rasterio = ">=1.3"
+pyproj = ">=3.6"
+shapely = ">=2.0"
+h5py = ">=3.10"
+
+# hyp3: remote-processing client. Kept on PyPI so it mirrors pyproject
+# [project.optional-dependencies].hyp3 (the checker compares it); conda-forge also ships it
+# as `hyp3_sdk` (7.7.8, noarch) if a conda build is ever preferred.
+[feature.hyp3.pypi-dependencies]
+hyp3-sdk = ">=7.0"
+
+# unwrap: conda-forge `snaphu` IS snaphu-py (0.4.1; linux-64, osx-64, osx-arm64; recipe skips
+# `py<39 or not unix`). There is no `snaphu-py` package on conda-forge (HTTP 404, ADR-0105).
+# snaphu-py vendors the SNAPHU C core; wintersar itself bundles nothing (ADR-0001/0023).
+[feature.unwrap.dependencies]
+snaphu = ">=0.4,<1"
+
+# tophu: `noarch: python` on conda-forge but its recipe run-requires the `__linux` virtual
+# package, so it installs on Linux only (tophu-feedstock recipe/meta.yaml). Pulls isce3 >=0.12.
+[feature.tophu]
+platforms = ["linux-64"]
+
+[feature.tophu.dependencies]
+tophu = ">=0.2,<1"
+
+# isce2: conda-forge builds linux-64 and osx-64 only (2.6.5; no osx-arm64; recipe
+# `skip: true  # [win or py>312]`). The feedstock's build.sh moves contrib/stack to
+# $PREFIX/share/isce2 and its activate.d script exports ISCE_HOME and ISCE_STACK but does NOT
+# put topsStack on PATH; the adapter finds `stackSentinel.py` with shutil.which, hence the
+# PATH entry below. Whether $CONDA_PREFIX is already set when pixi expands `activation.env`
+# is not documented — verification and fallback: docs/open-questions.md #69.
+[feature.isce2]
+platforms = ["linux-64", "osx-64"]
+
+[feature.isce2.dependencies]
+isce2 = ">=2.6,<3"
+
+[feature.isce2.activation.env]
+PATH = "$CONDA_PREFIX/share/isce2/topsStack:$PATH"
+
+# mintpy: GPL-3.0-or-later — installed as a subprocess-only engine (smallbaselineApp.py),
+# never imported (rule 11.2). noarch 1.6.4; its compiled deps (pysolid, cvxopt, gdal) exist
+# for all three workspace platforms per anaconda.org (ADR-0105).
+[feature.mintpy.dependencies]
+mintpy = ">=1.5,<2"
+
+# dolphin: phase linking / sequential estimator (PERF-05/06), driven via `dolphin run`.
+# noarch 0.42.5; run-requires jax (jaxlib builds exist for all three platforms) and snaphu.
+[feature.dolphin.dependencies]
+dolphin = ">=0.40,<1"
+
+# aux: precise orbits (sentineleof) and Copernicus DEM (sardem); both noarch, MIT.
+[feature.aux.dependencies]
+sentineleof = ">=0.10"
+sardem = ">=0.11"
+
+# dev: mirrors pyproject [project.optional-dependencies].dev (checked by scripts/check_env.py).
+[feature.dev.pypi-dependencies]
+ruff = ">=0.5"
+mypy = ">=1.10"
+pytest = ">=8.0"
+pytest-cov = ">=5.0"
+pytest-timeout = ">=2.3"
+types-PyYAML = "*"
+types-requests = "*"
+types-psutil = "*"
+types-Markdown = "*"
+pre-commit = ">=3.7"
+matplotlib = ">=3.8"
+pandas = ">=2.1"
+
+[feature.dev.tasks]
+test = "pytest -m 'not network and not engine_real' -p no:cacheprovider"
+lint = "ruff check src tests && ruff format --check src tests"
+typecheck = "mypy"
+
+# --------------------------------------------------------------------------- environments
+# An environment's platforms are the intersection of its features' platforms, therefore:
+#   default / dev / engines-portable -> linux-64, osx-arm64, osx-64
+#   engines (isce2 + tophu)          -> linux-64 only
+# `engines-portable` is the macOS (and Apple-silicon) answer: everything except ISCE2/tophu,
+# i.e. HyP3 remote + local SNAPHU + MintPy + dolphin + orbits/DEM.
+[environments]
+default = { solve-group = "core" }
+dev = { features = ["dev"], solve-group = "core" }
+engines = { features = ["geo", "hyp3", "unwrap", "tophu", "isce2", "mintpy", "dolphin", "aux"], solve-group = "engines" }
+engines-portable = { features = ["geo", "hyp3", "unwrap", "mintpy", "dolphin", "aux"], solve-group = "engines-portable" }

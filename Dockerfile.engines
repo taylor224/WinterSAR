@@ -1,0 +1,65 @@
+# syntax=docker/dockerfile:1
+# =============================================================================
+# wintersar ENGINES image (PERF-12, ADR-0106): the pixi `engines` environment — core toolkit
+# + ISCE2 topsStack + snaphu-py + tophu + MintPy + dolphin + sentineleof/sardem — built from
+# pixi.toml and smoke-tested with `wintersar check-install --strict`.
+#
+# NOT built in CI (ADR-0106): the solve/download of the full engine stack on every PR is
+# prohibitive, and the image co-installs GPL-3 MintPy and the SNAPHU core (LicenseRef-SNAPHU)
+# next to Apache-2.0 wintersar — fine for a user's own machine, not something this project
+# publishes (plan §9 "번들 금지"). Build it yourself:
+#
+#   docker build -f Dockerfile.engines -t wintersar-engines .
+#   docker run --rm wintersar-engines wintersar check-install
+#
+# Once pixi.lock is committed (docs/open-questions.md #70) pin the solve with
+#   docker build -f Dockerfile.engines --build-arg PIXI_INSTALL_FLAGS=--locked -t wintersar-engines .
+#
+# The `engines` environment is linux-64 only (isce2 has no osx-arm64 build, tophu is Linux
+# only — ADR-0105); on Apple silicon run docker with `--platform linux/amd64`.
+#
+# source: https://pixi.prefix.dev/latest/deployment/container/   (multi-stage pattern:
+#         `pixi install --locked -e <env>`, `pixi shell-hook -e <env> -s bash > /shell-hook`,
+#         runtime stage `ubuntu:24.04` with `COPY --from=build /app/.pixi/envs/<env>`)
+# source: https://github.com/prefix-dev/pixi-docker   (image `ghcr.io/prefix-dev/pixi:<tag>`,
+#         version tags `0.x.y`; the `latest` tag is Ubuntu 24.04 noble)
+# source: https://github.com/prefix-dev/pixi/releases/latest   (v0.81.0, 2026-09-15)
+# =============================================================================
+ARG PIXI_VERSION=0.81.0
+
+FROM ghcr.io/prefix-dev/pixi:${PIXI_VERSION} AS build
+# Extra flags for `pixi install`, e.g. `--locked` once pixi.lock exists (see header).
+ARG PIXI_INSTALL_FLAGS=""
+WORKDIR /app
+# `pixi.loc[k]` is a glob so the COPY succeeds whether or not the lock file exists yet
+# (COPY fails only when *none* of its sources match). Only git-tracked paths are copied.
+COPY pixi.toml pyproject.toml README.md LICENSE pixi.loc[k] ./
+COPY src ./src
+COPY scripts ./scripts
+COPY benchmarks ./benchmarks
+# topsStack is installed by the conda-forge isce2 package under share/isce2 but is not put on
+# PATH by its activation script (ADR-0105). Setting it here, *before* the shell-hook is
+# generated, bakes it into the hook regardless of how pixi orders `activation.env` (OQ #69).
+ENV PATH="/app/.pixi/envs/engines/share/isce2/topsStack:${PATH}"
+RUN pixi install -e engines ${PIXI_INSTALL_FLAGS}
+RUN pixi shell-hook -e engines -s bash > /shell-hook \
+    && echo 'exec "$@"' >> /shell-hook
+
+FROM ubuntu:24.04 AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    WINTERSAR_LANG=ko
+# The whole workspace (not just .pixi/envs/engines): the editable wintersar install points at
+# /app/src, and the activation hook embeds the /app/.pixi/envs/engines paths.
+COPY --from=build /app /app
+COPY --from=build /shell-hook /shell-hook
+WORKDIR /app
+# Smoke test (Phase 0 DoD): every engine the `engines` environment claims to provide must be
+# detected. `spurt` is deliberately absent (no conda-forge package, ADR-0025 / OQ #22) and the
+# Earthdata credential check is a WARN, so `--strict` only fails on a genuinely missing engine.
+RUN /bin/bash /shell-hook wintersar --json check-install --strict \
+      --engine fake --engine hyp3 --engine snaphu --engine tophu \
+      --engine isce2_topsstack --engine mintpy --engine dolphin
+
+ENTRYPOINT ["/bin/bash", "/shell-hook"]
+CMD ["wintersar", "--help"]

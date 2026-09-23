@@ -11,67 +11,79 @@ from wintersar.diagnose.api import attach_retry_hint, diagnose_logs, iter_log_fi
 from wintersar.diagnose.kb_loader import KB_ENGINES, load_kb
 from wintersar.diagnose.report import findings_report
 from wintersar.i18n import t
+from wintersar.util.clihelp import h
 from wintersar.util.clistate import state
 from wintersar.util.masking import mask_text
-from wintersar.util.output import console, emit_json, err_console, print_findings
+from wintersar.util.output import (
+    CLI_BAD_VALUE,
+    CLI_INPUT_MISSING,
+    CLI_USAGE,
+    cli_finding,
+    console,
+    emit_json,
+    exit_with_findings,
+    print_findings,
+)
 
 
 def register(app: typer.Typer) -> None:
-    @app.command("diagnose")
+    @app.command("diagnose", help=h("cli_help.diagnose.help"))
     def diagnose_cmd(
         path: Annotated[
             Path | None,
-            typer.Argument(
-                help=(
-                    "Log file or directory (e.g. work/ or work/<stage>/<hash>/logs). "
-                    "Omit with --list-kb. "
-                    "Scanning a directory skips wintersar's own records "
-                    "(manifest.json, runs/*.json) so each failure is reported once; "
-                    "name such a file explicitly to diagnose it anyway."
-                ),
-                show_default=False,
-            ),
+            typer.Argument(help=h("cli_help.diagnose.path"), show_default=False),
         ] = None,
         engine: Annotated[
             str | None,
             typer.Option(
                 "--engine",
                 "-e",
-                help="Try this engine's KB first: " + " | ".join(KB_ENGINES),
+                help=h("cli_help.diagnose.engine", engines=" | ".join(KB_ENGINES)),
             ),
         ] = None,
         out: Annotated[
-            Path | None,
-            typer.Option("--out", "-o", help="Write a Markdown report to this path."),
+            Path | None, typer.Option("--out", "-o", help=h("cli_help.diagnose.out"))
         ] = None,
         assume_failed: Annotated[
-            bool,
-            typer.Option(
-                "--assume-failed",
-                help="Emit KB-UNKNOWN even when no error marker is found (the stage failed).",
-            ),
+            bool, typer.Option("--assume-failed", help=h("cli_help.diagnose.assume_failed"))
         ] = False,
         list_kb: Annotated[
-            bool, typer.Option("--list-kb", help="List the knowledge-base entries and exit.")
+            bool, typer.Option("--list-kb", help=h("cli_help.diagnose.list_kb"))
         ] = False,
     ) -> None:
         """Explain failures in engine logs: KB match -> cause -> fix (R-02, R-14)."""
+        command = "diagnose"
         if list_kb:
             _list_kb()
             return
         if path is None:
-            err_console.print(f"[red]{t('diagnose.cli.path_required')}[/]")
-            raise typer.Exit(code=2)
+            finding = cli_finding(
+                CLI_USAGE,
+                message_key="diagnose.cli.path_required",
+                command=command,
+                detail="PATH",
+            )
+            raise exit_with_findings(command, [finding])
         if engine is not None and engine.lower() not in KB_ENGINES:
-            err_console.print(
-                f"[red]{t('diagnose.cli.unknown_engine', engine=engine, engines=', '.join(KB_ENGINES))}[/]"
+            finding = cli_finding(
+                CLI_BAD_VALUE,
+                message_key="diagnose.cli.unknown_engine",
+                engine=engine,
+                engines=", ".join(KB_ENGINES),
+                option="--engine",
+                value=engine,
+                allowed=" | ".join(KB_ENGINES),
+                command=command,
             )
-            raise typer.Exit(code=2)
+            raise exit_with_findings(command, [finding])
         if not path.exists():
-            err_console.print(
-                f"[red]{t('diagnose.cli.path_not_found', path=mask_text(str(path)))}[/]"
+            finding = cli_finding(
+                CLI_INPUT_MISSING,
+                message_key="diagnose.cli.path_not_found",
+                path=str(path),
+                option="PATH",
             )
-            raise typer.Exit(code=2)
+            raise exit_with_findings(command, [finding])
         files = iter_log_files(path)
         findings = diagnose_logs(path, engine, assume_failed=assume_failed)
         hint = attach_retry_hint(findings)

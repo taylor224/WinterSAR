@@ -24,3 +24,6 @@ bench_result*.json
 
 # Claude Code session state (never commit)
 .claude/
+
+# pixi environments (pixi.lock IS tracked, ADR-0105)
+.pixi/

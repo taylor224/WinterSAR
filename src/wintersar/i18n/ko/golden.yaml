@@ -1,0 +1,22 @@
+# 골든 통계 층 메시지 (플랜 §8 regression 행, ADR-0100~0102). 진단은 원인 → 조치 순서.
+golden:
+  make:
+    written: "골든 통계 저장: {path} ({n_bytes} bytes, 값 {n_leaves}개)"
+    unchanged: "이전 골든과 허용 오차 안에서 같습니다 (값 {n_leaves}개)."
+    changed: "이전 골든과 다른 값 {n}개 — 의도한 변경인지 PR 본문에 적으세요."
+  check:
+    start: "골든 검사: 사이트 {site} · 골든 {path} · seed {seed}"
+    ok: "골든 통계 일치: 값 {n_leaves}개 (rtol={rtol:g}, atol={atol:g}, fraction atol={fraction_atol:g})"
+    regenerate: "의도한 변경이면 '.venv/bin/python scripts/make_golden.py'로 골든을 다시 만들고(먼저 '--check'로 차이를 확인) PR 본문에 이유를 적으세요."
+  GOLDEN-001:
+    cause: "골든 값 '{path}'이(가) 다릅니다: 기대 {expected} · 실제 {actual} (허용 {tolerance})."
+    fix: "합성 데이터·fake engine·파이프라인 변경이 의도한 것인지 확인하세요. 의도한 변경이면 'python scripts/make_golden.py'로 골든을 재생성하고 PR 본문에 이유를 적으세요. 아니면 최근 변경을 되돌리세요."
+  GOLDEN-002:
+    cause: "골든 파일 {path}이(가) 없습니다."
+    fix: "'python scripts/make_golden.py'로 생성한 뒤 tests/regression/golden/ 아래에 커밋하세요."
+  GOLDEN-003:
+    cause: "사이트 정의 '{path}'이(가) 골든 생성 시점과 다릅니다: 골든 {expected} · 현재 {actual}."
+    fix: "benchmarks/sites/*.yaml 변경이 의도한 것이면 'python scripts/make_golden.py'로 골든을 재생성하세요. 아니면 사이트 정의를 되돌리세요."
+  GOLDEN-004:
+    cause: "골든 파이프라인 실행이 '{stage}' 단계에서 실패했습니다: {error}"
+    fix: "먼저 'pytest tests/integration'으로 fake engine 경로가 정상인지 확인하세요. --workdir를 지정하면 실행 디렉터리가 보존됩니다."

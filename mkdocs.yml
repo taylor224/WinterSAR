@@ -9,15 +9,22 @@ theme:
     - navigation.sections
     - navigation.top
     - content.code.copy
+# Every path below must exist under docs/ — tests/unit/qgis/test_docs.py checks it (ADR-0112).
+# The hand-written KB overview is docs/kb/overview.md (MkDocs ignores a README.md next to index.md).
 nav:
   - 시작: index.md
+  - 설치 (Install): install.md
   - 개념 (Concepts): concepts/index.md
   - 튜토리얼 (Tutorials):
       - HyP3 빠른 시작: tutorials/hyp3-quickstart.md
       - ISCE2 로컬: tutorials/isce2-local.md
       - 검증·튠: tutorials/validate-tune.md
-  - 진단 KB: kb/index.md
+  - 진단 KB:
+      - 색인: kb/index.md
+      - 개요: kb/overview.md
   - 연구 (Research): research/index.md
+  - 릴리스 노트: release-notes.md
+  - 로드맵: roadmap.md
   - ADR: adr/README.md
   - 기여 (Contributing): contributing.md
   - 미확정 사항: open-questions.md

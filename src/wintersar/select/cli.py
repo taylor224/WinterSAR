@@ -33,12 +33,28 @@ from wintersar.select.report import (
     write_precheck_report,
 )
 from wintersar.select.rules import PoeorbHook, records_for_candidate, run_rules
+from wintersar.util.clihelp import h
 from wintersar.util.clistate import state
 from wintersar.util.masking import mask_text
-from wintersar.util.output import console, emit_json, err_console, print_findings
+from wintersar.util.output import (
+    CLI_BAD_VALUE,
+    CLI_COMPONENT_UNAVAILABLE,
+    CLI_CONFIG_INVALID,
+    CLI_CONFIG_MISSING,
+    CLI_EMPTY_INPUT,
+    CLI_INPUT_INVALID,
+    CLI_INPUT_MISSING,
+    cli_finding,
+    console,
+    emit_json,
+    err_console,
+    exit_with_findings,
+    print_findings,
+)
 
 CANDIDATES_BASENAME = "candidates.json"
 BaselineOption = Literal["auto", "asf", "orbit", "none"]
+BASELINE_CHOICES: tuple[str, ...] = ("auto", "asf", "orbit", "none")
 
 
 class CandidatesError(ValueError):
@@ -62,15 +78,17 @@ class PrecheckResult:
 # ----------------------------------------------------------------------------- helpers
 
 
-def _load_cfg(path: Path) -> Config:
+def _load_cfg(path: Path, command: str) -> Config:
+    """``--config``: CLI-004 (missing) / CLI-005 (invalid) with exit 2 (ADR-0091)."""
     if not path.exists():
-        err_console.print(f"[red]{t('cli.config_not_found', path=mask_text(str(path)))}[/]")
-        raise typer.Exit(code=2)
+        raise exit_with_findings(
+            command, [cli_finding(CLI_CONFIG_MISSING, path=str(path), option="--config")]
+        )
     try:
         return load_config(path)
     except Exception as e:  # pydantic / yaml errors
-        err_console.print(f"[red]{t('cli.invalid_config', error=mask_text(str(e)))}[/]")
-        raise typer.Exit(code=2) from None
+        finding = cli_finding(CLI_CONFIG_INVALID, path=str(path), error=str(e), option="--config")
+        raise exit_with_findings(command, [finding]) from None
 
 
 def _records_from_json(data: Any) -> list[BurstRecord]:
@@ -252,16 +270,21 @@ def run_precheck(
 
 def search(
     config: Annotated[
-        Path, typer.Option("--config", "-c", help="Project config.yaml (plan section 4.4).")
+        Path, typer.Option("--config", "-c", help=h("cli_help.search.config"))
     ] = Path("config.yaml"),
 ) -> None:
     """Query candidate bursts/scenes for the AOI and period -> work/select/candidates.json."""
-    cfg = _load_cfg(config)
+    cfg = _load_cfg(config, "search")
     try:
         search_mod = importlib.import_module("wintersar.select.search")
     except Exception as e:
-        err_console.print(f"[red]{t('select.cli.search_unavailable', error=mask_text(repr(e)))}[/]")
-        raise typer.Exit(code=2) from None
+        finding = cli_finding(
+            CLI_COMPONENT_UNAVAILABLE,
+            message_key="select.cli.search_unavailable",
+            command="search",
+            error=repr(e),
+        )
+        raise exit_with_findings("search", [finding]) from None
     result = search_mod.search_from_config(cfg)
     out = cfg.workdir / "select" / CANDIDATES_BASENAME
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -281,61 +304,89 @@ def search(
 
 
 def precheck(
-    candidates: Annotated[
-        Path, typer.Argument(help="candidates.json written by `wintersar search`.")
-    ],
+    candidates: Annotated[Path, typer.Argument(help=h("cli_help.precheck.candidates"))],
     config: Annotated[
-        Path, typer.Option("--config", "-c", help="Project config.yaml (AOI, selection).")
+        Path, typer.Option("--config", "-c", help=h("cli_help.precheck.config"))
     ] = Path("config.yaml"),
     out: Annotated[
-        Path | None, typer.Option("--out", "-o", help="Report directory (default work/select).")
+        Path | None, typer.Option("--out", "-o", help=h("cli_help.precheck.out"))
     ] = None,
     geometry: Annotated[
-        Path | None,
-        typer.Option(
-            "--geometry",
-            help="JSON with layover/shadow statistics per stack or direction (SEL-12).",
-        ),
+        Path | None, typer.Option("--geometry", help=h("cli_help.precheck.geometry"))
     ] = None,
     no_fail: Annotated[
-        bool, typer.Option("--no-fail", help="Exit 0 even when FAIL findings exist.")
+        bool, typer.Option("--no-fail", help=h("cli_help.precheck.no_fail"))
     ] = False,
     baseline: Annotated[
-        str,
-        typer.Option(
-            "--baseline",
-            help="Perpendicular baselines: auto (ASF stack API, orbit fallback) | asf | orbit | none.",
-        ),
+        str, typer.Option("--baseline", help=h("cli_help.precheck.baseline"))
     ] = "auto",
 ) -> None:
     """Run the SEL-01..SEL-13 rules on the candidates -> precheck_report.{md,html,json}."""
-    cfg = _load_cfg(config)
+    command = "precheck"
+    cfg = _load_cfg(config, command)
     try:
         records = load_candidates_file(candidates)
     except FileNotFoundError:
-        err_console.print(
-            f"[red]{t('select.cli.candidates_not_found', path=mask_text(str(candidates)))}[/]"
+        finding = cli_finding(
+            CLI_INPUT_MISSING,
+            message_key="select.cli.candidates_not_found",
+            path=str(candidates),
+            option="CANDIDATES",
         )
-        raise typer.Exit(code=2) from None
+        raise exit_with_findings(command, [finding]) from None
     except CandidatesError as e:
-        err_console.print(
-            f"[red]{t('select.cli.candidates_invalid', path=mask_text(str(candidates)), error=mask_text(str(e)))}[/]"
+        finding = cli_finding(
+            CLI_INPUT_INVALID,
+            message_key="select.cli.candidates_invalid",
+            path=str(candidates),
+            option="CANDIDATES",
+            command=command,
+            error=str(e),
         )
-        raise typer.Exit(code=2) from None
+        raise exit_with_findings(command, [finding]) from None
     if not records:
-        err_console.print(f"[red]{t('select.cli.no_records')}[/]")
-        raise typer.Exit(code=2)
+        finding = cli_finding(
+            CLI_EMPTY_INPUT,
+            message_key="select.cli.no_records",
+            path=str(candidates),
+            option="CANDIDATES",
+        )
+        raise exit_with_findings(command, [finding])
     try:
         geometry_stats = _load_geometry(geometry)
     except (OSError, ValueError) as e:
-        err_console.print(
-            f"[red]{t('select.cli.geometry_invalid', path=mask_text(str(geometry)), error=mask_text(str(e)))}[/]"
+        finding = cli_finding(
+            CLI_INPUT_INVALID,
+            message_key="select.cli.geometry_invalid",
+            path=str(geometry),
+            option="--geometry",
+            command=command,
+            error=str(e),
         )
-        raise typer.Exit(code=2) from None
-    if baseline not in ("auto", "asf", "orbit", "none"):
-        err_console.print(f"[red]--baseline: {baseline!r} not in auto|asf|orbit|none[/]")
-        raise typer.Exit(code=2)
-    aoi_wkt = aoi_file_to_wkt(cfg.aoi)
+        raise exit_with_findings(command, [finding]) from None
+    if baseline not in BASELINE_CHOICES:
+        finding = cli_finding(
+            CLI_BAD_VALUE,
+            option="--baseline",
+            value=baseline,
+            allowed=" | ".join(BASELINE_CHOICES),
+            command=command,
+        )
+        raise exit_with_findings(command, [finding])
+    try:
+        aoi_wkt = aoi_file_to_wkt(cfg.aoi)
+    except FileNotFoundError:
+        finding = cli_finding(CLI_INPUT_MISSING, path=str(cfg.aoi), option="aoi (config.yaml)")
+        raise exit_with_findings(command, [finding]) from None
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        finding = cli_finding(
+            CLI_INPUT_INVALID,
+            path=str(cfg.aoi),
+            option="aoi (config.yaml)",
+            command=command,
+            error=str(e),
+        )
+        raise exit_with_findings(command, [finding]) from None
     result = run_precheck(
         records,
         cfg,
@@ -401,5 +452,5 @@ def precheck(
 
 
 def register(app: typer.Typer) -> None:
-    app.command("search")(search)
-    app.command("precheck")(precheck)
+    app.command("search", help=h("cli_help.search.help"))(search)
+    app.command("precheck", help=h("cli_help.precheck.help"))(precheck)

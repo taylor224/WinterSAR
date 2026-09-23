@@ -1,0 +1,222 @@
+# Command-line help texts (rule 11.6, ADR-0090) and the CLI-003+ error catalogue (ADR-0091).
+#
+# ``cli_help.<command>.help`` is the command description, ``cli_help.<command>.<option>`` the
+# help of one option/argument, ``cli_help.common.*`` texts shared by several commands.
+# Code resolves them through ``wintersar.util.clihelp.h`` (never ``t`` at import time).
+# ``cli.CLI-00x`` entries extend the root ``cli:`` namespace of en.yaml (deep-merged).
+cli:
+  CLI-003:
+    cause: "Invalid usage of '{command}': {detail}"
+    fix: "Check the arguments with 'wintersar {command} --help' (global options such as --json/--lang go before the command)."
+  CLI-004:
+    cause: "Config file not found: {path}"
+    fix: "Create one with 'wintersar init' (plan §4.4) or pass the right path to --config."
+  CLI-005:
+    cause: "Invalid config: {error}"
+    fix: "Fix the keys named in the error; 'wintersar init' writes a commented example (plan §4.4)."
+  CLI-006:
+    cause: "Input file not found: {path} ({option})"
+    fix: "Check the path given to {option}; the file must exist before the command runs."
+  CLI-007:
+    cause: "Input file cannot be read: {path} ({option}) — {error}"
+    fix: "Check that {option} points to a file in the expected format (see 'wintersar {command} --help')."
+  CLI-008:
+    cause: "Invalid value for {option}: '{value}' (allowed: {allowed})"
+    fix: "Use one of the allowed values (see 'wintersar {command} --help')."
+  CLI-009:
+    cause: "Input {path} ({option}) contains no records."
+    fix: "Produce the file again with the upstream command (for candidates.json: 'wintersar search')."
+  CLI-010:
+    cause: "A component needed by '{command}' could not be loaded: {error}"
+    fix: "Reinstall wintersar with its dependencies (uv sync --extra dev) and check the environment with 'wintersar check-install'."
+
+cli_help:
+  common:
+    config: "config.yaml (plan §4.4)"
+    config_optional: "config.yaml"
+    ts: "Time series (.npz from the fake engine, or any format io.formats reads)."
+    until: "Stop after this stage."
+    from: "Start at this stage; upstream stages come from the cache."
+    force: "Re-run this stage and everything downstream (repeatable)."
+    set: "Override a stage parameter: stage.key=value (YAML scalar; dotted keys nest)."
+    workdir: "Work directory (default: from --config)."
+    out_dir: "Report directory (default: <ts dir>/validate)."
+    method_unwrap: "auto | snaphu | tophu | spurt | truth | identity"
+  root:
+    help: "Open-source Sentinel-1 InSAR (SBAS) toolkit: select · precheck · run · diagnose · validate."
+    json: "Emit a JSON envelope on stdout."
+    lang: "Message language: ko | en (default: WINTERSAR_LANG or ko)."
+    verbose: "Show more detail (-vv for tracebacks)."
+  version:
+    help: "Print the wintersar version."
+  check_install:
+    help: "Report engine availability, versions, credentials and hardware (PERF-12). Like the other report commands (search, diagnose, validate) it exits 0 as long as the report could be produced; the envelope's 'ok' is false when a FAIL finding (e.g. a missing engine) is present, and --strict turns that into exit 1."
+    engine: "Only check these engines (default: all)."
+    strict: "Exit 1 when a FAIL finding exists (default: always 0)."
+  init:
+    help: "Write an example config.yaml (plan §4.4)."
+    path: "Where to write the example config.yaml"
+    force: "Overwrite if exists."
+  search:
+    help: "Query candidate bursts/scenes for the AOI and period -> work/select/candidates.json."
+    config: "Project config.yaml (plan section 4.4)."
+  precheck:
+    help: "Run the SEL-01..SEL-13 rules on the candidates -> precheck_report.{md,html,json}."
+    candidates: "candidates.json written by `wintersar search`."
+    config: "Project config.yaml (AOI, selection)."
+    out: "Report directory (default work/select)."
+    geometry: "JSON with layover/shadow statistics per stack or direction (SEL-12)."
+    no_fail: "Exit 0 even when FAIL findings exist."
+    baseline: "Perpendicular baselines: auto (ASF stack API, orbit fallback) | asf | orbit | none."
+  plan:
+    help: "Build the DAG and print which stages are cached / will run plus estimated resources (no execution)."
+    incremental: "Reuse per-pair results of stages whose date set grew; show pairs cached / new (PERF-06)."
+  run:
+    help: "Run the pipeline. Cached stages are skipped; only changed stages and their downstream re-run (PERF-03)."
+    dry_run: "Only print the plan (same as `plan`)."
+    incremental: "Reuse per-pair results of stages whose date set grew and re-invert only the time series (PERF-06)."
+  cache:
+    help: "Inspect and prune the work-directory cache (work/<stage>/<hash>)."
+  cache_ls:
+    help: "List cached stage results."
+    stage: "Only this stage."
+  cache_gc:
+    help: "Keep the N most recent entries per stage (and an optional --max-size budget) and delete the rest."
+    keep: "Entries kept per stage."
+    max_size: "Cache budget in GB: evict the oldest survivors until the work directory fits (PERF-03). Default: no size limit."
+    dry_run: "Only report."
+  unwrap:
+    help: "Phase-unwrapping scheduler: memory model, tiling, parallelism (R-06, PERF-04)."
+  unwrap_plan:
+    help: "Dry-run: print the unwrap strategy for a stack of the given size (plan §5.4)."
+    shape: "Rows and columns of one interferogram."
+    n: "Number of interferograms in the stack."
+    memory_gb: "Memory budget (default: detected x 0.8)."
+    cores: "CPU cores (default: detected)."
+    tiles: "Explicit ROWSxCOLS (default: auto)."
+    overlap: "Overlap fraction for --tiles."
+    min_overlap_px: "Minimum tile overlap in pixels (ADR-0046)."
+    memory_mb_per_mpixel: "Memory model constant c."
+    nproc: "Tile processes per interferogram."
+    fringe: "Fringe density 0-1 (skip measurement)."
+    available: "Assume these backends are installed (repeatable)."
+  unwrap_run:
+    help: "Unwrap every interferogram of a stack with the scheduled strategy."
+    igrams: "igrams.npz (wintersar.io.igrams format)."
+    out: "Output directory (unw.npz, stats.json)."
+    coherence_threshold: "Mask pixels below this coherence."
+    memory_gb: "Memory budget in GB (default: detected x 0.8)."
+    cores: "CPU cores (default: detected)."
+    tiles: "Explicit ROWSxCOLS."
+    overlap: "Overlap fraction for --tiles."
+    min_overlap_px: "Minimum tile overlap in pixels (ADR-0046)."
+    nproc: "Tile processes per interferogram."
+    n_parallel: "Override the planned parallelism."
+    cost: "defo | smooth | topo"
+    init: "mst | mcf"
+    log_dir: "Directory for the backend logs (default: <out>/logs)."
+  diagnose:
+    help: "Explain failures in engine logs: KB match -> cause -> fix (R-02, R-14)."
+    path: "Log file or directory (e.g. work/ or work/<stage>/<hash>/logs). Omit with --list-kb. Scanning a directory skips wintersar's own records (manifest.json, runs/*.json) so each failure is reported once; name such a file explicitly to diagnose it anyway."
+    engine: "Try this engine's KB first: {engines}"
+    out: "Write a Markdown report to this path."
+    assume_failed: "Emit KB-UNKNOWN even when no error marker is found (the stage failed)."
+    list_kb: "List the knowledge-base entries and exit."
+  validate:
+    help: "Compare the InSAR time series with levelling / GNSS ground truth (R-10)."
+    leveling: "Levelling CSV (plan §5.6 schema)."
+    gnss: "GNSS CSV (ENU columns)."
+    radius: "Pixel averaging radius around each site (m)."
+    method: "mean | median"
+    align: "nearest | interp"
+    max_gap_days: "Tolerance for nearest-date alignment."
+    heading: "Override satellite heading (deg, clockwise from north)."
+    incidence: "Override incidence angle (deg from vertical)."
+    no_plots: "Skip PNG plots."
+  refpoint:
+    help: "Recommend reference-point candidates and compare with MintPy's auto rule (R-09)."
+    aoi: "AOI GeoJSON (lon/lat); default: all valid pixels."
+    top: "Number of candidates."
+    coherence: "Mean coherence map (.npy/.npz)."
+    conncomp: "Connected-component map (.npy/.npz)."
+    dem: "Elevation map (.npy/.npz, metres)."
+    weights: "Override weights, e.g. coherence=0.4,conncomp=0.3 (ADR-0041)."
+    min_coherence: "Discard pixels below this mean coherence."
+    mintpy_threshold: "MintPy minCoherence for the comparison."
+    out: "Write candidates JSON here."
+  sweep:
+    help: "Run the parameter grid through the cached DAG and rank the results (R-08, R-11)."
+    grid: "sweep.yaml (grid of dotted config keys)."
+    out: "Output directory (default: <workdir>/sweep)."
+    leveling: "Levelling CSV for gt_rmse (default: config validate.leveling_csv)."
+    gnss: "GNSS CSV for gt_rmse."
+    radius: "Site averaging radius (m)."
+    set: "Stage parameter override stage.key=value (same as 'wintersar run --set')."
+  closure:
+    help: "Loop-closure statistics: per-triplet/pixel RMS and suspicious interferograms (§12.1)."
+    igrams: "Interferogram stack .npz (wrapped, coherence, pairs, dates)."
+    unw: "Unwrapped stack .npz (unw, optional conncomp)."
+    out: "Write closure_dashboard.json (+ maps .npz) here."
+    wrapped: "Use the wrapped phase even when unw is available."
+    top: "Rows to print."
+  bench:
+    help: "Run a benchmark site (median of N repeats) and write bench_result.json (plan §5.9)."
+    site: "Site YAML (benchmarks/sites/*.yaml)."
+    compare: "Baseline bench_result.json to compare against."
+    out: "Where to write the result JSON."
+    repeats: "Override the site's repeat count."
+    fail_on_regression: "Exit 1 when any stage is slower than the baseline by more than the threshold."
+    threshold: "Regression threshold as a fraction (site default 0.15)."
+    runner: "pipeline | fake (default: the site's 'runner')."
+    workdir: "Keep run directories here (default: temporary)."
+    allow_network: "Permit sites with 'network: true'."
+    markdown: "Also write the comparison table as Markdown."
+  research:
+    help: "Representative-phase, tile-stitching and A/B experiments (R-07, R-15)."
+  research_repr_phase:
+    help: "Estimate the low-resolution representative phase of one interferogram (R-07)."
+    igram: "igrams.npz (wintersar.io.igrams)."
+    out: "Output .npz (repr_complex, repr_phase)."
+    method: "ml | coh_weighted | shp | phase_link | filtered"
+    factor: "Downsample factor (looks per axis)."
+    index: "Interferogram index in the stack."
+    stack: "NPZ with 'slc' or 'amplitude' (n_dates, ny, nx) for shp/phase_link."
+    pair: "Date indices (i j) for phase_link (default: from the pair key)."
+    param: "Extra method parameter k=v (repeatable)."
+  research_stitch:
+    help: "Determine and remove the integer-2π offsets between independently unwrapped tiles."
+    tiles: "tiles.npz (research.stitching.save_tiles_npz)."
+    out: "Output .npz (merged, offsets) + .json report."
+    method: "coarse_ref | overlap_consensus"
+    lowres_ref: "NPZ holding the low-res unwrapped reference."
+    ref_key: "Array key inside --lowres-ref."
+    consensus: "mode | median (overlap_consensus)"
+    ref_stat: "mean | median (coarse_ref)"
+    merge: "feather | core"
+  research_synth:
+    help: "Write synthetic ground-truth data (igrams.npz / tiles.npz / slc.npz)."
+    out: "Output .npz"
+    kind: "igrams | tiles | slc"
+    n_dates: "Number of acquisition dates (igrams, slc)."
+    shape: "Rows and columns."
+    seed: "Random seed."
+    atmosphere_std_rad: "Atmospheric phase screen standard deviation (rad)."
+    coherence_base: "Base coherence of the synthetic interferograms (0-1)."
+    looks: "Number of looks used for the phase noise model."
+    noise_model: "crlb (Cramer-Rao lower bound, default) | exact (true phase distribution)."
+    water_fraction: "Fraction of the scene masked as water (0-1)."
+    rows: "tiles: tile rows"
+    cols: "tiles: tile columns"
+    overlap: "tiles: overlap pixels"
+    max_offset_cycles: "tiles: largest injected 2π offset (cycles)."
+    noise_std_rad: "tiles: noise on tiles"
+    factor: "tiles: low-res reference factor"
+    tau_dates: "slc: coherence decay (dates)"
+    coherence_floor: "slc: long-term coherence"
+  research_experiment:
+    help: "Run a YAML-defined experiment (results JSON + Markdown table)."
+    yaml_path: "Experiment YAML path or bundled name (S_synth_repr_phase)."
+    out: "Output directory for <name>.json / <name>.md"
+    docs_dir: "Also copy the table into this directory (docs/research/results)."
+  research_experiments:
+    help: "List the bundled experiment definitions."

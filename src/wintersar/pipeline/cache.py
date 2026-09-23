@@ -8,8 +8,12 @@
   (size + mtime + head/tail) — multi-GB rasters must not be re-read on every plan
   (ADR-0031). The method is recorded in ``artifact.meta["hash_method"]``.
 * :func:`gc` keeps the ``keep_latest`` most recent entries per stage and, with
-  ``max_bytes``, additionally evicts the oldest of those until the work directory fits the
-  byte budget (plan §6.2 PERF-03: "캐시 크기 제한과 ``wintersar cache gc``").
+  ``max_bytes``, additionally evicts the oldest of those (by ``finished_at``) until the work
+  directory fits the byte budget — never the newest ``ok`` entry of a stage, which is what the
+  next run resolves against (plan §6.2 PERF-03: "캐시 크기 제한과 ``wintersar cache gc``";
+  ADR-0081).
+* A node directory may also hold ``pairs/`` (per-pair results + manifest, PERF-06,
+  ADR-0080); it is part of the entry's size and survives an incremental re-run.
 * :func:`node_lock` serialises two processes that resolve the *same* node hash on the same
   work directory: without it the second ``prepare_node_dir(clean=True)`` deletes the first
   run's in-flight ``out/`` (ADR-0032 has no ownership rule; ``engines/aux_cache.py`` locks
@@ -24,12 +28,13 @@ import shutil
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from wintersar.io.schemas import Artifact, Artifacts, StageRecord
+from wintersar.pipeline.incremental import pairs_dir
 from wintersar.pipeline.stages import STAGE_ORDER
 from wintersar.util.hashing import hash_path
 
@@ -78,12 +83,21 @@ def manifest_path(node_dir: Path) -> Path:
     return node_dir / MANIFEST_NAME
 
 
-def prepare_node_dir(node_dir: Path, clean: bool = True) -> tuple[Path, Path]:
-    """Create ``out/`` and ``logs/`` (emptying them first when ``clean``)."""
+def prepare_node_dir(
+    node_dir: Path, clean: bool = True, keep_pairs: bool = False
+) -> tuple[Path, Path]:
+    """Create ``out/`` and ``logs/`` (emptying them first when ``clean``).
+
+    ``clean`` also removes ``pairs/`` (a full recompute must not inherit stale per-pair
+    results) unless ``keep_pairs`` is set, which is what an incremental re-run does.
+    """
     for sub in (out_dir(node_dir), log_dir(node_dir)):
         if clean and sub.exists():
             shutil.rmtree(sub)
         sub.mkdir(parents=True, exist_ok=True)
+    pairs = pairs_dir(node_dir)
+    if clean and not keep_pairs and pairs.exists():
+        shutil.rmtree(pairs)
     return out_dir(node_dir), log_dir(node_dir)
 
 
@@ -341,6 +355,42 @@ def cache_size(workdir: Path) -> dict[str, int]:
     return sizes
 
 
+def size_summary(
+    workdir: Path, entries: list[CacheEntry] | None = None, max_bytes: int | None = None
+) -> dict[str, Any]:
+    """Size accounting for ``cache ls`` (PERF-03 budget, ADR-0081).
+
+    ``total_bytes``, ``by_stage``, ``n_entries``, ``n_orphans``, ``orphan_bytes``,
+    ``protected_bytes`` (newest ``ok`` entry of every stage — what ``gc`` never evicts) and,
+    with ``max_bytes``, ``max_bytes`` / ``over_budget_bytes``.
+    """
+    entries = list_records(workdir) if entries is None else entries
+    by_stage: dict[str, int] = {}
+    protected: dict[str, CacheEntry] = {}
+    orphan_bytes = 0
+    n_orphans = 0
+    for e in entries:
+        by_stage[e.stage] = by_stage.get(e.stage, 0) + e.size_bytes
+        if e.orphan:
+            n_orphans += 1
+            orphan_bytes += e.size_bytes
+        elif e.status == "ok" and e.stage not in protected:
+            protected[e.stage] = e  # ``entries`` is newest first
+    total = sum(by_stage.values())
+    out: dict[str, Any] = {
+        "total_bytes": total,
+        "by_stage": by_stage,
+        "n_entries": len(entries),
+        "n_orphans": n_orphans,
+        "orphan_bytes": orphan_bytes,
+        "protected_bytes": sum(e.size_bytes for e in protected.values()),
+    }
+    if max_bytes is not None:
+        out["max_bytes"] = int(max_bytes)
+        out["over_budget_bytes"] = max(total - int(max_bytes), 0)
+    return out
+
+
 # ---------------------------------------------------------------------- gc
 
 
@@ -349,10 +399,21 @@ class GcReport:
     removed: list[CacheEntry]
     kept: list[CacheEntry]
     dry_run: bool
+    max_bytes: int | None = None
+    protected: list[CacheEntry] = field(default_factory=list)
 
     @property
     def freed_bytes(self) -> int:
         return sum(e.size_bytes for e in self.removed)
+
+    @property
+    def kept_bytes(self) -> int:
+        return sum(e.size_bytes for e in self.kept)
+
+    @property
+    def over_budget(self) -> bool:
+        """The protected entries alone exceed ``max_bytes`` (nothing more can be evicted)."""
+        return self.max_bytes is not None and self.kept_bytes > self.max_bytes
 
 
 def gc(
@@ -367,8 +428,11 @@ def gc(
     Entries are ordered by ``finished_at`` (fallback: manifest/directory mtime). Failed
     entries count like any other so that a failed run's logs survive until they age out;
     orphans (no readable manifest) never occupy a ``keep_latest`` slot. ``max_bytes`` caps
-    the total size afterwards by evicting the oldest survivors first (plan §6.2 PERF-03).
-    Entries locked by a running pipeline are always kept.
+    the total size afterwards by evicting the oldest survivors first — across stages, but
+    never the newest ``ok`` entry of a stage: that is the result the next ``run`` resolves
+    against, and deleting it would turn a cache budget into a forced full recompute
+    (plan §6.2 PERF-03, ADR-0081). ``GcReport.over_budget`` tells when even those do not
+    fit. Entries locked by a running pipeline are always kept.
     """
     if keep_latest < 0:
         msg = "keep_latest must be >= 0"
@@ -378,23 +442,34 @@ def gc(
         raise ValueError(msg)
     removed: list[CacheEntry] = []
     kept: list[CacheEntry] = []
+    protected: list[CacheEntry] = []
     for s in stages or STAGE_ORDER:
         entries = [e for e in list_records(workdir, s) if not is_locked(e.path)]  # newest first
         survivors = [e for e in entries if not e.orphan][:keep_latest]
         keys = {id(e) for e in survivors}
         kept.extend(survivors)
         removed.extend(e for e in entries if id(e) not in keys)
+        newest_ok = next((e for e in survivors if e.status == "ok"), None)
+        if newest_ok is not None:
+            protected.append(newest_ok)
     if max_bytes is not None:
-        kept.sort(key=lambda e: -e.sort_key())  # newest first, across stages
+        safe = {id(e) for e in protected}
+        candidates = sorted((e for e in kept if id(e) not in safe), key=lambda e: e.sort_key())
         total = sum(e.size_bytes for e in kept)
-        while kept and total > max_bytes:
-            victim = kept.pop()
+        evicted: set[int] = set()
+        for victim in candidates:  # oldest finished_at first
+            if total <= max_bytes:
+                break
             total -= victim.size_bytes
+            evicted.add(id(victim))
             removed.append(victim)
+        kept = [e for e in kept if id(e) not in evicted]
     if not dry_run:
         for e in removed:
             shutil.rmtree(e.path, ignore_errors=True)
-    return GcReport(removed=removed, kept=kept, dry_run=dry_run)
+    return GcReport(
+        removed=removed, kept=kept, dry_run=dry_run, max_bytes=max_bytes, protected=protected
+    )
 
 
 def human_size(n: int) -> str:

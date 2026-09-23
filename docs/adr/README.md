@@ -15,6 +15,12 @@
 | 0050–0054 | io / compute / bench | [0050](0050-zarr-v3-igram-store-and-chunk-presets.md) Zarr v3 간섭도 스택 저장소와 청크 프리셋 · [0051](0051-cog-export-settings.md) 결과 COG 내보내기 설정 · [0052](0052-isce-hyp3-mintpy-format-facts.md) ISCE2·HyP3·MintPy 포맷 확인 결과와 `wintersar.io.formats` 규약 · [0053](0053-gpu-backend-policy-and-tolerances.md) GPU(CuPy) 백엔드 정책과 커널 수치 허용 오차 · [0054](0054-bench-protocol-implementation.md) 벤치마크 프로토콜 구현 |
 | 0060–0064 | research (대표위상·스티칭·실험) | [0060](0060-research-experiment-design.md) Phase 6 연구 실험 설계 · [0061](0061-phase-linking-implementation.md) phase linking(EVD/EMI, 순차 추정기) numpy 구현과 참고문헌 · [0062](0062-shp-test-choice.md) SHP(통계적 동질 픽셀) 검정 선택 · [0063](0063-stitching-graph-adjustment.md) 타일 2π 오프셋 결정 · [0064](0064-r15-sequential-estimator-ab-protocol.md) R-15 순차 추정기(dolphin) vs 전통 SBAS(MintPy) A/B 프로토콜 |
 | 0070–0072 | docs / QGIS 플러그인 | [0070](0070-qgis-plugin-thin-client-architecture.md) 플러그인 아키텍처 · [0071](0071-qgis-plugin-environment-discovery.md) 환경 탐색 · [0072](0072-docs-structure-and-i18n.md) 문서 구조·언어 |
+| 0080–0084 | pipeline 증분 모드·캐시 예산 (PERF-03/06) | [0080](0080-incremental-update-per-pair-cache-and-hash-rule.md) 쌍 단위 서브캐시와 노드 해시 규칙 · [0081](0081-cache-size-budget.md) `cache gc --max-size` 퇴거 규칙 · [0082](0082-real-engine-participation-in-incremental-mode.md) 실 엔진의 증분 모드 참여 계약 |
+| 0090–0094 | util / CLI (도움말 i18n·오류 봉투) | [0090](0090-cli-help-text-early-language-resolution.md) 도움말 문구의 조기 언어 결정 · [0091](0091-cli-error-path-envelope-catalogue.md) 오류 경로 봉투 계약과 `CLI-xxx` 카탈로그 |
+| 0095–0099 | compute (GPU, PERF-10) | [0095](0095-gpu-backend-precedence-and-degrade-policy.md) GPU 백엔드 우선순위와 CPU 강등 · [0096](0096-kernel-numerical-tolerances-and-goldstein-variants.md) 커널 허용 오차와 Goldstein 변형 · [0097](0097-ported-stages-and-engine-internals-untouched.md) 이식한 단계와 엔진 내부 불가침 |
+| 0100–0104 | regression / nightly (골든 통계) | [0100](0100-golden-statistics-layer.md) 합성 S 사이트 골든 통계 층 · [0101](0101-nightly-workflow-gates-vs-reports.md) nightly 워크플로 — 게이트 vs 보고 · [0102](0102-golden-tolerance-policy.md) 골든 비교 허용 오차 정책 |
+| 0105–0109 | install / 환경 (pixi·Docker) | [0105](0105-pixi-manifest-facts.md) pixi 매니페스트 사실 확인 · [0106](0106-docker-engines-image-policy.md) Docker engines 이미지 정책 · [0107](0107-uv-vs-pixi-split.md) uv 와 pixi 의 역할 분담 |
+| 0110–0112 | docs 릴리스 (Phase 8) | [0110](0110-tutorial-structure-and-language-policy.md) 튜토리얼 구조·언어 정책 · [0111](0111-release-notes-dod-reporting-policy.md) 릴리스 노트·DoD 보고 정책 · [0112](0112-docs-test-policy.md) 문서 테스트 정책 |
 
 새 ADR 을 쓸 때: 자기 대역의 다음 번호를 쓰고, 상태(제안/채택/기각/대체됨)·날짜·관련 ID·검증 출처를
 머리말에 적는다. 출처 없는 수치·API 인자명은 쓰지 않는다(규칙 11.3).
@@ -24,5 +30,7 @@
 Architecture decision records live here, one file per decision, numbered in per-module ranges so
 parallel work never collides: 0001 common, 0010–0019 select, 0020–0029 engines, 0030–0034 pipeline,
 0035–0039 diagnose, 0040–0044 validate, 0045–0049 unwrap, 0050–0054 io/compute/bench,
-0060–0064 research, 0070–0072 docs/QGIS. Every ADR states status, date, related IDs and the sources
+0060–0064 research, 0070–0072 docs/QGIS, 0080–0084 pipeline incremental mode, 0090–0094 CLI help/error
+contracts, 0095–0099 compute/GPU, 0100–0104 regression/nightly, 0105–0109 install (pixi/Docker), 0110–0112 the
+v0.1 docs release. Every ADR states status, date, related IDs and the sources
 that were actually verified (no guessed numbers or API names, rule 11.3).

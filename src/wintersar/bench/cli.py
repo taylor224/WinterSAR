@@ -14,8 +14,16 @@ from rich.table import Table
 
 from wintersar.i18n import t
 from wintersar.io.schemas import Finding
+from wintersar.util.clihelp import h
 from wintersar.util.clistate import state
-from wintersar.util.output import console, emit_json, err_console, print_findings
+from wintersar.util.output import (
+    CLI_BAD_VALUE,
+    cli_finding,
+    console,
+    emit_json,
+    exit_with_findings,
+    print_findings,
+)
 
 
 def _fmt(v: Any, nd: int = 2) -> str:
@@ -48,46 +56,36 @@ def _stage_table(data: dict[str, Any], lang: str) -> Table:
 
 
 def register(app: typer.Typer) -> None:
-    @app.command("bench")
+    @app.command("bench", help=h("cli_help.bench.help"))
     def bench(
-        site: Annotated[Path, typer.Option("--site", help="Site YAML (benchmarks/sites/*.yaml).")],
+        site: Annotated[Path, typer.Option("--site", help=h("cli_help.bench.site"))],
         compare: Annotated[
-            Path | None,
-            typer.Option("--compare", help="Baseline bench_result.json to compare against."),
+            Path | None, typer.Option("--compare", help=h("cli_help.bench.compare"))
         ] = None,
-        out: Annotated[Path, typer.Option("--out", help="Where to write the result JSON.")] = Path(
+        out: Annotated[Path, typer.Option("--out", help=h("cli_help.bench.out"))] = Path(
             "bench_result.json"
         ),
         repeats: Annotated[
-            int | None, typer.Option("--repeats", help="Override the site's repeat count.")
+            int | None, typer.Option("--repeats", help=h("cli_help.bench.repeats"))
         ] = None,
         fail_on_regression: Annotated[
             bool,
-            typer.Option(
-                "--fail-on-regression",
-                help="Exit 1 when any stage is slower than the baseline by more than the threshold.",
-            ),
+            typer.Option("--fail-on-regression", help=h("cli_help.bench.fail_on_regression")),
         ] = False,
         threshold: Annotated[
-            float | None,
-            typer.Option(
-                "--threshold", help="Regression threshold as a fraction (site default 0.15)."
-            ),
+            float | None, typer.Option("--threshold", help=h("cli_help.bench.threshold"))
         ] = None,
         runner: Annotated[
-            str | None,
-            typer.Option("--runner", help="pipeline | fake (default: the site's 'runner')."),
+            str | None, typer.Option("--runner", help=h("cli_help.bench.runner"))
         ] = None,
         workdir: Annotated[
-            Path | None,
-            typer.Option("--workdir", help="Keep run directories here (default: temporary)."),
+            Path | None, typer.Option("--workdir", help=h("cli_help.bench.workdir"))
         ] = None,
         allow_network: Annotated[
-            bool, typer.Option("--allow-network", help="Permit sites with 'network: true'.")
+            bool, typer.Option("--allow-network", help=h("cli_help.bench.allow_network"))
         ] = False,
         markdown: Annotated[
-            Path | None,
-            typer.Option("--markdown", help="Also write the comparison table as Markdown."),
+            Path | None, typer.Option("--markdown", help=h("cli_help.bench.markdown"))
         ] = None,
     ) -> None:
         """Run a benchmark site (median of N repeats) and write bench_result.json (plan §5.9)."""
@@ -96,8 +94,14 @@ def register(app: typer.Typer) -> None:
 
         lang = state.lang
         if runner is not None and runner not in RUNNERS:
-            err_console.print(f"[red]--runner must be one of {sorted(RUNNERS)}[/]")
-            raise typer.Exit(code=2)
+            finding = cli_finding(
+                CLI_BAD_VALUE,
+                option="--runner",
+                value=runner,
+                allowed=" | ".join(sorted(RUNNERS)),
+                command="bench",
+            )
+            raise exit_with_findings("bench", [finding])
         try:
             site_obj = load_site(site)
         except (OSError, ValueError) as e:

@@ -15,18 +15,22 @@
 
 설계 원칙(플랜 §1.4): 재사용 우선(fork 금지), 엔진은 subprocess 경계 뒤(GPL 격리), 모든 단계는 캐시 가능한
 DAG 노드, 메시지는 한국어/영어로 "원인 + 조치", 성능 주장은 `bench` 결과가 있을 때만, 도메인 오해는 코드로 방지.
+현재 버전이 무엇을 충족하고 무엇을 못 했는지는 [릴리스 노트](release-notes.md), 다음 할 일은 [로드맵](roadmap.md).
 
 ## 설치
+
+세 경로(uv core · pixi engines · Docker engines)와 각 경로가 실행할 수 있는 것은 [설치 안내](install.md)에
+있습니다. 개발·HyP3 원격 경로의 최소 설치:
 
 ```bash
 git clone https://github.com/taylor224/WinterSAR && cd wintersar
 uv sync --extra dev                 # Python 3.11 venv (.venv)
 uv run wintersar --help
-uv run wintersar check-install      # 엔진·인증·하드웨어 상태 (미설치 엔진은 ENV-001 Finding)
+uv run wintersar check-install      # 엔진·인증·하드웨어 상태 (미설치 엔진은 ENV-001 Finding, 종료 코드 0)
 ```
 
 외부 엔진(ISCE2, SNAPHU/snaphu-py, tophu, MintPy, dolphin, hyp3-sdk, sentineleof, sardem)은 **번들하지
-않습니다**. 필요한 경로만 conda-forge/pip 로 따로 설치하면 어댑터가 감지합니다
+않습니다**. 로컬 엔진은 pixi `engines` 환경이나 `Dockerfile.engines` 이미지로 설치하고, 어댑터가 감지합니다
 ([ADR-0001](adr/0001-license-and-engine-boundaries.md)). `wintersar check-install` 이 무엇이 빠졌고 어떻게
 설치하는지 알려 줍니다.
 
@@ -76,6 +80,35 @@ wintersar run --config config.yaml --set unwrap.fail_stage=unwrap   # unwrap 에
 `--set interferogram.fail_stage=unwrap` 처럼 다른 단계에 얹으면 `unwrap` 단계는 그 키를 보지 못해 아무것도
 실패하지 않고(종료 코드 0), interferogram 해시만 바뀌어 하류가 통째로 재실행됩니다.
 
+## 명령 목록 (`wintersar --help`)
+
+| 명령 | 하는 일 | 종류 |
+|---|---|---|
+| `version` | 버전 출력 | 보고 |
+| `check-install [--engine NAME]… [--strict]` | 엔진 설치·버전·인증·하드웨어 상태 (`ENV-00x`) | 보고 |
+| `init [PATH] [--force]` | 예시 `config.yaml` 작성 (플랜 §4.4) | 동작 |
+| `search --config` | ASF burst/SLC 후보 검색 → `work/select/candidates.json` | 보고 |
+| `precheck CANDIDATES --config [--out] [--geometry] [--baseline auto|asf|orbit|none] [--no-fail]` | `SEL-01…13` 규칙 → `precheck_report.{md,html,json}` | 동작 |
+| `plan --config [--until] [--from] [--force STAGE]… [--set k=v]…` | DAG·캐시 상태·예상 리소스·크레딧 견적 (실행 없음) | 동작 |
+| `run --config [--until] [--from] [--force STAGE]… [--set k=v]… [--dry-run]` | 파이프라인 실행; 바뀐 단계와 하류만 (`PERF-03`) | 동작 |
+| `cache ls|gc --config [--workdir] [--stage] [--keep N] [--max-size GB] [--dry-run]` | 캐시 목록·정리 | 동작 |
+| `diagnose [PATH] [--engine] [--out] [--assume-failed] [--list-kb]` | 엔진 로그 → KB 매칭 → 원인·조치 | 보고 |
+| `validate --ts --leveling [--gnss] [--out] [--radius] [--method] [--align] [--max-gap-days] [--heading] [--incidence] [--no-plots]` | 수준측량·GNSS 대조 리포트 (R-10) | 보고 |
+| `refpoint --ts --aoi [--top] [--coherence] [--conncomp] [--dem] [--weights] [--min-coherence] [--mintpy-threshold] [--out]` | 기준점 추천 + MintPy 자동 규칙 비교 (R-09) | 보고 |
+| `closure --igrams [--unw] [--out] [--wrapped] [--top]` | 위상 폐합 통계·의심 간섭도 | 보고 |
+| `sweep --config --grid [--out] [--leveling] [--gnss] [--radius] [--set]…` | 파라미터 격자 → 캐시 DAG → Pareto 순위 (R-08/R-11) | 동작 |
+| `unwrap plan --shape R C --n N [--memory-gb] [--cores] [--method] [--tiles] …` | 언래핑 전략 dry run (R-06, PERF-04) | 보고 |
+| `unwrap run IGRAMS [--out] [--method] [--tiles] …` | 스택 언래핑 실행 | 동작 |
+| `research synth|repr-phase|stitch|experiment|experiments` | 합성 데이터, 대표위상, 타일 스티칭, YAML 실험 (R-07, R-15) | 동작 |
+| `bench --site [--compare] [--out] [--repeats] [--fail-on-regression] [--threshold] [--runner] [--workdir] [--allow-network] [--markdown]` | 벤치마크 → `bench_result.json` (플랜 §5.9) | 동작 |
+
+`--json`(안정된 봉투 `{"ok","command","data","findings"}`)과 `--lang ko|en` 은 **전역 옵션**이라 하위 명령
+**앞에** 씁니다 — `wintersar --json run --config config.yaml`. 하위 명령 뒤에 쓰면
+(`wintersar run --json`) `No such option: --json` 으로 종료 코드 2 가 납니다. *보고* 명령은 FAIL Finding 이
+있어도 종료 코드 0 에 `ok:false`(호출자가 findings 를 읽음), *동작* 명령은 `ok` 가 아니면 1, 잘못된 입력은 2 입니다.
+`wintersar --help` 가 현재 트리에 실제로 있는 명령의 목록이며, 이 표와 튜토리얼의 명령은 테스트가 CLI 와 대조합니다
+([ADR-0112](adr/0112-docs-test-policy.md)).
+
 ## 실데이터 흐름 (요약)
 
 ```bash
@@ -84,32 +117,26 @@ wintersar precheck work/select/candidates.json --config config.yaml   # SEL-01�
 wintersar plan     --config config.yaml
 wintersar run      --config config.yaml [--until unwrap] [--from timeseries] [--force STAGE]
 wintersar diagnose work/ [--engine isce2|snaphu|mintpy|hyp3]   # 또는 work/<stage>/<hash>/logs
-```
-
-```bash
-wintersar validate --ts work/ts/timeseries.h5 --leveling data/leveling.csv [--gnss data/gnss.csv]
-wintersar refpoint --ts work/ts/timeseries.h5 --aoi aoi.geojson --top 5
+wintersar validate --ts work/timeseries/<hash>/out/timeseries.h5 --leveling data/leveling.csv [--gnss data/gnss.csv]
+wintersar refpoint --ts work/timeseries/<hash>/out/timeseries.h5 --aoi aoi.geojson --top 5
 wintersar sweep    --config config.yaml --grid sweep.yaml
 wintersar bench    --site benchmarks/sites/S_synthetic.yaml [--compare baseline.json]
-wintersar research repr-phase --igram igrams.npz --out repr.npz --method ml|coh_weighted|shp|phase_link|filtered
-wintersar research stitch     --tiles tiles.npz --out merged.npz --method coarse_ref|overlap_consensus
-wintersar unwrap plan --shape 4000 6000 --n 30      # 언래핑 스케줄러 dry run
 ```
 
-`--json`(안정된 봉투 `{"ok","command","data","findings"}`)과 `--lang ko|en` 은 **전역 옵션**이라 하위 명령
-**앞에** 씁니다 — `wintersar --json run --config config.yaml`. 하위 명령 뒤에 쓰면
-(`wintersar run --json`) `No such option: --json` 으로 종료 코드 2 가 납니다.
-`wintersar --help` 가 현재 트리에 실제로 있는 명령의 목록입니다.
+단계별 설명과 지금 바로 돌려 볼 수 있는 합성 대체 명령은 튜토리얼에 있습니다.
 
 ## 어디서부터 읽을까
 
+- 설치: [설치 안내](install.md) — uv · pixi · Docker, Earthdata 인증, 승인이 필요한 항목.
 - 처음이라면 [개념 정리](concepts/index.md): relative orbit, burst, looks, 레이오버, TOPS 정합, 타일
   언래핑, 기준점, loop closure, compressed SLC.
 - 튜토리얼: [HyP3 빠른 시작](tutorials/hyp3-quickstart.md) → [ISCE2 로컬](tutorials/isce2-local.md) →
-  [검증·튠](tutorials/validate-tune.md).
-- 실패했을 때: [진단 KB](kb/index.md) — 메시지의 `KB-xxx` ID 로 찾습니다.
+  [검증·튠](tutorials/validate-tune.md). 흐름은 셋 다 search → precheck → plan → run → diagnose → validate →
+  refpoint → sweep 이고, 각 단계에 "지금 바로(합성)" 명령이 있습니다.
+- 실패했을 때: [진단 KB](kb/index.md) — 메시지의 `KB-xxx` ID 로 찾습니다. 구조와 확장 방법은 [KB 개요](kb/overview.md).
+- 이 버전의 상태: [릴리스 노트](release-notes.md)(Phase 별 DoD 충족/미충족), [로드맵](roadmap.md).
 - 설계 근거: [ADR 색인](adr/README.md). 미확정 사항: [open-questions](open-questions.md).
-- 기여: [contributing](contributing.md). QGIS 플러그인: `qgis_plugin/README.md`.
+- 기여: [contributing](contributing.md). QGIS 플러그인: `qgis_plugin/README.md`. 연구 모듈: [research](research/index.md).
 
 ## English summary
 
@@ -118,8 +145,11 @@ topsStack, SNAPHU/tophu, MintPy, dolphin) behind subprocess adapters and adds wh
 their time on: burst-level selection with precheck rules `SEL-01..13`, a hash-cached DAG that re-runs
 only the stages downstream of a changed parameter, an unwrapping scheduler that tiles within a memory
 budget, a log-parsing diagnosis knowledge base `KB-xx` (cause -> fix), ground-truth validation and a
-thin QGIS plugin over the CLI's `--json` envelope. Install with `uv sync --extra dev`; run the
-network-free synthetic pipeline with `wintersar init config.yaml`, set `engine.interferogram: fake`
-and `timeseries.engine: fake`, then `wintersar plan` / `wintersar run`. `--json` and `--lang ko|en`
-are global options and go *before* the sub-command (`wintersar --json run --config config.yaml`);
-messages are Korean by default with English available.
+thin QGIS plugin over the CLI's `--json` envelope. Install with `uv sync --extra dev` (local engines via
+pixi or Docker, see the install guide); run the network-free synthetic pipeline with `wintersar init
+config.yaml`, set `engine.interferogram: fake` and `timeseries.engine: fake`, then `wintersar plan` /
+`wintersar run`. The command table above mirrors `wintersar --help`; `--json` and `--lang ko|en` are global
+options and go *before* the sub-command. Report commands exit 0 with `ok:false` on FAIL findings, action
+commands exit 1. Tutorials follow search -> precheck -> plan -> run -> diagnose -> validate -> refpoint ->
+sweep with a synthetic equivalent for every step; the release notes state which plan DoDs are met, and the
+roadmap lists the backlog and open questions by owner.

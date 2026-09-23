@@ -2,7 +2,9 @@
 run, and the estimated resources/credits for the latter.
 
 Estimates come from ``Engine.estimate`` (per engine) plus
-``wintersar.diagnose.resources.estimate`` (lazy; absent -> nothing added).
+``wintersar.diagnose.resources.estimate`` (lazy; absent -> nothing added). An incremental
+node (PERF-06) is sized by the pairs it still has to compute and reported with
+``extra["incremental"]`` (``N pairs cached / M new``) plus an INFO ``PIPELINE-015``.
 """
 
 from __future__ import annotations
@@ -32,6 +34,13 @@ def stage_size(node: Node, available: Artifacts) -> tuple[int, int]:
         shape = meta.get("shape")
         if not pixels and isinstance(shape, list | tuple) and len(shape) >= 2:
             pixels = int(shape[-2]) * int(shape[-1])
+    if node.partial is not None and node.partial.usable:
+        # an incremental node only computes the pairs it does not hold yet (PERF-06)
+        new = node.partial.counts.get("new")
+        if new is not None:
+            n_pairs = int(new)
+    elif not n_pairs and node.pairs_expected:
+        n_pairs = len(node.pairs_expected)
     return n_pairs, pixels
 
 
@@ -107,10 +116,11 @@ def build_plan(
     param_overrides: dict[str, dict[str, Any]] | None = None,
     machine: sysinfo.MachineSpec | None = None,
     dag: Dag | None = None,
+    incremental: bool = False,
 ) -> Plan:
     """Build (or reuse) the DAG and describe it without executing anything."""
     if dag is None:
-        dag = Dag(cfg)
+        dag = Dag(cfg, incremental=incremental)
         dag.build(param_overrides, until=until, from_stage=from_stage, force=force)
     stages: list[StageRecord] = []
     to_run: list[str] = []
@@ -134,6 +144,8 @@ def build_plan(
             rec.resources = est
             total = total + est
             to_run.append(rec.node_hash)
+            if node.status == "incremental" and node.partial is not None:
+                findings.append(incremental_finding(node.stage, node.partial.counts))
         stages.append(rec)
     for name in sorted({n.engine for n in dag.to_run() if n.engine}):
         eng = dag.engine(name)
@@ -147,6 +159,24 @@ def build_plan(
         s: r.model_dump(mode="json", exclude_none=True) for s, r in estimates.items()
     }
     return plan
+
+
+def incremental_finding(stage: str, counts: dict[str, int | None]) -> Finding:
+    """INFO ``PIPELINE-015``: ``N pairs cached / M new`` for a partially cached node."""
+    new = counts.get("new")
+    return Finding(
+        rule_id="PIPELINE-015",
+        severity="INFO",
+        message_key="pipeline.PIPELINE-015.cause",
+        fix_key="pipeline.PIPELINE-015.fix",
+        params={
+            "stage": stage,
+            "n_cached": int(counts.get("cached") or 0),
+            "n_new": "?" if new is None else int(new),
+        },
+        evidence=dict(counts),
+        scope=stage,
+    )
 
 
 def plan_estimates(plan: Plan) -> dict[str, Resources]:

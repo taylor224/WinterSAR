@@ -325,8 +325,10 @@ def test_plan_reports_cached_vs_to_run(cfg, small, spy) -> None:
     p = api.plan(cfg, param_overrides=small)
     assert len(p.to_run) == 8 and p.cached == []
     assert [s.status for s in p.stages] == ["skipped"] * 2 + ["pending"] * 8 + ["skipped"]
-    assert all(s.extra.get("provisional") for s in p.stages[3:10])  # inputs unresolved
-    assert not p.stages[2].extra.get("provisional")  # fetch has no inputs
+    # fetch..unwrap are identified from their producers' node hashes (ADR-0080); the
+    # time-series stages need the *content* of unw/igrams and stay provisional
+    assert not any(s.extra.get("provisional") for s in p.stages[2:7])
+    assert all(s.extra.get("provisional") for s in p.stages[7:10])  # inputs unresolved
     api.run(cfg, param_overrides=small, until="unwrap")
     p = api.plan(cfg, param_overrides=small)
     assert len(p.cached) == 5 and len(p.to_run) == 3

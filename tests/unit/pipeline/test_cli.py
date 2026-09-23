@@ -201,24 +201,54 @@ def test_cache_gc_max_size_budget(tmp_path: Path, cache_dir: Path) -> None:
     )
     data = _json(r)["data"]
     assert data["max_size_gb"] == 100.0 and data["removed"] == []  # everything fits
+    # a second unwrap variant makes one entry per stage evictable; the newest ok entry of
+    # every stage is protected even by a zero budget (ADR-0081)
+    assert (
+        runner.invoke(
+            app,
+            ["run", "--config", cfg_path, *SET_SMALL, "--set", "unwrap.coherence_threshold=0.5"],
+        ).exit_code
+        == 0
+    )
     r = runner.invoke(app, ["--json", "cache", "gc", "--config", cfg_path, "--max-size", "0"])
     data = _json(r)["data"]
-    assert data["kept"] == [] and len(data["removed"]) == 8 and data["freed_bytes"] > 0
+    assert len(data["kept"]) == 8 and len(data["removed"]) == 4 and data["freed_bytes"] > 0
+    assert {e["stage"] for e in data["removed"]} == {
+        "unwrap",
+        "timeseries",
+        "corrections",
+        "geocode",
+    }
     r = runner.invoke(app, ["--json", "cache", "ls", "--config", cfg_path])
-    assert _json(r)["data"]["entries"] == []
+    assert len(_json(r)["data"]["entries"]) == 8
+    # the surviving variant (coherence_threshold=0.5, the newest) is still a cache hit
+    r = runner.invoke(
+        app,
+        [
+            "--json",
+            "plan",
+            "--config",
+            cfg_path,
+            *SET_SMALL,
+            "--set",
+            "unwrap.coherence_threshold=0.5",
+        ],
+    )
+    assert _json(r)["data"]["to_run"] == []
 
 
-def test_help_is_english_whatever_the_language() -> None:
-    """``register()`` runs before ``--lang`` is parsed, so help must not go through t()."""
+def test_help_follows_lang_and_env() -> None:
+    """Help is catalogue text (ADR-0090): ``--lang`` decides, else WINTERSAR_LANG (ko in tests)."""
     for args in (
         ["--lang", "en", "plan", "--help"],
         ["--lang", "en", "run", "--help"],
         ["--lang", "en", "cache", "--help"],
         ["--lang", "en", "cache", "gc", "--help"],
-        ["plan", "--help"],
     ):
         r = runner.invoke(app, args)
         assert r.exit_code == 0, r.output
         assert not any("가" <= ch <= "힣" for ch in r.output), (args, r.output)
     top = runner.invoke(app, ["--lang", "en", "--help"]).output
     assert "Build the DAG" in top and "Run the pipeline" in top
+    ko = runner.invoke(app, ["--lang", "ko", "plan", "--help"]).output
+    assert any("가" <= ch <= "힣" for ch in ko), ko

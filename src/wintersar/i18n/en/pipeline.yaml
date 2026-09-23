@@ -45,6 +45,12 @@ pipeline:
   PIPELINE-014:
     cause: "'{command}' could not start: {detail}"
     fix: "Check the arguments with 'wintersar {command} --help' (config path, stage names, --set syntax)."
+  PIPELINE-015:
+    cause: "Stage '{stage}' runs incrementally: {n_cached} cached pair(s) reused, {n_new} new pair(s) computed."
+    fix: "To ignore the per-pair cache and recompute everything, use 'wintersar run --force {stage}'."
+  PIPELINE-016:
+    cause: "Engine '{engine}' of stage '{stage}' does not support per-pair reuse (_pairs_done); the stage was recomputed in full."
+    fix: "This is expected. To take part in incremental updates the engine adapter must implement the ADR-0082 contract (read _pairs_done, write the pairs/ manifest)."
   cli:
     plan_title: "Plan: {project} ({workdir})"
     run_title: "Run: {project} ({workdir})"
@@ -75,3 +81,8 @@ pipeline:
     cache_total: "{n} entries · {size}"
     gc_summary: "removed {n_removed} ({freed}) · kept {n_kept}{dry}"
     gc_dry_suffix: " [dry-run: nothing deleted]"
+    status_incremental: "partial"
+    incremental_pairs: "pairs cached {n_cached} · new {n_new}"
+    incremental_mode: "incremental mode: only pairs touching new dates are computed; the time series is re-inverted (PERF-06)."
+    cache_budget: "{total} of budget {budget} used · protected entries (newest ok per stage) {protected}"
+    cache_over_budget: "The protected entries alone exceed the budget by {over} — raise the budget or split the work directory."

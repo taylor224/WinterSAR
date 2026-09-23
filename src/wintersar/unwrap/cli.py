@@ -21,15 +21,26 @@ from wintersar.i18n import t
 from wintersar.io.schemas import Artifact, Finding
 from wintersar.pipeline.config import UnwrapCfg
 from wintersar.util import sysinfo
+from wintersar.util.clihelp import HelpGroup, h
 from wintersar.util.clistate import state
-from wintersar.util.output import console, emit_json, err_console, print_findings
+from wintersar.util.output import (
+    CLI_BAD_VALUE,
+    cli_finding,
+    console,
+    emit_json,
+    err_console,
+    exit_with_findings,
+    print_findings,
+)
 from wintersar.util.sysinfo import MachineSpec
 
 unwrap_app = typer.Typer(
     name="unwrap",
-    help="Phase-unwrapping scheduler: memory model, tiling, parallelism (R-06, PERF-04).",
+    cls=HelpGroup,
+    help=h("cli_help.unwrap.help"),
     no_args_is_help=True,
 )
+METHOD_CHOICES: tuple[str, ...] = ("auto", "snaphu", "tophu", "spurt", "truth", "identity")
 
 
 def _machine(cores: int | None, memory_gb: float | None) -> MachineSpec:
@@ -39,16 +50,27 @@ def _machine(cores: int | None, memory_gb: float | None) -> MachineSpec:
     )
 
 
-def _tiles_value(tiles: str | None, overlap: float, min_overlap_px: int) -> Any:
+def _tiles_value(tiles: str | None, overlap: float, min_overlap_px: int, command: str) -> Any:
+    """``--tiles ROWSxCOLS`` → UnwrapCfg.tiles mapping; a malformed value is CLI-008 (exit 2)."""
     if not tiles or tiles == "auto":
         return "auto"
-    rows, _, cols = tiles.lower().replace("x", "x").partition("x")
-    return {
-        "rows": int(rows),
-        "cols": int(cols),
-        "overlap": overlap,
-        "min_overlap_px": min_overlap_px,
-    }
+    rows, _, cols = tiles.lower().partition("x")
+    try:
+        return {
+            "rows": int(rows),
+            "cols": int(cols),
+            "overlap": overlap,
+            "min_overlap_px": min_overlap_px,
+        }
+    except ValueError:
+        finding = cli_finding(
+            CLI_BAD_VALUE,
+            option="--tiles",
+            value=tiles,
+            allowed="ROWSxCOLS | auto",
+            command=command,
+        )
+        raise exit_with_findings(command, [finding]) from None
 
 
 def _findings(stats: dict[str, Any]) -> list[Finding]:
@@ -64,47 +86,59 @@ def _machine_dict(machine: MachineSpec) -> dict[str, Any]:
     }
 
 
-@unwrap_app.command("plan")
+@unwrap_app.command("plan", help=h("cli_help.unwrap_plan.help"))
 def plan_cmd(
     shape: Annotated[
-        tuple[int, int], typer.Option("--shape", help="Rows and columns of one interferogram.")
+        tuple[int, int], typer.Option("--shape", help=h("cli_help.unwrap_plan.shape"))
     ],
-    n: Annotated[int, typer.Option("--n", help="Number of interferograms in the stack.")] = 1,
+    n: Annotated[int, typer.Option("--n", help=h("cli_help.unwrap_plan.n"))] = 1,
     memory_gb: Annotated[
-        float | None, typer.Option("--memory-gb", help="Memory budget (default: detected x 0.8).")
+        float | None, typer.Option("--memory-gb", help=h("cli_help.unwrap_plan.memory_gb"))
     ] = None,
     cores: Annotated[
-        int | None, typer.Option("--cores", help="CPU cores (default: detected).")
+        int | None, typer.Option("--cores", help=h("cli_help.unwrap_plan.cores"))
     ] = None,
     method: Annotated[
-        str, typer.Option("--method", help="auto | snaphu | tophu | spurt | truth | identity")
+        str, typer.Option("--method", help=h("cli_help.common.method_unwrap"))
     ] = "auto",
     tiles: Annotated[
-        str | None, typer.Option("--tiles", help="Explicit ROWSxCOLS (default: auto).")
+        str | None, typer.Option("--tiles", help=h("cli_help.unwrap_plan.tiles"))
     ] = None,
     overlap: Annotated[
-        float, typer.Option("--overlap", help="Overlap fraction for --tiles.")
+        float, typer.Option("--overlap", help=h("cli_help.unwrap_plan.overlap"))
     ] = 0.25,
-    min_overlap_px: Annotated[int, typer.Option("--min-overlap-px")] = 200,
+    min_overlap_px: Annotated[
+        int, typer.Option("--min-overlap-px", help=h("cli_help.unwrap_plan.min_overlap_px"))
+    ] = 200,
     memory_mb_per_mpixel: Annotated[
-        float | None, typer.Option("--memory-mb-per-mpixel", help="Memory model constant c.")
+        float | None,
+        typer.Option("--memory-mb-per-mpixel", help=h("cli_help.unwrap_plan.memory_mb_per_mpixel")),
     ] = None,
-    nproc: Annotated[int, typer.Option("--nproc", help="Tile processes per interferogram.")] = 1,
+    nproc: Annotated[int, typer.Option("--nproc", help=h("cli_help.unwrap_plan.nproc"))] = 1,
     fringe: Annotated[
-        float | None, typer.Option("--fringe", help="Fringe density 0-1 (skip measurement).")
+        float | None, typer.Option("--fringe", help=h("cli_help.unwrap_plan.fringe"))
     ] = None,
     available: Annotated[
-        list[str] | None,
-        typer.Option("--available", help="Assume these backends are installed (repeatable)."),
+        list[str] | None, typer.Option("--available", help=h("cli_help.unwrap_plan.available"))
     ] = None,
 ) -> None:
     """Dry-run: print the unwrap strategy for a stack of the given size (plan §5.4)."""
     from wintersar.unwrap.api import resolve_plan
 
+    command = "unwrap plan"
+    if method not in METHOD_CHOICES:
+        finding = cli_finding(
+            CLI_BAD_VALUE,
+            option="--method",
+            value=method,
+            allowed=" | ".join(METHOD_CHOICES),
+            command=command,
+        )
+        raise exit_with_findings(command, [finding])
     machine = _machine(cores, memory_gb)
     cfg_kwargs: dict[str, Any] = {
         "method": "auto" if method in ("truth", "identity") else method,
-        "tiles": _tiles_value(tiles, overlap, min_overlap_px),
+        "tiles": _tiles_value(tiles, overlap, min_overlap_px, command),
         "nproc_per_igram": nproc,
     }
     if memory_mb_per_mpixel is not None:
@@ -112,8 +146,15 @@ def plan_cmd(
     try:
         cfg = UnwrapCfg.model_validate(cfg_kwargs)
     except ValueError as e:
-        err_console.print(f"[red]{t('cli.invalid_config', error=str(e))}[/]")
-        raise typer.Exit(code=2) from e
+        # the unwrap section of config.yaml rejected the combination (pydantic detail)
+        finding = cli_finding(
+            CLI_BAD_VALUE,
+            option="unwrap.*",
+            value=str(cfg_kwargs),
+            allowed=str(e),
+            command=command,
+        )
+        raise exit_with_findings(command, [finding]) from None
     plan = resolve_plan(
         (shape[0], shape[1]),
         n,
@@ -152,40 +193,54 @@ def plan_cmd(
         console.print(f"  • {line}")
 
 
-@unwrap_app.command("run")
+@unwrap_app.command("run", help=h("cli_help.unwrap_run.help"))
 def run_cmd(
-    igrams: Annotated[Path, typer.Argument(help="igrams.npz (wintersar.io.igrams format).")],
-    out: Annotated[Path, typer.Option("--out", help="Output directory (unw.npz, stats.json).")],
+    igrams: Annotated[Path, typer.Argument(help=h("cli_help.unwrap_run.igrams"))],
+    out: Annotated[Path, typer.Option("--out", help=h("cli_help.unwrap_run.out"))],
     method: Annotated[
-        str, typer.Option("--method", help="auto | snaphu | tophu | spurt | truth | identity")
+        str, typer.Option("--method", help=h("cli_help.common.method_unwrap"))
     ] = "auto",
     coherence_threshold: Annotated[
-        float, typer.Option("--coherence-threshold", help="Mask pixels below this coherence.")
+        float,
+        typer.Option("--coherence-threshold", help=h("cli_help.unwrap_run.coherence_threshold")),
     ] = 0.3,
-    memory_gb: Annotated[float | None, typer.Option("--memory-gb")] = None,
-    cores: Annotated[int | None, typer.Option("--cores")] = None,
-    tiles: Annotated[str | None, typer.Option("--tiles", help="Explicit ROWSxCOLS.")] = None,
-    overlap: Annotated[float, typer.Option("--overlap")] = 0.25,
-    min_overlap_px: Annotated[int, typer.Option("--min-overlap-px")] = 200,
-    nproc: Annotated[int, typer.Option("--nproc")] = 1,
-    n_parallel: Annotated[
-        int | None, typer.Option("--n-parallel", help="Override the planned parallelism.")
+    memory_gb: Annotated[
+        float | None, typer.Option("--memory-gb", help=h("cli_help.unwrap_run.memory_gb"))
     ] = None,
-    cost: Annotated[str, typer.Option("--cost", help="defo | smooth | topo")] = "defo",
-    init: Annotated[str, typer.Option("--init", help="mst | mcf")] = "mcf",
-    log_dir: Annotated[Path | None, typer.Option("--log-dir")] = None,
+    cores: Annotated[
+        int | None, typer.Option("--cores", help=h("cli_help.unwrap_run.cores"))
+    ] = None,
+    tiles: Annotated[
+        str | None, typer.Option("--tiles", help=h("cli_help.unwrap_run.tiles"))
+    ] = None,
+    overlap: Annotated[
+        float, typer.Option("--overlap", help=h("cli_help.unwrap_run.overlap"))
+    ] = 0.25,
+    min_overlap_px: Annotated[
+        int, typer.Option("--min-overlap-px", help=h("cli_help.unwrap_run.min_overlap_px"))
+    ] = 200,
+    nproc: Annotated[int, typer.Option("--nproc", help=h("cli_help.unwrap_run.nproc"))] = 1,
+    n_parallel: Annotated[
+        int | None, typer.Option("--n-parallel", help=h("cli_help.unwrap_run.n_parallel"))
+    ] = None,
+    cost: Annotated[str, typer.Option("--cost", help=h("cli_help.unwrap_run.cost"))] = "defo",
+    init: Annotated[str, typer.Option("--init", help=h("cli_help.unwrap_run.init"))] = "mcf",
+    log_dir: Annotated[
+        Path | None, typer.Option("--log-dir", help=h("cli_help.unwrap_run.log_dir"))
+    ] = None,
 ) -> None:
     """Unwrap every interferogram of a stack with the scheduled strategy."""
     from wintersar.engines.base import EngineNotAvailableError
     from wintersar.unwrap.api import STATS_FILE, UnwrapFailedError, run_unwrap
 
+    command = "unwrap run"
     machine = _machine(cores, memory_gb)
     params: dict[str, Any] = {
         "method": method,
         "cost": cost,
         "init": init,
         "coherence_threshold": coherence_threshold,
-        "tiles": _tiles_value(tiles, overlap, min_overlap_px),
+        "tiles": _tiles_value(tiles, overlap, min_overlap_px, command),
         "nproc_per_igram": nproc,
     }
     if n_parallel is not None:

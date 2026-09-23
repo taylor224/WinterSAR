@@ -7,6 +7,11 @@ so that modules stay independent; a module whose CLI is not importable is skippe
 
 Global options: ``--json`` (machine-readable envelope parsed by the QGIS plugin),
 ``--lang ko|en``, ``-v``.
+
+Rule 11.6 on the command line (ADR-0090/0091): every help text is a catalogue key rendered
+by :func:`wintersar.util.clihelp.h`, ``--lang`` is *eager* so ``wintersar --lang en --help``
+is already English, and every error path ends in a finding (envelope under ``--json``),
+never a traceback on stdout.
 """
 
 from __future__ import annotations
@@ -21,12 +26,24 @@ import typer
 from wintersar import __version__
 from wintersar.i18n import t
 from wintersar.io.schemas import Finding
+from wintersar.util import clihelp
+from wintersar.util.clihelp import h
 from wintersar.util.clistate import state
-from wintersar.util.output import console, emit_json, err_console, print_findings
+from wintersar.util.output import (
+    CLI_EXISTS,
+    cli_finding,
+    console,
+    emit_json,
+    err_console,
+    exit_with_findings,
+    print_findings,
+    report_unexpected,
+)
 
 app = typer.Typer(
     name="wintersar",
-    help="Open-source Sentinel-1 InSAR (SBAS) toolkit: select · precheck · run · diagnose · validate.",
+    cls=clihelp.HelpGroup,
+    help=h("cli_help.root.help"),
     no_args_is_help=True,
     rich_markup_mode="rich",
     pretty_exceptions_show_locals=False,
@@ -44,21 +61,41 @@ _MODULE_CLIS: tuple[str, ...] = (
 )
 
 
+def _lang_callback(value: str | None) -> str | None:
+    """Eager ``--lang``: adopt the language before ``--help`` is rendered (ADR-0090).
+
+    Eager parameters are processed first, in command-line order, so ``--lang en --help``
+    sees the choice; ``--help --lang en`` still works through the ``sys.argv`` scan.
+    # source: .venv/lib/python3.11/site-packages/typer/_click/core.py iter_params_for_processing
+    """
+    state.set_lang(value)
+    return value
+
+
 @app.callback()
 def _main_callback(
-    json_out: Annotated[
-        bool, typer.Option("--json", help="Emit a JSON envelope on stdout.")
-    ] = False,
-    lang: Annotated[str, typer.Option("--lang", help="Message language: ko | en.")] = state.lang,
-    verbose: Annotated[int, typer.Option("-v", "--verbose", count=True)] = 0,
+    json_out: Annotated[bool, typer.Option("--json", help=h("cli_help.root.json"))] = False,
+    lang: Annotated[
+        str | None,
+        typer.Option(
+            "--lang",
+            help=h("cli_help.root.lang"),
+            is_eager=True,
+            callback=_lang_callback,
+            show_default=False,
+        ),
+    ] = None,
+    verbose: Annotated[
+        int, typer.Option("-v", "--verbose", count=True, help=h("cli_help.root.verbose"))
+    ] = 0,
 ) -> None:
     state.json = json_out
-    state.lang = lang if lang in ("ko", "en") else "ko"
+    state.set_lang(lang)
     state.verbose = verbose
     state.apply()
 
 
-@app.command()
+@app.command(help=h("cli_help.version.help"))
 def version() -> None:
     """Print the wintersar version."""
     if state.json:
@@ -67,15 +104,15 @@ def version() -> None:
         console.print(f"wintersar {__version__}")
 
 
-@app.command("check-install")
+@app.command("check-install", help=h("cli_help.check_install.help"))
 def check_install(
     engines: Annotated[
         list[str] | None,
-        typer.Option("--engine", "-e", help="Only check these engines (default: all)."),
+        typer.Option("--engine", "-e", help=h("cli_help.check_install.engine")),
     ] = None,
     strict: Annotated[
         bool,
-        typer.Option("--strict", help="Exit 1 when a FAIL finding exists (default: always 0)."),
+        typer.Option("--strict", help=h("cli_help.check_install.strict")),
     ] = False,
 ) -> None:
     """Report engine availability, versions, credentials and hardware (PERF-12).
@@ -252,12 +289,10 @@ def _check_geo_libs() -> list[Finding]:
     return []
 
 
-@app.command()
+@app.command(help=h("cli_help.init.help"))
 def init(
-    path: Annotated[Path, typer.Argument(help="Where to write the example config.yaml")] = Path(
-        "config.yaml"
-    ),
-    force: Annotated[bool, typer.Option("--force", help="Overwrite if exists.")] = False,
+    path: Annotated[Path, typer.Argument(help=h("cli_help.init.path"))] = Path("config.yaml"),
+    force: Annotated[bool, typer.Option("--force", help=h("cli_help.init.force"))] = False,
 ) -> None:
     """Write an example ``config.yaml`` (plan §4.4)."""
     from wintersar.pipeline.config import EXAMPLE_CONFIG
@@ -265,25 +300,9 @@ def init(
 
     if path.exists() and not force:
         masked = mask_text(str(path))
-        if state.json:
-            emit_json(
-                "init",
-                {"path": masked},
-                [
-                    Finding(
-                        rule_id="CLI-002",
-                        severity="FAIL",
-                        message_key="cli.CLI-002.cause",
-                        fix_key="cli.CLI-002.fix",
-                        params={"path": masked},
-                    )
-                ],
-                ok=False,
-            )
-        else:
-            err_console.print(f"[red]{t('cli.CLI-002.cause', path=masked)}[/]")
-            err_console.print(t("cli.CLI-002.fix", path=masked))
-        raise typer.Exit(code=1)
+        raise exit_with_findings(
+            "init", [cli_finding(CLI_EXISTS, path=masked)], code=1, data={"path": masked}
+        )
     path.write_text(EXAMPLE_CONFIG, encoding="utf-8")
     if state.json:
         emit_json("init", {"path": str(path)})
@@ -310,58 +329,23 @@ def _mount_module_clis() -> None:
         register = getattr(mod, "register", None)
         if callable(register):
             register(app)
+    # every command/group renders its help in the language of the invocation (ADR-0090)
+    clihelp.install(app)
 
 
 _mount_module_clis()
 
 
-def _invoked_command() -> str:
-    """Best-effort command name for the error envelope (``wintersar --json plan …`` → 'plan')."""
-    skip_value = False
-    for arg in sys.argv[1:]:
-        if skip_value:
-            skip_value = False
-            continue
-        if arg.startswith("-"):
-            skip_value = arg == "--lang"
-            continue
-        return arg
-    return "wintersar"
-
-
-def _report_unexpected(exc: BaseException) -> None:
-    """Turn an exception that escaped a sub-command into the normal output contract.
-
-    Typer re-raises unexpected exceptions instead of converting them to an exit code
-    (``Typer.__call__``), so without this the process ends in a traceback: no ``--json``
-    envelope at all, and unmasked home paths in the stderr frames (rule 11.11).
-    # source: .venv/lib/python3.11/site-packages/typer/main.py (Typer.__call__)
-    """
-    from wintersar.util.masking import mask_text
-
-    detail = mask_text(f"{type(exc).__name__}: {exc}")
-    finding = Finding(
-        rule_id="CLI-001",
-        severity="FAIL",
-        message_key="cli.CLI-001.cause",
-        fix_key="cli.CLI-001.fix",
-        params={"error": detail},
-        evidence={"error": detail},
-    )
-    if state.json:
-        emit_json(_invoked_command(), {"error": detail}, [finding], ok=False)
-    else:
-        err_console.print(f"[red]{t('cli.CLI-001.cause', error=detail)}[/]")
-        err_console.print(t("cli.CLI-001.fix", error=detail))
-
-
 def main() -> None:
+    """Entry point: ``HelpGroup.main`` already keeps the output contract for click usage
+    errors and exceptions raised inside commands; this guards what escapes typer itself
+    (``Typer.__call__`` re-raises, rule 11.11: no unmasked traceback)."""
     try:
         app()
     except Exception as exc:
         if state.verbose:
             raise
-        _report_unexpected(exc)
+        report_unexpected(exc)
         sys.exit(1)
 
 

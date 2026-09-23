@@ -1,0 +1,22 @@
+# Golden statistics layer (plan §8 regression row, ADR-0100..0102). Diagnostics: cause → fix.
+golden:
+  make:
+    written: "Golden statistics written: {path} ({n_bytes} bytes, {n_leaves} values)"
+    unchanged: "Identical to the previous golden within tolerance ({n_leaves} values)."
+    changed: "{n} values differ from the previous golden — state in the PR body whether the change is intended."
+  check:
+    start: "Golden check: site {site} · golden {path} · seed {seed}"
+    ok: "Golden statistics match: {n_leaves} values (rtol={rtol:g}, atol={atol:g}, fraction atol={fraction_atol:g})"
+    regenerate: "If the change is intended, regenerate the golden with '.venv/bin/python scripts/make_golden.py' (inspect the differences first with '--check') and explain why in the PR body."
+  GOLDEN-001:
+    cause: "Golden value '{path}' differs: expected {expected}, actual {actual} (tolerance {tolerance})."
+    fix: "Check whether the change to the synthetic data, the fake engine or the pipeline is intended. If so, regenerate the golden with 'python scripts/make_golden.py' and explain why in the PR body; otherwise revert the recent change."
+  GOLDEN-002:
+    cause: "Golden file {path} does not exist."
+    fix: "Create it with 'python scripts/make_golden.py' and commit it under tests/regression/golden/."
+  GOLDEN-003:
+    cause: "Site definition '{path}' differs from when the golden was made: golden {expected}, current {actual}."
+    fix: "If the change to benchmarks/sites/*.yaml is intended, regenerate the golden with 'python scripts/make_golden.py'; otherwise revert the site definition."
+  GOLDEN-004:
+    cause: "The golden pipeline run failed at stage '{stage}': {error}"
+    fix: "First confirm the fake-engine path with 'pytest tests/integration'. Pass --workdir to keep the run directory."

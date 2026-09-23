@@ -5,6 +5,13 @@ its canonical parameters, the engine that will run it and the hashes of the inpu
 artifacts it consumes. ``node_hash`` is only defined once every input hash is known, which
 is the case when all upstream producers are cached (resolved at :meth:`Dag.build`) or have
 just run (resolved by the executor). A node whose inputs are unresolved is *to run*.
+
+Incremental stages (:data:`wintersar.pipeline.incremental.INCREMENTAL_STAGES`) follow the
+PERF-06 hash rule (ADR-0080): the pair/date set is data, an input produced by another
+incremental stage contributes the producer's node hash, and whether a cached result is still
+*fresh* is decided by :meth:`Dag.fresh` (recorded input content hashes + data values). With
+``Dag(cfg, incremental=True)`` a stale node whose directory holds per-pair results becomes
+status ``incremental`` (partially cached) instead of ``to_run``.
 """
 
 from __future__ import annotations
@@ -17,7 +24,7 @@ from typing import Any, Literal
 
 from wintersar.engines.base import Engine, get_engine, list_engines
 from wintersar.io.schemas import Artifacts, Finding, StageRecord
-from wintersar.pipeline import cache
+from wintersar.pipeline import cache, incremental
 from wintersar.pipeline.config import Config
 from wintersar.pipeline.stages import (
     FAKE_ENGINE,
@@ -33,7 +40,7 @@ from wintersar.pipeline.stages import (
 from wintersar.util.hashing import hash_params
 from wintersar.util.masking import mask_text
 
-NodeStatus = Literal["cached", "to_run", "skipped", "blocked"]
+NodeStatus = Literal["cached", "incremental", "to_run", "skipped", "blocked"]
 SkipReason = Literal[
     "fake_path", "not_configured", "unavailable", "engine_no_stage", "produced_upstream"
 ]
@@ -119,10 +126,15 @@ def node_hash(
     engine: str | None,
     engine_version: str | None,
 ) -> str:
-    """``hash(stage, canonical params, input artifact hashes, engine, engine version)``."""
+    """``hash(stage, canonical params, input identities, engine, engine version)``.
+
+    For incremental stages the data keys (``n_dates`` …) are dropped from the params first
+    (PERF-06, ADR-0080); ``input_hashes`` must already be the *identity* inputs
+    (:func:`wintersar.pipeline.incremental.identity_inputs`).
+    """
     payload = {
         "stage": stage,
-        "params": hash_normalise(strip_private(params)),
+        "params": hash_normalise(incremental.hash_view(stage, strip_private(params))),
         "inputs": {k: input_hashes[k] for k in sorted(input_hashes)},
         "engine": engine,
         "engine_version": engine_version,
@@ -148,11 +160,25 @@ class Node:
     skip_reason: SkipReason | None = None
     fallback: bool = False
     findings: list[Finding] = field(default_factory=list)
+    #: what entered the node hash (content hashes, or producer node hashes for incremental
+    #: stages; ``input_hashes`` always holds the content hashes for the manifest)
+    identity_inputs: dict[str, str] = field(default_factory=dict)
+    #: a manifest with this hash exists but its inputs/data differ from the request
+    stale: bool = False
+    #: per-pair results the node directory already holds (incremental mode only)
+    partial: incremental.PartialCache | None = None
+    #: pair set the stage will produce/consume when it can be known before running
+    pairs_expected: list[str] | None = None
 
     # -------------------------------------------------------------- state
     @property
     def cached(self) -> bool:
         return self.record is not None and self.record.status == "ok" and not self.forced
+
+    @property
+    def incremental(self) -> bool:
+        """The stage keeps per-pair results and follows the PERF-06 hash rule."""
+        return not self.spec.is_python and incremental.is_incremental_stage(self.stage)
 
     @property
     def blocked(self) -> bool:
@@ -170,6 +196,8 @@ class Node:
             return "blocked"
         if self.cached:
             return "cached"
+        if self.partial is not None and self.partial.usable:
+            return "incremental"
         return "to_run"
 
     @property
@@ -192,6 +220,15 @@ class Node:
         status: Literal["pending", "skipped"] = (
             "skipped" if self.skip_reason is not None else "pending"
         )
+        extra: dict[str, Any] = {
+            "provisional": self.node_hash is None,
+            "skip_reason": self.skip_reason,
+            "forced": self.forced,
+        }
+        if self.stale:
+            extra["stale"] = True
+        if self.partial is not None and self.partial.usable:
+            extra["incremental"] = self.partial.to_extra()
         return StageRecord(
             stage=self.stage,
             node_hash=self.node_hash or self.provisional_hash(),
@@ -201,11 +238,7 @@ class Node:
             inputs=dict(self.input_hashes),
             status=status,
             findings=list(self.findings),
-            extra={
-                "provisional": self.node_hash is None,
-                "skip_reason": self.skip_reason,
-                "forced": self.forced,
-            },
+            extra=extra,
         )
 
 
@@ -215,9 +248,11 @@ class Node:
 class Dag:
     """Build and resolve the stage graph for one configuration."""
 
-    def __init__(self, cfg: Config, workdir: Path | None = None) -> None:
+    def __init__(self, cfg: Config, workdir: Path | None = None, incremental: bool = False) -> None:
         self.cfg = cfg
         self.workdir = Path(workdir or cfg.workdir)
+        #: PERF-06: reuse per-pair results of a stale node instead of recomputing it whole
+        self.incremental = bool(incremental)
         self.nodes: list[Node] = []
         self._engines: dict[str, Engine | None] = {}
         self._versions: dict[str, str | None] = {}
@@ -244,10 +279,13 @@ class Dag:
         until: str | None = None,
         from_stage: str | None = None,
         force: list[str] | None = None,
+        incremental: bool | None = None,
     ) -> list[Node]:
         overrides = param_overrides or {}
         for s in list(overrides) + list(force or []):
             stage_index(s)  # raises KeyError for unknown stages
+        if incremental is not None:
+            self.incremental = bool(incremental)
         window = stage_window(until, from_stage)
         self.nodes = [self._make_node(s, overrides.get(s)) for s in window]
         self._link_producers()
@@ -409,39 +447,74 @@ class Dag:
                 node.forced = True
 
     # -------------------------------------------------------------- resolve
-    def resolve(self, node: Node, available: Artifacts) -> bool:
-        """Fill ``input_hashes``/``node_hash`` from ``available`` upstream artifacts.
+    def _producer(self, node: Node, name: str) -> Node | None:
+        stage = node.producers.get(name)
+        if stage is None:
+            return None
+        return next((n for n in self.nodes if n.stage == stage), None)
 
-        Returns ``False`` (and leaves ``node_hash`` ``None``) when a required input is not
-        available yet. A required input whose producer was *skipped* is tolerated when the
-        consumer is the fake engine or the same engine that skipped the producer.
+    @staticmethod
+    def _identity(node: Node, producer: Node | None, content: str | None) -> str | None:
+        """What an input contributes to the node hash (ADR-0080 hash rule).
+
+        Incremental stage fed by an incremental stage: the producer's node hash (known before
+        the producer runs, stable across date additions). Everything else: the content hash.
+        """
+        if node.incremental and producer is not None and producer.incremental:
+            return producer.node_hash
+        return content
+
+    def resolve(self, node: Node, available: Artifacts) -> bool:
+        """Fill ``input_hashes`` / ``identity_inputs`` / ``node_hash`` from ``available``.
+
+        Returns ``True`` when every required input is available (the node can execute).
+        A missing required input whose producer is still pending returns ``False``; for an
+        incremental node the hash may nevertheless be known already (its identity comes from
+        the producers' node hashes), which is what lets ``plan`` report the whole chain. A
+        required input whose producer was *skipped* is tolerated when the consumer is the
+        fake engine or the same engine that skipped the producer.
         """
         node.findings = [f for f in node.findings if f.rule_id != "PIPELINE-002"]
         hashes: dict[str, str] = {}
+        identity: dict[str, str] = {}
+        complete = True
         for name in node.spec.inputs:
-            if name in available and available[name].sha256:
-                hashes[name] = str(available[name].sha256)
-                continue
-            producer_stage = node.producers.get(name)
-            producer = next((n for n in self.nodes if n.stage == producer_stage), None)
-            if producer is None:
+            art = available.items.get(name)
+            content = str(art.sha256) if art is not None and art.sha256 else None
+            producer = self._producer(node, name)
+            if content is None and producer is None:
                 # nobody in the window produces it: either skipped upstream or not in graph
                 skipper = self._skipped_producer(name)
                 if skipper is not None and self._tolerates_missing(node, skipper):
                     continue
                 node.findings.append(self._missing_input(node, name, skipper))
                 node.node_hash = None
+                node.input_hashes = {}
+                node.identity_inputs = {}
                 return False
-            node.node_hash = None
-            return False  # producer will run first; resolve again afterwards
+            if content is not None:
+                hashes[name] = content
+            else:
+                complete = False  # producer will run first; resolve again afterwards
+            ident = self._identity(node, producer, content)
+            if ident is None:
+                node.node_hash = None
+                node.input_hashes = hashes
+                node.identity_inputs = {}
+                return False
+            identity[name] = ident
         for name in node.spec.optional_inputs:
-            if name in available and available[name].sha256:
-                hashes[name] = str(available[name].sha256)
+            art = available.items.get(name)
+            if art is not None and art.sha256:
+                hashes[name] = str(art.sha256)
+                ident = self._identity(node, self._producer(node, name), hashes[name])
+                identity[name] = ident or hashes[name]
         node.input_hashes = hashes
+        node.identity_inputs = incremental.identity_inputs(node.stage, identity)
         node.node_hash = node_hash(
-            node.stage, node.params, hashes, node.engine, node.engine_version
+            node.stage, node.params, node.identity_inputs, node.engine, node.engine_version
         )
-        return True
+        return complete
 
     def _skipped_producer(self, name: str) -> Node | None:
         for n in reversed(self.nodes):
@@ -486,10 +559,75 @@ class Dag:
             scope=node.stage,
         )
 
-    def lookup_cache(self, node: Node) -> StageRecord | None:
+    def lookup_cache(self, node: Node, available: Artifacts | None = None) -> StageRecord | None:
+        """The fresh cache hit for ``node`` or ``None`` (``available`` enables the freshness
+        check of incremental nodes; without it a hash match is taken at face value)."""
+        record, fresh = self.lookup(node, available)
+        return record if fresh else None
+
+    def lookup(
+        self, node: Node, available: Artifacts | None = None
+    ) -> tuple[StageRecord | None, bool]:
+        """``(record with this node hash and intact outputs, is it fresh?)``."""
         if node.node_hash is None or node.forced:
+            return None, False
+        record = cache.find_cached(self.workdir, node.stage, node.node_hash)
+        if record is None:
+            return None, False
+        if available is not None and not self.fresh(node, record, available):
+            return record, False
+        return record, True
+
+    @staticmethod
+    def fresh(node: Node, record: StageRecord, available: Artifacts) -> bool:
+        """A cached result of an incremental node is reusable only when it was computed from
+        the same input *content* and the same data (date set) as requested now (ADR-0080).
+
+        Non-incremental nodes carry both in their hash, so a hash match is always fresh.
+        """
+        if not node.incremental:
+            return True
+        want = hash_normalise(incremental.data_view(node.stage, strip_private(node.params)))
+        have = hash_normalise(incremental.data_view(node.stage, strip_private(record.params)))
+        if want != have:
+            return False
+        current = {
+            name: str(available[name].sha256)
+            for name in [*node.spec.inputs, *node.spec.optional_inputs]
+            if name in available and available[name].sha256
+        }
+        return dict(record.inputs) == current
+
+    def partial_cache(self, node: Node) -> incremental.PartialCache | None:
+        """Per-pair results already present in the node directory (incremental mode only)."""
+        if not (self.incremental and node.incremental) or node.node_hash is None or node.forced:
             return None
-        return cache.find_cached(self.workdir, node.stage, node.node_hash)
+        node_dir = cache.stage_dir(self.workdir, node.stage, node.node_hash)
+        if not node_dir.is_dir():
+            return None
+        pc = incremental.PairCache.load(node_dir, node.stage)
+        partial = incremental.PartialCache(
+            node_dir=node_dir,
+            record=cache.load_record(node_dir),
+            done=pc.done,
+            expected=node.pairs_expected,
+        )
+        return partial if partial.usable else None
+
+    def expected_pairs(self, node: Node, available: Artifacts) -> list[str] | None:
+        """Pair set of an incremental node: engine hook / input meta / stack, else inherited
+        from the incremental producer of its ``igrams``/``unw`` input."""
+        if not node.incremental:
+            return None
+        eng = self.engine(node.engine) if node.engine else None
+        pairs = incremental.expected_pairs(eng, node.stage, node.params, available)
+        if pairs is not None:
+            return pairs
+        for name in ("igrams", "unw"):
+            producer = self._producer(node, name)
+            if producer is not None and producer.incremental and producer.pairs_expected:
+                return list(producer.pairs_expected)
+        return None
 
     def resolve_all(self, from_stage: str | None = None) -> Artifacts:
         """Forward pass using only cached upstream outputs (the *plan* view).
@@ -502,11 +640,21 @@ class Dag:
         for node in self.nodes:
             node.record = None
             node.fallback = False
+            node.stale = False
+            node.partial = None
             node.findings = [f for f in node.findings if f.rule_id != "PIPELINE-003"]
             if node.skip_reason is not None:
                 continue
             resolved = self.resolve(node, available)
-            record = self.lookup_cache(node) if resolved else None
+            node.pairs_expected = self.expected_pairs(node, available)
+            record: StageRecord | None = None
+            if resolved:
+                record, fresh = self.lookup(node, available)
+                if record is not None and not fresh:
+                    node.stale = True
+                    record = None
+            if record is None and node.resolved:
+                node.partial = self.partial_cache(node)
             if record is None and stage_index(node.stage) < start:
                 record = cache.latest_record(self.workdir, node.stage)
                 if record is None:
@@ -514,6 +662,7 @@ class Dag:
                     continue
                 node.fallback = True
                 node.forced = False
+                node.partial = None
                 node.findings.append(
                     Finding(
                         rule_id="PIPELINE-003",
@@ -539,7 +688,11 @@ class Dag:
 
     # -------------------------------------------------------------- views
     def to_run(self) -> list[Node]:
-        return [n for n in self.nodes if n.status == "to_run"]
+        """Nodes that will execute (fully or incrementally)."""
+        return [n for n in self.nodes if n.status in ("to_run", "incremental")]
+
+    def incremental_nodes(self) -> list[Node]:
+        return [n for n in self.nodes if n.status == "incremental"]
 
     def cached(self) -> list[Node]:
         return [n for n in self.nodes if n.status == "cached"]

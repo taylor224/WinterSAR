@@ -2,24 +2,46 @@
 
 Every command supports ``--json`` (plan §4.5): the QGIS plugin parses that output, so the
 JSON envelope is stable: ``{"ok": bool, "command": str, "data": ..., "findings": [...]}``.
+
+Error paths use the same contract (CLAUDE.md "envelope vs exit code", ADR-0091): a bad
+input becomes a :class:`~wintersar.io.schemas.Finding` with a ``CLI-xxx`` (or module) rule
+id, is printed as the envelope under ``--json`` or as "cause → fix" lines on stderr
+otherwise, and the command exits 2 (usage) or 1 (action failed). :func:`exit_with_findings`
+and :func:`cli_finding` are the two helpers every CLI uses for that.
 """
 
 from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import typer
 from rich.console import Console
 from rich.table import Table
 
 from wintersar.i18n import t
 from wintersar.io.schemas import Finding, sort_findings
-from wintersar.util.masking import mask_mapping
+from wintersar.util.clistate import state
+from wintersar.util.masking import mask_mapping, mask_text
 
 console = Console(stderr=False)
 err_console = Console(stderr=True)
+
+# CLI-xxx rule ids (ADR-0091). Text lives in i18n/{ko,en}.yaml (001/002) and
+# i18n/{ko,en}/cli_help.yaml (003+); every id has ``cli.<ID>.cause`` and ``cli.<ID>.fix``.
+CLI_UNEXPECTED = "CLI-001"
+CLI_EXISTS = "CLI-002"
+CLI_USAGE = "CLI-003"
+CLI_CONFIG_MISSING = "CLI-004"
+CLI_CONFIG_INVALID = "CLI-005"
+CLI_INPUT_MISSING = "CLI-006"
+CLI_INPUT_INVALID = "CLI-007"
+CLI_BAD_VALUE = "CLI-008"
+CLI_EMPTY_INPUT = "CLI-009"
+CLI_COMPONENT_UNAVAILABLE = "CLI-010"
 
 
 def _default(o: Any) -> Any:
@@ -95,3 +117,117 @@ def findings_to_markdown(findings: list[Finding], lang: str | None = None) -> st
         scope = f" `{f.scope}`" if f.scope else ""
         lines.append(f"| {sev} | {rid}{scope} | {cause} | {fix} |")
     return "\n".join(lines) + "\n"
+
+
+# ------------------------------------------------------------------ error-path contract
+
+
+def cli_finding(
+    rule_id: str,
+    *,
+    message_key: str | None = None,
+    fix_key: str | None = None,
+    severity: str = "FAIL",
+    scope: str | None = None,
+    **params: Any,
+) -> Finding:
+    """A ``CLI-xxx`` finding whose cause/fix keys default to ``cli.<ID>.cause`` / ``.fix``.
+
+    A module may keep its own, more specific cause text (``message_key``) and still share
+    the generic fix; string params are masked so the envelope never carries a home path.
+    """
+    masked = {k: mask_text(v) if isinstance(v, str) else v for k, v in params.items()}
+    return Finding(
+        rule_id=rule_id,
+        severity=severity,
+        message_key=message_key or f"cli.{rule_id}.cause",
+        fix_key=fix_key or f"cli.{rule_id}.fix",
+        params=masked,
+        evidence=dict(masked),
+        scope=scope,
+    )
+
+
+def print_error_findings(findings: Sequence[Finding], lang: str | None = None) -> None:
+    """stderr rendering of an error path: ``cause`` in red, then ``fix`` (rule 11.6 order)."""
+    for f in findings:
+        _sev, rid, cause, fix = render_finding(f, lang)
+        err_console.print(f"[red]{rid}: {cause}[/]")
+        if fix:
+            err_console.print(fix)
+
+
+def exit_with_findings(
+    command: str,
+    findings: Sequence[Finding],
+    code: int = 2,
+    data: Any = None,
+) -> typer.Exit:
+    """Report an error path and return the ``typer.Exit`` to raise.
+
+    Under ``--json`` the envelope (``ok: false``) is the only thing written, and it goes to
+    stdout; otherwise the findings are printed cause → fix on stderr. ``code`` follows the
+    CLAUDE.md rule: 2 for bad input/usage, 1 for an action that failed.
+    """
+    fs = list(findings)
+    if state.json:
+        emit_json(command, data, fs, ok=False)
+    else:
+        print_error_findings(fs, state.lang)
+    return typer.Exit(code=code)
+
+
+def invoked_command(argv: Sequence[str] | None = None) -> str:
+    """Best-effort command name for an envelope (``--json plan …`` → ``plan``).
+
+    Sub-command groups are joined with a space (``unwrap run``) so the value matches what
+    the commands themselves pass to :func:`emit_json`.
+    """
+    args = list(sys.argv[1:] if argv is None else argv)
+    words: list[str] = []
+    skip_value = False
+    for arg in args:
+        if skip_value:
+            skip_value = False
+            continue
+        if arg.startswith("-"):
+            if words:
+                break
+            skip_value = arg == "--lang"
+            continue
+        words.append(arg)
+        if len(words) == 2:
+            break
+    if not words:
+        return "wintersar"
+    if len(words) == 2 and words[0] in _GROUPS:
+        return " ".join(words)
+    return words[0]
+
+
+# groups whose sub-command name is part of the envelope's ``command`` field
+_GROUPS: frozenset[str] = frozenset({"cache", "unwrap", "research"})
+
+
+def report_unexpected(exc: BaseException, argv: Sequence[str] | None = None) -> None:
+    """Turn an exception that escaped a sub-command into the normal output contract.
+
+    Typer re-raises unexpected exceptions instead of converting them to an exit code
+    (``Typer.__call__``), so without this the process ends in a traceback: no ``--json``
+    envelope at all, and unmasked home paths in the stderr frames (rule 11.11).
+    # source: .venv/lib/python3.11/site-packages/typer/main.py (Typer.__call__)
+    """
+    detail = mask_text(f"{type(exc).__name__}: {exc}")
+    finding = Finding(
+        rule_id=CLI_UNEXPECTED,
+        severity="FAIL",
+        message_key="cli.CLI-001.cause",
+        fix_key="cli.CLI-001.fix",
+        params={"error": detail},
+        evidence={"error": detail},
+    )
+    if state.json:
+        emit_json(invoked_command(argv), {"error": detail}, [finding], ok=False)
+    else:
+        err_console.print(f"[red]{t('cli.CLI-001.cause', error=detail)}[/]")
+        err_console.print(t("cli.CLI-001.fix", error=detail))

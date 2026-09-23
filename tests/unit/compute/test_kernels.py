@@ -193,3 +193,116 @@ def test_gpu_matches_cpu() -> None:
     np.testing.assert_allclose(
         xpmod.to_numpy(K.multilook(cupy.asarray(noisy), 4, 2)), K.multilook(noisy, 4, 2), rtol=1e-5
     )
+
+
+# ---------------------------------------------------------------------- Goldstein variants (ADR-0096)
+
+
+def test_goldstein_dtype_follows_input_and_validates_variant_options() -> None:
+    _, z = _plane(64, 80, window=32)
+    assert K.goldstein_filter(z, 0.5, 32).dtype == np.complex64
+    out128 = K.goldstein_filter(z.astype(np.complex128), 0.5, 32)
+    assert out128.dtype == np.complex128
+    # the two precisions agree on the phase (float32 accumulation vs float64; compared as
+    # a wrapped difference so the ±π seam does not count)
+    out64 = K.goldstein_filter(z, 0.5, 32)
+    assert np.abs(np.angle(out128 * np.conj(out64))).max() < 1e-4
+    for kw in ({"weight": "boxcar"}, {"pad": "reflect"}, {"smooth_mode": "mirror"}):
+        with pytest.raises(ValueError, match="unknown"):
+            K.goldstein_filter(z, 0.5, 32, **kw)
+    with pytest.raises(ValueError, match="even"):
+        K.goldstein_filter(z, 0.5, 33, weight="bartlett")
+    # 'zero' padding accepts an image smaller than the window, 'clamp' does not
+    small = z[:20, :24]
+    with pytest.raises(ValueError, match="smaller"):
+        K.goldstein_filter(small, 0.5, 32)
+    out = K.goldstein_filter(small, 0.5, 32, pad="zero")
+    assert out.shape == small.shape
+    assert K._padded_length(70, 32, 16) == 80 and K._padded_length(32, 32, 16) == 32
+    assert K._padded_length(20, 32, 16) == 32
+
+
+@pytest.mark.parametrize("size", [2, 3, 4, 5])
+def test_wrap_smoothing_matches_scipy_periodic_uniform_filter(size: int) -> None:
+    """``smooth_mode='wrap'`` reproduces ``uniform_filter(mode='wrap')`` including the
+    asymmetric centring of even sizes (size // 2 before, size - 1 - size // 2 after)."""
+    rng = np.random.default_rng(4)
+    mag64 = rng.random((16, 16))
+    np.testing.assert_allclose(
+        K._smooth_spectrum(mag64, size, "wrap", np),
+        uniform_filter(mag64, size, mode="wrap"),
+        atol=1e-12,
+    )
+    mag32 = mag64.astype(np.float32)
+    np.testing.assert_allclose(
+        K._smooth_spectrum(mag32, size, "wrap", np),
+        uniform_filter(mag32, size, mode="wrap"),
+        atol=1e-6,
+    )
+    # 'box' is the zero-padded mean
+    np.testing.assert_allclose(
+        K._smooth_spectrum(mag64, size, "box", np),
+        uniform_filter(mag64, size, mode="constant", cval=0.0),
+        atol=1e-12,
+    )
+
+
+def test_goldstein_bartlett_zero_pad_keep_magnitude_variant() -> None:
+    ph, _z = _plane(70, 90, cx=3.0, cy=1.0, window=16)
+    rng = np.random.default_rng(5)
+    noisy = (np.exp(1j * (ph + 0.6 * rng.standard_normal(ph.shape))) * 0.7).astype(np.complex128)
+    noisy[10:26, 20:36] = 0.0  # a masked (all-zero) patch-sized hole
+    out = K.goldstein_filter(
+        noisy,
+        0.8,
+        16,
+        overlap=8,
+        smooth=3,
+        weight="bartlett",
+        pad="zero",
+        smooth_mode="wrap",
+        keep_magnitude=True,
+    )
+    assert out.dtype == np.complex128 and out.shape == noisy.shape
+    # magnitude restored, zeros stay zero
+    np.testing.assert_allclose(np.abs(out), np.abs(noisy), atol=1e-12)
+    assert np.all(out[12:24, 22:34] == 0)
+    # noise reduced on the valid part
+    err_before = np.angle(noisy * np.exp(-1j * ph))[np.abs(noisy) > 0].std()
+    err_after = np.angle(out * np.exp(-1j * ph))[np.abs(out) > 0].std()
+    assert err_after < 0.6 * err_before
+    # the Bartlett blend weight is symmetric, strictly positive and peaks at the centre
+    w = K._bartlett2d(16, np, np.float64)
+    assert w.shape == (16, 16) and w.min() > 0 and w.max() == w[7, 7] == w[8, 8]
+    np.testing.assert_array_equal(w, w[::-1, ::-1])
+
+
+def test_goldstein_empty_patches_do_not_attenuate_neighbours() -> None:
+    """A patch that is entirely zero adds neither data nor weight: the pixels of an adjacent,
+    fully valid patch come out with the same values as when the hole is absent."""
+    _, z = _plane(64, 128, cx=2.0, cy=1.0, window=32)
+    z = z.astype(np.complex64)
+    holed = z.copy()
+    holed[:, 96:] = 0  # the right-most patch column (origins 96) is all zero
+    ref = K.goldstein_filter(z, 0.6, 32, overlap=0)  # non-overlapping patches
+    out = K.goldstein_filter(holed, 0.6, 32, overlap=0)
+    np.testing.assert_allclose(out[:, :96], ref[:, :96], rtol=1e-5, atol=1e-5)
+    assert np.all(out[:, 96:] == 0)
+
+
+# ---------------------------------------------------------------------- bench helper
+
+
+def test_bench_kernels_returns_numbers_only() -> None:
+    from wintersar.compute import bench_kernels
+
+    r = bench_kernels((48, 40), repeats=2, window=16, looks=(2, 2), coherence_window=3)
+    assert r["shape"] == [48, 40] and r["repeats"] == 2
+    assert set(r["cpu"]) == {"multilook", "goldstein_filter", "coherence_estimate"}
+    assert all(isinstance(v, float) and v > 0 for v in r["cpu"].values())
+    assert all(len(v) == 2 for v in r["samples"]["cpu"].values())
+    if not xpmod.cupy_available():
+        assert r["gpu"] is None and r["speedup"] is None and r["samples"]["gpu"] is None
+        assert r["device"] == {"backend": "numpy"}
+    else:  # pragma: no cover - CUDA machines
+        assert set(r["gpu"]) == set(r["cpu"]) and r["device"]["backend"] == "cupy"

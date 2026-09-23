@@ -22,6 +22,14 @@ detector). The pipeline executor passes the config section **nested**
 the CLI and the tests pass it flat; :func:`flatten_params` accepts both (top level wins,
 the same rule as :func:`wintersar.engines._unwrap_common.unwrap_cfg`).
 
+Incremental mode (PERF-06, ADR-0080): when the pipeline executor passes ``_pairs_dir`` /
+``_pairs_done`` (:class:`wintersar.pipeline.incremental.PairCache`), every interferogram
+whose identity — the unwrapping parameters that influence it plus the content hash of its
+wrapped phase / coherence / mask (/ truth) — matches a per-pair result already kept in
+``pairs/`` is taken from there and only the others are unwrapped; the assembled ``unw.npz``
+and ``stats.json`` look exactly as after a full run (``per_pair[i]["reused"]`` marks the
+reused ones). Without those keys nothing changes.
+
 The ``.npz`` interchange loads whole arrays per worker; the chunked Zarr store (PERF-08)
 replaces it for real stacks.
 """
@@ -55,6 +63,13 @@ from wintersar.i18n import t
 from wintersar.io.igrams import IgramStack
 from wintersar.io.schemas import Artifact, Artifacts, Finding, Severity
 from wintersar.pipeline.config import MaskCfg, TilesCfg, UnwrapCfg
+from wintersar.pipeline.incremental import (
+    PAIRS_DIR_KEY,
+    PAIRS_DONE_KEY,
+    PairCache,
+    pair_content_hash,
+    pair_identity,
+)
 from wintersar.unwrap import backends
 from wintersar.unwrap.inputs import (
     NPZ_FORMAT,
@@ -65,6 +80,7 @@ from wintersar.unwrap.inputs import (
 from wintersar.unwrap.masks import apply_mask, combine_masks, mask_stats, masked_conncomp
 from wintersar.unwrap.scheduler import REASON_PREFIX, UnwrapPlan, choose_strategy, fringe_density
 from wintersar.unwrap.tiling import boundary_jumps, merge_labels, merge_tiles, tile_grid
+from wintersar.util.hashing import hash_params
 from wintersar.util.masking import mask_mapping, mask_text
 from wintersar.util.sysinfo import MachineSpec
 
@@ -76,6 +92,8 @@ __all__ = [
     "UnwrapInputError",
     "cfg_from_params",
     "flatten_params",
+    "pair_input_hash",
+    "pair_param_hash",
     "resolve_plan",
     "run_unwrap",
     "stack_fringe_density",
@@ -479,7 +497,8 @@ def _backend_params(
     https://github.com/isce-framework/tophu/blob/main/src/tophu/_multiscale.py). Adapters
     ignore what they do not use.
     """
-    out: dict[str, Any] = {k: v for k, v in params.items() if k not in ("tiles", "mask", SECTION)}
+    skip = ("tiles", "mask", SECTION, PAIRS_DIR_KEY, PAIRS_DONE_KEY)
+    out: dict[str, Any] = {k: v for k, v in params.items() if k not in skip}
     out.update(
         {
             "method": plan.method,
@@ -496,6 +515,51 @@ def _backend_params(
         }
     )
     return out
+
+
+# ---------------------------------------------------------------------------- PERF-06 identity
+
+
+def pair_param_hash(params: Mapping[str, Any], cfg: UnwrapCfg, plan: UnwrapPlan) -> str:
+    """Hash of everything (besides the data) that changes an unwrapped pair (ADR-0080).
+
+    The resolved plan is part of it: ``unwrap.method: auto`` may pick another backend or
+    tiling on another machine, and a different tiling is a different result. Parallelism
+    (``n_parallel``, ``nproc``) is not. ``params`` must be flat; user keys the backend sees
+    (``nlooks`` …) count, executor-private keys do not — except the seam-detector test hook
+    ``_tile_offset_cycles``, which does alter the output.
+    """
+    user = {
+        k: v
+        for k, v in params.items()
+        if not k.startswith("_") and k not in PARAM_KEYS and k != SECTION
+    }
+    return hash_params(
+        {
+            "cfg": cfg.model_dump(mode="json"),
+            "method": plan.method,
+            "tiles": [plan.rows, plan.cols, plan.overlap_px],
+            "user": user,
+            "tile_offset_cycles": params.get("_tile_offset_cycles") or {},
+        }
+    )
+
+
+def pair_input_hash(stack: IgramStack, index: int, want_truth: bool = False) -> str:
+    """Content hash of the arrays one unwrapping job reads for pair ``index``."""
+    truth = stack.truth.get("unw_true") if want_truth else None
+    return pair_content_hash(
+        stack.wrapped[index],
+        stack.coherence[index],
+        stack.mask_for(index) if stack.mask is not None else None,
+        truth[index] if truth is not None else None,
+    )
+
+
+def _pair_stats_meta(stats: Mapping[str, Any]) -> dict[str, Any]:
+    """The per-pair stats worth keeping next to a cached result (JSON, small)."""
+    keep = ("pair", "n_conncomp", "mask", "boundary_jumps", "backend", "tile_dir", "wall_time_s")
+    return {k: stats[k] for k in keep if k in stats}
 
 
 def _finding(rule_id: str, severity: Severity, scope: str | None = None, **params: Any) -> Finding:
@@ -654,6 +718,19 @@ def run_unwrap(
     backend_params = _backend_params(params, cfg, plan, tiles_dir, log_dir)
     offsets_raw = params.get("_tile_offset_cycles") or {}
     offsets = {str(k): float(v) for k, v in dict(offsets_raw).items()}
+    # -- PERF-06: pairs whose result is already in pairs/ (same identity) are not re-unwrapped
+    pair_cache = PairCache.from_params(params, SECTION)
+    want_truth = plan.method == "truth"
+    identities: dict[int, str] = {}
+    reused: dict[int, Path] = {}
+    if pair_cache is not None:
+        param_hash = pair_param_hash(params, cfg, plan)
+        for i, pair in enumerate(stack.pairs):
+            identities[i] = pair_identity(param_hash, pair_input_hash(stack, i, want_truth))
+            hit = pair_cache.lookup(pair, identities[i])
+            if hit is not None:
+                reused[i] = hit
+        log(t("unwrap.run.reused", n_reused=len(reused), n_new=stack.n_pairs - len(reused)))
     jobs = [
         _Job(
             index=i,
@@ -667,10 +744,11 @@ def run_unwrap(
             backend_params=backend_params,
             parts_dir=str(parts_dir),
             native_tiles=native_tiles,
-            want_truth=plan.method == "truth",
+            want_truth=want_truth,
             tile_offset_cycles=offsets,
         )
         for i, pair in enumerate(stack.pairs)
+        if i not in reused
     ]
     log(
         t(
@@ -684,7 +762,7 @@ def run_unwrap(
     )
     sampler = _RssSampler()
     sampler.start()
-    results, failures = _execute(jobs, plan.n_parallel, use_threads)
+    results, failures = _execute(jobs, plan.n_parallel, use_threads) if jobs else ([], [])
     peak_rss_mb = sampler.stop()
 
     for pair, error in failures:
@@ -708,6 +786,27 @@ def run_unwrap(
         per_pair.append(r.stats)
         if r.stats.get("tile_dir"):
             tile_dirs[r.pair] = str(r.stats["tile_dir"])
+        if pair_cache is not None:
+            kept = pair_cache.path_for(r.pair)
+            np.savez(kept, unw=unw[r.index], conncomp=cc)
+            pair_cache.store(r.pair, identities[r.index], kept, meta=_pair_stats_meta(r.stats))
+    for i, path in reused.items():
+        with np.load(path, allow_pickle=False) as z:
+            unw[i] = np.asarray(z["unw"], dtype=np.float32)
+            cc = np.asarray(z["conncomp"])
+        if cc.max(initial=0) > np.iinfo(conncomp.dtype).max:
+            conncomp = conncomp.astype(np.uint32)
+        conncomp[i] = cc
+        entry = pair_cache.entry(stack.pairs[i]) if pair_cache is not None else None
+        stats_i: dict[str, Any] = dict(entry.meta) if entry is not None else {}
+        stats_i.update({"pair": stack.pairs[i], "index": i, "reused": True})
+        per_pair.append(stats_i)
+        td = stats_i.get("tile_dir")
+        if td and Path(str(td)).is_dir():
+            tile_dirs[stack.pairs[i]] = str(td)
+    per_pair.sort(key=lambda s_: int(s_.get("index", 0)))
+    if pair_cache is not None:
+        pair_cache.save()
     shutil.rmtree(parts_dir, ignore_errors=True)
     shutil.rmtree(input_dir, ignore_errors=True)  # converted engine input (scratch only)
     unw_path = out_dir / UNW_FILE
@@ -753,6 +852,8 @@ def run_unwrap(
         "boundary_jumps": jump_total,
         "tile_dirs": tile_dirs,
         "per_pair": per_pair,
+        "reused": [stack.pairs[i] for i in sorted(reused)],
+        "n_reused": len(reused),
         "failed": [p for p, _ in failures],
         "findings": [f.model_dump(mode="json") for f in findings],
         "outputs": {"unw": str(unw_path), "stats": str(stats_path)},
@@ -770,7 +871,10 @@ def run_unwrap(
         "tiles": [plan.rows, plan.cols],
         "tile_dirs": tile_dirs,
         "findings": [f.rule_id for f in findings],
+        "pairs": list(stack.pairs),
     }
+    if pair_cache is not None:
+        meta.update(pair_cache.summary())
     return (
         Artifacts()
         .add(Artifact(name="unw", path=unw_path, kind="npz", meta=meta))

@@ -143,7 +143,9 @@ def test_orphan_node_dirs_are_listed_and_collected(workdir: Path) -> None:
 
 
 def test_gc_max_bytes_trims_the_oldest_survivors(workdir: Path) -> None:
-    """PERF-03 cache budget: ``keep_latest`` alone cannot bound the work directory size."""
+    """PERF-03 cache budget (ADR-0081): ``keep_latest`` alone cannot bound the work
+    directory size; ``max_bytes`` evicts the oldest survivors first but never the newest
+    ``ok`` entry of a stage (the one the next run resolves against)."""
     t0 = datetime(2026, 1, 1, tzinfo=UTC)
     for i, h in enumerate(["1" * 16, "2" * 16, "3" * 16]):
         _record(workdir, "unwrap", h, t0 + timedelta(minutes=i))
@@ -155,14 +157,75 @@ def test_gc_max_bytes_trims_the_oldest_survivors(workdir: Path) -> None:
     report = cache.gc(workdir, keep_latest=3, max_bytes=budget)
     assert [e.node_hash for e in report.kept] == ["3" * 16]
     assert {e.node_hash for e in report.removed} == {"1" * 16, "2" * 16}
+    assert [e.node_hash for e in report.protected] == ["3" * 16]
+    assert report.max_bytes == budget and not report.over_budget
     assert not cache.stage_dir(workdir, "unwrap", "2" * 16).exists()
     assert cache.stage_dir(workdir, "unwrap", "3" * 16).exists()
-    # a budget nothing fits into empties the stage; a generous one keeps everything
+    # a generous budget keeps everything; a budget nothing fits into keeps only the newest
+    # ok entry of the stage and reports that it is still over budget
     _record(workdir, "unwrap", "4" * 16, t0 + timedelta(minutes=3))
     assert cache.gc(workdir, keep_latest=3, max_bytes=10**9).removed == []
-    assert cache.gc(workdir, keep_latest=3, max_bytes=0).kept == []
+    zero = cache.gc(workdir, keep_latest=3, max_bytes=0)
+    assert [e.node_hash for e in zero.kept] == ["4" * 16]
+    assert {e.node_hash for e in zero.removed} == {"3" * 16}
+    assert zero.over_budget and zero.kept_bytes > 0
+    assert cache.stage_dir(workdir, "unwrap", "4" * 16).exists()
     with pytest.raises(ValueError):
         cache.gc(workdir, max_bytes=-1)
+
+
+def test_gc_budget_evicts_oldest_across_stages_and_spares_failed_newest(workdir: Path) -> None:
+    """Eviction order is ``finished_at`` across stages; a failed entry is never protected
+    (only the newest *ok* one is), so the budget can still reclaim it."""
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    _record(workdir, "unwrap", "a" * 16, t0)  # oldest overall
+    _record(workdir, "geocode", "b" * 16, t0 + timedelta(minutes=1))
+    _record(workdir, "unwrap", "c" * 16, t0 + timedelta(minutes=2))
+    _record(workdir, "unwrap", "d" * 16, t0 + timedelta(minutes=3), status="failed")
+    sizes = {e.node_hash: e.size_bytes for e in cache.list_records(workdir)}
+    # room for the two protected entries (newest ok of unwrap = c, of geocode = b) only
+    budget = sizes["c" * 16] + sizes["b" * 16]
+    report = cache.gc(workdir, keep_latest=5, max_bytes=budget)
+    assert {e.node_hash for e in report.protected} == {"b" * 16, "c" * 16}
+    assert [e.node_hash for e in report.removed] == ["a" * 16, "d" * 16]  # oldest first
+    assert {e.node_hash for e in report.kept} == {"b" * 16, "c" * 16}
+    assert not report.over_budget
+
+
+def test_size_summary_accounts_for_orphans_and_protected_entries(workdir: Path) -> None:
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    _record(workdir, "unwrap", "1" * 16, t0)
+    _record(workdir, "unwrap", "2" * 16, t0 + timedelta(minutes=1))
+    orphan = cache.stage_dir(workdir, "unwrap", "0" * 16)
+    out, _ = cache.prepare_node_dir(orphan)
+    (out / "big.bin").write_bytes(b"x" * 5000)
+    summary = cache.size_summary(workdir, max_bytes=10)
+    sizes = {e.node_hash: e.size_bytes for e in cache.list_records(workdir)}
+    assert summary["total_bytes"] == sum(sizes.values()) == summary["by_stage"]["unwrap"]
+    assert summary["n_entries"] == 3 and summary["n_orphans"] == 1
+    assert summary["orphan_bytes"] == sizes["0" * 16] >= 5000
+    assert summary["protected_bytes"] == sizes["2" * 16]  # newest ok entry of the stage
+    assert summary["max_bytes"] == 10
+    assert summary["over_budget_bytes"] == summary["total_bytes"] - 10
+    assert "max_bytes" not in cache.size_summary(workdir)
+
+
+def test_prepare_node_dir_keeps_pairs_only_when_asked(workdir: Path) -> None:
+    """A full recompute must not inherit per-pair results; an incremental one must."""
+    from wintersar.pipeline.incremental import pairs_dir
+
+    node_dir = workdir / "unwrap" / ("x" * 16)
+    out, _ = cache.prepare_node_dir(node_dir)
+    pairs = pairs_dir(node_dir)
+    pairs.mkdir()
+    (pairs / "20240101_20240113.npz").write_bytes(b"pair")
+    (out / "unw.npz").write_bytes(b"stack")
+    cache.prepare_node_dir(node_dir, clean=True, keep_pairs=True)
+    assert (pairs / "20240101_20240113.npz").exists() and not (out / "unw.npz").exists()
+    cache.prepare_node_dir(node_dir, clean=True)
+    assert not pairs.exists()
+    cache.prepare_node_dir(node_dir, clean=False)  # no cleaning at all
+    assert out.exists()
 
 
 def test_node_lock_is_exclusive_and_gc_spares_locked_entries(workdir: Path) -> None:

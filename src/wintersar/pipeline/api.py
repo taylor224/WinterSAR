@@ -1,5 +1,10 @@
 """Python API of the pipeline: :func:`plan` (dry run) and :func:`run` (plan §5.3, R-05,
-R-11, PERF-03). The CLI and the QGIS plugin call these; nothing here prints.
+R-11, PERF-03, PERF-06). The CLI and the QGIS plugin call these; nothing here prints.
+
+``incremental=True`` (PERF-06, ADR-0080) lets a stage whose date set grew reuse the per-pair
+results its node directory already holds instead of recomputing the whole stack; the plan
+then reports ``N pairs cached / M new`` per stage (``StageRecord.extra["incremental"]`` and
+the ``PIPELINE-015`` findings).
 """
 
 from __future__ import annotations
@@ -33,6 +38,7 @@ class RunResult:
     failed_stage: str | None = None
     run_id: str | None = None
     dry_run: bool = False
+    incremental: bool = False
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -49,10 +55,32 @@ class RunResult:
     def skipped(self) -> list[StageRecord]:
         return [r for r in self.records if r.status == "skipped"]
 
+    @property
+    def partial(self) -> list[StageRecord]:
+        """Stages that ran incrementally (some pairs reused, PERF-06)."""
+        return [
+            r
+            for r in self.ran
+            if isinstance(r.extra.get("incremental"), dict)
+            and int(r.extra["incremental"].get("reused") or 0) > 0
+        ]
+
+    def pair_summary(self) -> dict[str, int]:
+        """``{"reused": n, "computed": m}`` summed over the stages that ran."""
+        reused = computed = 0
+        for r in self.ran:
+            info = r.extra.get("incremental")
+            if isinstance(info, dict):
+                reused += int(info.get("reused") or 0)
+                computed += int(info.get("computed") or 0)
+        return {"reused": reused, "computed": computed}
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "ok": self.ok,
             "dry_run": self.dry_run,
+            "incremental": self.incremental,
+            "pairs": self.pair_summary(),
             "run_id": self.run_id,
             "error": self.error,
             "failed_stage": self.failed_stage,
@@ -70,8 +98,10 @@ def plan(
     force: list[str] | None = None,
     param_overrides: dict[str, dict[str, Any]] | None = None,
     machine: sysinfo.MachineSpec | None = None,
+    incremental: bool = False,
 ) -> Plan:
-    """Dry run: which nodes are cached / to run, plus estimated resources."""
+    """Dry run: which nodes are cached / to run (or partially cached with
+    ``incremental=True``), plus estimated resources."""
     return build_plan(
         cfg,
         until=until,
@@ -79,6 +109,7 @@ def plan(
         force=force,
         param_overrides=param_overrides,
         machine=machine_budget(cfg, machine),
+        incremental=incremental,
     )
 
 
@@ -90,12 +121,17 @@ def run(
     param_overrides: dict[str, dict[str, Any]] | None = None,
     dry_run: bool = False,
     machine: sysinfo.MachineSpec | None = None,
+    incremental: bool = False,
 ) -> RunResult:
     """Execute the pipeline (cached stages are reused). Never raises for stage failures:
     inspect ``RunResult.ok`` / ``findings``. Fails fast (before executing anything) when
-    the plan already carries a FAIL finding (engine missing, blocked input)."""
+    the plan already carries a FAIL finding (engine missing, blocked input).
+
+    ``incremental=True``: a stage whose date set grew re-runs in its existing node directory
+    and reuses the per-pair results kept there (PERF-06); the time series is re-inverted.
+    """
     budget = machine_budget(cfg, machine)
-    dag = Dag(cfg)
+    dag = Dag(cfg, incremental=incremental)
     dag.build(param_overrides, until=until, from_stage=from_stage, force=force)
     the_plan = build_plan(cfg, machine=budget, dag=dag)
     plan_ok = not any(f.is_fail for f in the_plan.findings)
@@ -107,6 +143,7 @@ def run(
             plan=the_plan,
             ok=plan_ok,
             dry_run=dry_run,
+            incremental=incremental,
             error=None if plan_ok else "plan has FAIL findings",
             failed_stage=next((n.stage for n in dag.blocked()), None),
         )
@@ -128,6 +165,7 @@ def run(
             error=str(exc),
             failed_stage=exc.failed_stage,
             run_id=executor.run_id,
+            incremental=incremental,
         )
     else:
         result = RunResult(
@@ -137,6 +175,7 @@ def run(
             plan=the_plan,
             ok=True,
             run_id=executor.run_id,
+            incremental=incremental,
         )
     _write_run_summary(dag.workdir, result)
     return result

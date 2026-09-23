@@ -1,0 +1,139 @@
+# Nightly regression + perf layer (plan §8 rows "regression" / "perf", §6.3 item 5, ADR-0101).
+#
+# Gates (a failure makes the workflow red):
+#   regression  - tests/regression (golden statistics of the synthetic S site, ADR-0100/0102)
+#                 and scripts/check_golden.py (same comparison, human/JSON report)
+#   bench       - `wintersar --json bench` on S_synthetic must *run* (BENCH-005 etc. fail it);
+#                 its numbers are only uploaded as an artifact (rule 11.8)
+# Report only (never fails the workflow, `continue-on-error: true`):
+#   compare-baseline - before/after table against benchmarks/baselines/S_synthetic.<runner>.json
+#                 when that file exists. Which runner class to baseline on is open question #58;
+#                 see benchmarks/baselines/README.md.
+#
+# source: https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows
+#   ("By default, scheduled workflows run in UTC", "Scheduled workflows run on the latest commit
+#   on the default branch", `on: workflow_dispatch` for manual runs)
+# source: https://github.com/actions/runner-images (labels `ubuntu-24.04` / `ubuntu-latest`)
+# source: .github/workflows/ci.yml (checkout@v4, setup-uv@v5, upload-artifact@v4, `uv sync --extra dev`)
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # 03:00 UTC daily
+  workflow_dispatch:
+
+env:
+  # The runner *class* the baseline is keyed on (benchmarks/baselines/S_synthetic.<RUNNER_CLASS>.json).
+  # Pinned to an explicit image, not `ubuntu-latest`, so that the file name keeps meaning
+  # when `-latest` moves to a newer OS (ADR-0101).
+  RUNNER_CLASS: ubuntu-24.04
+  SITE: benchmarks/sites/S_synthetic.yaml
+
+jobs:
+  regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+      - name: Sync
+        run: uv sync --extra dev
+      - name: Golden regression test (plan §8 regression row)
+        run: uv run pytest tests/regression -q -m "not network and not engine_real and not gpu"
+      - name: Golden check (CI entry point, exit 1 on mismatch)
+        run: >-
+          uv run python scripts/check_golden.py --lang en
+          --markdown golden_check.md --json > golden_check.json
+      # source: https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/workflow-commands-for-github-actions#adding-a-job-summary
+      - name: Job summary
+        if: always()
+        run: |
+          echo "## Golden check (S_synthetic)" >> "$GITHUB_STEP_SUMMARY"
+          if [ -s golden_check.md ]; then cat golden_check.md >> "$GITHUB_STEP_SUMMARY"; else echo "no findings" >> "$GITHUB_STEP_SUMMARY"; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: golden-check-ubuntu-24.04
+          path: |
+            golden_check.md
+            golden_check.json
+
+  bench:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+      - name: Sync
+        run: uv sync --extra dev
+      - name: Bench S_synthetic (measure; 3 repeats, median)
+        run: >-
+          uv run wintersar --json bench --site "$SITE"
+          --out bench_result.json --repeats 3 > bench_envelope.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-S_synthetic-ubuntu-24.04
+          path: |
+            bench_result.json
+            bench_envelope.json
+
+  # Report only: a slowdown against the committed baseline shows up in the job summary and
+  # turns this job red, but `continue-on-error` keeps the workflow green (OQ #58 is open).
+  # source: workflow-syntax `jobs.<job_id>.continue-on-error` — "Prevents a workflow run from
+  #   failing when a job fails"; `jobs.<job_id>.needs`; `steps.<id>.outputs` via $GITHUB_OUTPUT
+  #   https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions
+  # source: https://github.com/actions/download-artifact/blob/v4/README.md (v4 reads v4 uploads)
+  compare-baseline:
+    needs: bench
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bench-S_synthetic-ubuntu-24.04
+          path: nightly-bench
+      - name: Locate baseline
+        id: baseline
+        run: |
+          f="benchmarks/baselines/S_synthetic.${RUNNER_CLASS}.json"
+          if [ -f "$f" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "path=$f" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "## Bench baseline" >> "$GITHUB_STEP_SUMMARY"
+            echo "No baseline \`$f\` — comparison skipped (see benchmarks/baselines/README.md, open question #58)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: astral-sh/setup-uv@v5
+        if: steps.baseline.outputs.exists == 'true'
+        with:
+          python-version: "3.11"
+      - name: Sync
+        if: steps.baseline.outputs.exists == 'true'
+        run: uv sync --extra dev
+      - name: Compare with baseline (report only)
+        if: steps.baseline.outputs.exists == 'true'
+        env:
+          BASELINE: ${{ steps.baseline.outputs.path }}
+        # source: src/wintersar/bench/report.py (compare, load_result, CompareReport.to_markdown)
+        run: |
+          uv run python - <<'EOF'
+          import os, sys
+          from wintersar.bench.report import compare, load_result
+
+          before = load_result(os.environ["BASELINE"])
+          after = load_result("nightly-bench/bench_result.json")
+          report = compare(before, after)
+          md = "## Bench vs baseline (report only, OQ #58)\n\n" + report.to_markdown("en") + "\n"
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as fh:
+              fh.write(md)
+          sys.stdout.write(md)
+          sys.exit(0 if report.ok else 1)
+          EOF
