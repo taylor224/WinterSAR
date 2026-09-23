@@ -126,7 +126,8 @@ quote-style = "double"
 
 # ---------------------------------------------------------------- mypy
 [tool.mypy]
-python_version = "3.11"
+# No pinned python_version: mypy follows the running interpreter so the 3.12 CI job can read
+# numpy>=2.5 stubs (PEP 695 `type` statements) while the 3.11 job still checks 3.11 semantics.
 strict = true
 warn_unreachable = true
 pretty = true

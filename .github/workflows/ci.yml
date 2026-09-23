@@ -13,6 +13,7 @@ jobs:
   lint-test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false  # report both interpreters; a 3.12-only failure must not hide the 3.11 result
       matrix:
         python-version: ["3.11", "3.12"]
     steps:
