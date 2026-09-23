@@ -6,7 +6,8 @@
 - 검증 출처(Sources):
   - 플랜 §7 각 Phase 의 DoD 문장(`docs/plan/wintersar_implementation_plan.md` 458–505행)
   - 트리 상태(2026-09-23): `wintersar version` = `0.1.0.dev0`; `wintersar diagnose --list-kb` = 20항목;
-    `tests/fixtures/logs/manifest.yaml` 26 픽스처; `docs/research/results/*.md` 5개; `.github/workflows/{ci,nightly}.yml`;
+    `tests/fixtures/logs/manifest.yaml` 25 픽스처(`tests/unit/qgis/test_docs.py` 가 릴리스 노트의 개수와 대조);
+    `docs/research/results/*.md` 5개; `.github/workflows/{ci,nightly}.yml` (`ci.yml` 의 `docs` 잡이 `mkdocs build --strict`);
     `pixi.toml` 있음 / `pixi.lock` 없음; `benchmarks/baselines/` 에 README 만 있음
   - CLAUDE.md Environment: 외부 엔진 미설치, 네트워크·자격증명 없음
   - `docs/open-questions.md` #4, #10, #22, #53, #58, #60, #67, #68, #70, #71

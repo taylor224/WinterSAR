@@ -82,6 +82,28 @@
   CLI 를 깨뜨리지 않고, 테스트(`missing_help_keys`)가 누락을 잡는다.
 - 되돌리는 조건: typer 가 도움말 렌더 훅(예: 콜백 기반 help)을 공식 제공하면 레지스트리·`cls` 교체를 제거한다.
 
+## 2차 리뷰 보완 (2026-09-23, 리뷰 발견 16/27/47/48)
+
+- **typer/click 자체 옵션의 도움말.** `--help`(click `help_option`, "Show this message and exit."),
+  `--install-completion`/`--show-completion`(typer `completion.py`, `add_completion`)의 문구는 라이브러리
+  리터럴이라 `h()` 를 거치지 않는다. `clihelp.BUILTIN_PARAM_KEYS` 가 파라미터 이름 → 카탈로그 키
+  (`cli_help.root.help_option` / `install_completion` / `show_completion`)를 잇고, `localize_help` 가
+  이름으로 바꿔 넣는다. `--help` 는 `cmd.params` 에 없고 `get_help_option(ctx)` 가 만들어 캐시하므로
+  `HelpCommand`/`HelpGroup.get_help_option` 이 그 객체의 `help` 를 `help_lang()` 언어로 덮어쓴다.
+  - 출처: `.venv/lib/python3.11/site-packages/typer/_click/decorators.py` `help_option`,
+    `typer/_click/core.py` `Command.get_help_option`(`_help_option` 캐시, `get_params` 가 붙임),
+    `typer/completion.py` `_install_completion_placeholder_function`, `typer/main.py` `get_command`
+    (`_add_completion` 이면 루트 명령 `params` 에 두 옵션을 추가).
+- **예외로 남기는 것(의도적 제외).** typer `rich_utils` 의 모듈 상수 `[default: …]`, `[required]`,
+  `[env var: …]`, 패널 제목 `Arguments`/`Options`/`Commands`/`Error`, 인자 메타변수(`{candidates}` 같은
+  대문자화 이름)는 문장이 아닌 표식이며 렌더러 전역을 바꿔야 해서 그대로 둔다(`rich_utils.py:87-97`).
+  중단(`typer.Abort`) 문구는 `cli.aborted` 카탈로그 키로 바꿨다(이전: typer 패널 "Aborted." / 폴백 "Aborted!").
+- **`sys.argv` 가 없는 임베딩 인터프리터.** `help_lang()` 과 `cli._mount_module_clis` 는
+  `getattr(sys, "argv", [])` 로 읽는다(PySys_SetArgv 를 호출하지 않은 호스트에서 `import wintersar.cli`
+  가 AttributeError 로 죽던 문제).
+- **용어 통일.** 도움말의 "긴밀도" 를 런타임 카탈로그·표 머리글과 같은 "코히어런스" 로 바꿨다(ko 카탈로그
+  전체에서 코히어런스 28곳 vs 긴밀도 6곳이 모두 `cli_help.yaml` 이었다). 테스트가 재발을 막는다.
+
 ## English summary
 
 Typer evaluates `help="..."` strings at import time and renders the top-level `--help` from
@@ -97,3 +119,10 @@ is English even under `typer.testing.CliRunner`. `CliState.lang_explicit` record
 language was chosen; `HelpGroup.main` restores `WINTERSAR_LANG` after each invocation.
 Verified against typer 0.27.2, which vendors click (since 0.26.0), so the exception classes
 come from `typer._click`; the `typer>=0.12` pin should be raised to `>=0.26`.
+
+Second review round: the help of click's own `--help` and typer's `--install-completion` /
+`--show-completion` (library literals) is now replaced from the catalogue at render time
+(`clihelp.BUILTIN_PARAM_KEYS`, `get_help_option` override), `help_lang()` tolerates a missing
+`sys.argv`, the abort message comes from `cli.aborted`, and the Korean help uses 코히어런스 like
+the runtime strings. Typer's `[default: …]`/`[required]` markers and panel titles are the
+recorded exemption.

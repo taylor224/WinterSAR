@@ -56,6 +56,9 @@ and docs that implement them.
   `run(stage, inputs, params, log_dir) -> Artifacts`, `parse_log`), `@register_engine`,
   `get_engine(name)`, helper `python_module_version`, `executable_version`.
 - `wintersar.pipeline.config`: `Config`/`load_config` (plan §4.4), `Config.stage_params(stage)`.
+  `load_config` raises `FileNotFoundError` (missing file) or `ValueError` (`ConfigError` for YAML
+  syntax, pydantic `ValidationError` for schema) — CLI loaders catch exactly those two
+  (CLI-004 / CLI-005), never `yaml.YAMLError` or bare `Exception`.
 - `wintersar.util.hashing`: `hash_params`, `hash_path`, `combine_hashes`.
 - `wintersar.util.output`: `emit_json(command, data, findings)`, `print_findings`,
   `findings_to_markdown`; `wintersar.util.clistate.state` for `--json/--lang`.

@@ -1,9 +1,10 @@
 # 로드맵 (v0.1 이후)
 
 이 문서는 두 부분입니다. (1) 플랜 §7 Phase 8 의 "이후 백로그" 네 항목과 그 현재 상태, (2) `docs/open-questions.md`
-의 미확정 행을 **담당자별**로 묶은 표. 상태의 원본은 언제나 open-questions 표이며 여기서는 번호로만 가리킵니다
-(표는 추가만 하므로 번호는 바뀌지 않습니다). 여기 적힌 담당 열이 open-questions 의 담당 열과 같은지는
-`tests/unit/qgis/test_docs.py` 가 검사합니다([ADR-0112](adr/0112-docs-test-policy.md)).
+의 **모든** 행을 **담당자별**로 묶은 표(완료 행은 참고용). 상태의 원본은 언제나 open-questions 표이며 여기서는
+번호로만 가리킵니다(표는 추가만 하므로 번호는 바뀌지 않습니다). 여기 행 번호 집합, 상태 첫 단어(완료·진행 중·대기·
+미착수), 담당 열이 open-questions 와 같은지는 `tests/unit/qgis/test_docs.py` 가 검사합니다
+([ADR-0112](adr/0112-docs-test-policy.md)).
 
 ## 1. 백로그 (플랜 §7 Phase 8)
 
@@ -21,8 +22,8 @@
 
 ## 2. 미확정 사항 — 담당자별
 
-행 번호는 [open-questions](open-questions.md) 의 `#`, "담당" 열은 그 표의 담당 열을 그대로 옮긴 것입니다.
-"완료" 로 표시된 행은 참고로만 남겼습니다.
+행 번호는 [open-questions](open-questions.md) 의 `#`, "담당" 열은 그 표의 담당 열을 그대로 옮긴 것이고 "상태" 열의
+첫 단어는 그 표의 "상태 / ADR" 열과 같습니다. "완료" 로 표시된 행은 참고로만 남겼습니다.
 
 ### 발주자·통합자 (승인·환경)
 
@@ -32,7 +33,7 @@
 | #10 | 의존성 정책 예외 승인(hyp3-sdk, sentineleof, sardem, snaphu, burst2safe) | 대기 | Taylor |
 | #22 | spurt 설치 정책 예외(conda-forge 부재, ortools) | 대기 | Taylor |
 | #66 | §9 라이선스 표의 COMPASS·isce3·LiCSBAS·tophu | 완료 → ADR-0001 | Taylor |
-| #67 | 락파일 부재(`pixi.toml` 은 생김, 구현은 #70) | 미착수 | Taylor |
+| #67 | 락파일 부재(`pixi.toml`·`Dockerfile.engines` 는 생김, 락파일 생성은 #70) | 진행 중 → ADR-0105/0106/0107 | Taylor |
 | #70 | `pixi.lock` 생성·커밋(pixi 있는 머신에서) | 미착수 | Taylor |
 | #53 | R-15 A/B 에 필요한 dolphin·MintPy 설치 정책 예외 | 대기 | Taylor / research |
 | #69 | pixi isce2 feature 의 `PATH` 활성화 시점 확인 | 미착수 | Taylor / engines/isce2 |
@@ -83,6 +84,7 @@
 | #21 | snaphu-py 타일 임시 파일 보존 | 미착수 | engines/snaphu |
 | #48 | dolphin 설정 키 버전 호환 | 미착수 | engines/dolphin |
 | #49 | dolphin 참조점 변환, ISCE 평면 바이너리 읽기 | 미착수 | io + engines/dolphin |
+| #74 | PERF-06 실 엔진 참여 — isce2 업데이트 모드의 run_files 부분집합, hyp3 의 `_pairs_done` 인정(ADR-0082) | 미착수 | engines/isce2 · engines/hyp3 |
 
 ### pipeline · unwrap · diagnose
 
@@ -126,6 +128,7 @@
 | #32 | 리소스 모델 계수 실측 | 미착수 | bench |
 | #58 | 벤치 회귀 게이트 기준선 머신 | 미착수 | bench |
 | #68 | 골든 통계의 플랫폼 간 허용 오차 실측 | 미착수 | bench |
+| #75 | PERF-06 before/after 측정 — bench 에 "같은 workdir 에서 n_dates N→N+1" 시나리오 추가 | 미착수 | bench |
 
 ### docs / qgis
 
@@ -134,8 +137,8 @@
 | #60 | QGIS LTR 2종 수동 검수 | 미착수 | docs/qgis |
 | #61 | conda 활성화 훅 환경 변수(`conda run` 폴백) | 미착수 | docs/qgis |
 | #62 | QGIS 4.x 프로필 폴더 이름 | 미착수 | docs/qgis |
-| #64 | pixi 환경 디렉터리 레이아웃 | 미착수 | docs/qgis |
-| #73 | `mkdocs build` 미실행(docs extra 미설치) — nav·링크·명령만 테스트 | 미착수 | docs/qgis |
+| #64 | pixi 환경 디렉터리 레이아웃 | 완료 → ADR-0105 | docs/qgis |
+| #73 | `mkdocs build --strict` 통과·CI `docs` 잡 추가 | 완료 | docs/qgis |
 
 ## English summary
 
@@ -146,7 +149,8 @@ default option (adapter exists, blocked by the install-policy row #22 and an A/B
 (`data.source: cdse` is reserved in the config schema but search/download are ASF-only). Second, every row of
 `docs/open-questions.md` grouped by owner (Taylor, the researcher, the integrator, select, engines, pipeline,
 unwrap, diagnose, validate, io, compute, research, bench, docs/qgis) with its status; the numbers are stable
-because the table is append-only, and a test checks that the owner column here matches the source table.
+because the table is append-only, and a test checks that the row set, the leading status word and the owner
+column here match the source table.
 Suggested order to clear the release-note limitations: dependency exceptions (#10) -> one real HyP3 run ->
 Korean ground truth (#6/#42) -> `pixi.lock` and an ISCE2 environment (#70, #46/#69) -> bench baseline policy
 (#58) and golden tolerances (#68) -> QGIS review (#60).

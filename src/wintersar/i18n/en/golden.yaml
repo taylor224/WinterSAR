@@ -20,3 +20,31 @@ golden:
   GOLDEN-004:
     cause: "The golden pipeline run failed at stage '{stage}': {error}"
     fix: "First confirm the fake-engine path with 'pytest tests/integration'. Pass --workdir to keep the run directory."
+  GOLDEN-005:
+    cause: "Golden file {path} cannot be read: {error}"
+    fix: "Restore the committed file ('git checkout -- tests/regression/golden/') or regenerate it with 'python scripts/make_golden.py' (make_golden overwrites an unreadable golden and reports this as a warning)."
+  GOLDEN-006:
+    cause: "Site definition {path} ({option}) cannot be read: {error}"
+    fix: "Point {option} at a site YAML like benchmarks/sites/S_synthetic.yaml — a mapping with name, size, runner, stages, config and param_overrides (see benchmarks/README.md)."
+  GOLDEN-007:
+    cause: "Golden file {path} could not be written: {error}"
+    fix: "Check that the output directory is writable. A file over the size limit means arrays instead of statistics went into the golden (ADR-0100); keep golden_stats to scalar statistics."
+  mismatch:
+    line: "{path}: {kind} expected={expected} actual={actual}"
+    line_float: "{path}: {kind} expected={expected} actual={actual} ({tolerance})"
+    more: "... {n} more"
+  args:
+    check_description: "Run the synthetic site through the fake-engine pipeline and compare its statistics with the stored golden (ADR-0100..0102). Exit 0 = match, 1 = mismatch / golden missing or unreadable / run failed, 2 = bad input."
+    make_description: "Regenerate the golden statistics of a synthetic site and list what changed against the previous golden (exit 0), or with --check compare only (exit 1 on a mismatch). Regenerate only after a reviewed, intended change (rule 11.4)."
+    site: "site YAML (default: {default})"
+    golden: "golden stats.json to compare with (default: {default}/<site>/stats.json)"
+    out: "golden stats.json to write (default: {default}/<site>/stats.json)"
+    workdir: "keep the pipeline run directory here (default: a temporary directory that is deleted)"
+    seed: "interferogram seed when the site does not fix one (default: {default})"
+    rtol: "relative tolerance for floats, ADR-0102 (default: {default:g})"
+    atol: "absolute tolerance for floats (default: {default:g})"
+    fraction_atol: "absolute tolerance for *_fraction values (default: {default:g})"
+    lang: "message language (default: WINTERSAR_LANG or ko)"
+    json: "print a JSON envelope on stdout instead of text (also on error paths)"
+    markdown: "also write the findings as a Markdown table to this file"
+    check: "do not write; compare with the stored golden and exit 1 on a mismatch"

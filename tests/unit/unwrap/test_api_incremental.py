@@ -196,3 +196,54 @@ def test_backend_params_never_carry_the_pair_cache_keys(key: str) -> None:
         {key: "x", "coherence_threshold": 0.3}, cfg, plan, Path("t"), Path("l")
     )
     assert key not in out
+
+
+def test_unloadable_cached_pair_is_unwrapped_again_not_fatal(tmp_path: Path, monkeypatch) -> None:
+    """An entry that verifies (the fast hash covers size, mtime and head/tail only, so
+    mid-file damage of a large file passes it; for this small file the manifest is given the
+    hash of the damaged bytes) but cannot be loaded is a cache miss for that one pair: a
+    second unwrapping round computes it, the others stay reused, the stage succeeds and the
+    manifest gets a fresh entry for the repaired pair."""
+    from wintersar.util.hashing import hash_path
+
+    stack = make_synth_stack(n_dates=4, shape=(16, 16), seed=6)
+    npz = save_igram_stack(stack, tmp_path / "s.npz")
+    node_dir = tmp_path / "node"
+    spy: list[str] = []
+    _run(npz, node_dir, {"coherence_threshold": 0.3}, spy, monkeypatch)
+    manifest = incremental.pairs_dir(node_dir) / incremental.PAIRS_MANIFEST
+    raw = json.loads(manifest.read_text(encoding="utf-8"))
+    victim = stack.pairs[1]
+    f = incremental.pairs_dir(node_dir) / raw["pairs"][victim]["path"]
+    data = bytearray(f.read_bytes())
+    mid = len(data) // 2
+    data[mid : mid + 64] = b"\xff" * 64
+    f.write_bytes(bytes(data))
+    old_hash = raw["pairs"][victim]["file_hash"]
+    raw["pairs"][victim]["file_hash"] = hash_path(f, fast=True)
+    manifest.write_text(json.dumps(raw), encoding="utf-8")
+    entry = incremental.PairEntry.from_dict(
+        victim, raw["pairs"][victim], incremental.pairs_dir(node_dir)
+    )
+    assert entry.intact()  # verifies …
+    with pytest.raises(Exception), np.load(f, allow_pickle=False) as z:  # noqa: B017
+        np.asarray(z["unw"])  # … but cannot be loaded
+
+    spy.clear()
+    arts, stats = _run(npz, node_dir, {"coherence_threshold": 0.3}, spy, monkeypatch)
+    assert spy == [victim]
+    assert stats["status"] == "ok" and stats["n_reused"] == stack.n_pairs - 1
+    assert stats["reused"] == [p for p in stack.pairs if p != victim]
+    assert arts["unw"].meta["pairs_computed"] == [victim]
+    assert sorted(arts["unw"].meta["pairs_reused"]) == sorted(p for p in stack.pairs if p != victim)
+    per = {s["pair"]: s for s in stats["per_pair"]}
+    assert not per[victim].get("reused") and all(
+        per[p].get("reused") for p in stack.pairs if p != victim
+    )
+    assert "cache_unloadable" not in (node_dir / "logs" / api.LOG_FILE).read_text(encoding="utf-8")
+    assert victim in (node_dir / "logs" / api.LOG_FILE).read_text(encoding="utf-8")
+    raw2 = json.loads(manifest.read_text(encoding="utf-8"))
+    assert raw2["pairs"][victim]["file_hash"] != old_hash  # re-stored
+    spy.clear()
+    _, stats3 = _run(npz, node_dir, {"coherence_threshold": 0.3}, spy, monkeypatch)
+    assert spy == [] and stats3["n_reused"] == stack.n_pairs

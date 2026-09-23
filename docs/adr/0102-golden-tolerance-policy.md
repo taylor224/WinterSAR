@@ -1,6 +1,6 @@
 # ADR-0102: 골든 통계 비교의 허용 오차 정책
 
-- 상태(Status): 채택 (플랫폼 간 첫 야간 실행으로 확인 예정)
+- 상태(Status): 채택 (플랫폼 간 첫 야간 실행으로 확인 예정; 2026-09-23 리뷰 2차 — `n_finite` 제거, 골든 schema 2)
 - 날짜(Date): 2026-09-23
 - 관련 ID: 플랜 §8 "수치 비교는 허용 오차를 명시(`np.testing.assert_allclose`)", ADR-0100, ADR-0101, 규칙 11.4
 - 검증 출처(Sources):
@@ -34,6 +34,8 @@
 |---|---|---|
 | 정수·불리언·문자열·`None`·목록 길이 (n_pairs, n_dates, shape, dtype, pairs/dates 문자열, status, engine, rule_id 목록, site 블록) | **정확** | 노이즈가 없다; 하나라도 다르면 정의가 바뀐 것 |
 | 키 집합 | **정확** (누락·추가 모두 불일치) | 스키마 변경은 재생성으로만 |
+| 유한 픽셀 수 `n_finite` | **저장하지 않음** (schema 2) | `n · (1 − nan_fraction)` 과 같은 정보인데 정수 정확 비교가 바로 아래 `*_fraction` 허용 오차를 무효화했다(리뷰 지적: 픽셀 하나가 뒤집히면 `nan_fraction` 은 통과하고 `n_finite` 는 실패). 배열 크기 `n` 은 shape 이므로 정확 |
+| `conncomp_n_labels` | **정확** | fake engine 의 conncomp 는 `where(masked, 0, 1)` 이라 라벨 집합이 {0, 1} 로 구조적이다 — 픽셀 하나가 뒤집혀도 라벨 수는 변하지 않는다 |
 | float (min/max/mean/std/백분위, closure_rms, wrapped_abs_mean) | `\|a−b\| ≤ 1e-9 + 1e-6·\|b\|` | float32 1 ulp 노이즈(≈6e-8 상대)가 96×96 통계에 남기는 영향은 1e-8 이하; 알고리즘 변경은 1e-3 이상 |
 | `*_fraction` (mask/masked/nan/conncomp_nonzero/unwrap_error_fraction) | `\|a−b\| ≤ 1e-4` (rtol 0) | 임계값(코히어런스 0.3) 경계의 픽셀 하나가 ulp 로 뒤집히면 1/129024 ≈ 7.8e-6 이 움직인다. 1e-4 는 약 13 픽셀까지 흡수하고, 0.0 인 비율(unwrap_error_fraction)은 rtol 로 비교할 수 없으므로 절대 오차만 쓴다 |
 | NaN / inf | NaN 은 NaN 과만 같음, inf 는 정확 | 판정식이 NaN 에서 항상 거짓이므로 명시 |
@@ -49,6 +51,10 @@
 - 플랫폼 간 첫 야간 실행에서 float 불일치가 나오면 (a) 값이 1e-6 상대 이내인지 `GOLDEN-001` 의 evidence 로
   확인하고, (b) 노이즈로 판명되면 `rtol` 을 1e-5 로 넓히는 것으로 이 ADR 을 갱신한다. 그 이상 차이는 노이즈가
   아니라 플랫폼 의존 코드(스레드 수·SIMD 에 따른 합산 순서)이므로 생성기 쪽을 고친다.
+- 임계값 픽셀 하나가 뒤집히면 `*_fraction` 은 허용 오차 안이지만, 마스크된 배열의 float 통계(`unwrap.unw`·`timeseries`·
+  `velocity` 의 mean/std/백분위)도 대략 1/n_finite 상대 수준으로 움직여 rtol 1e-6 밖일 수 있다. 이것이 open-questions
+  #68 의 첫 야간 실행이 실측하는 항목이며, 결과에 따라 위 (b) 처럼 rtol 을 넓히거나 사이트 threshold 를 조정한다 —
+  정수 정확 비교를 되살리는 쪽으로는 가지 않는다.
 - 임계값 경계 픽셀에 의한 `*_fraction` 흔들림이 1e-4 를 넘으면 합성 코히어런스 생성기가 경계 근처 값을 너무
   많이 만드는 것이므로 사이트 정의(threshold)를 조정한다.
 - 새 통계 키를 추가할 때는 이름으로 정책이 결정된다: 비율은 `_fraction` 접미사, 그 외 float 는 기본 rtol.

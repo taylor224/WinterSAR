@@ -14,7 +14,7 @@
 ## 1. uv — core (기본)
 
 ```bash
-git clone https://github.com/taylor224/WinterSAR && cd wintersar
+git clone https://github.com/taylor224/WinterSAR && cd WinterSAR
 uv sync --extra dev                 # Python 3.11 venv (.venv), pyproject.toml 이 의존성의 원천
 uv run wintersar --help
 uv run wintersar check-install      # 엔진·인증·하드웨어 상태 (미설치 엔진은 ENV-001)
@@ -34,8 +34,10 @@ uv sync --extra dev --extra unwrap          # snaphu-py PyPI 휠 (SNAPHU C 코�
 ## 2. pixi — engines (로컬 엔진)
 
 [pixi](https://pixi.prefix.dev/) 는 conda-forge 패키지와 PyPI 패키지를 한 락파일로 재현합니다. `pixi.toml` 의
-핵심 의존성 목록은 `pyproject.toml` 과 이름·버전 조건까지 같아야 하며 `scripts/check_env.py`(테스트
-`tests/unit/test_pixi_manifest.py`)가 어긋나면 실패시킵니다 (ADR-0107).
+핵심 의존성 목록과 미러된 extras(`dev`, `hyp3`, `unwrap`, `orbits`+`dem`→`aux`, `plots`)는 `pyproject.toml` 과
+이름·버전 조건까지 같아야 하며 `scripts/check_env.py`(테스트 `tests/unit/test_pixi_manifest.py`)가 어긋나면
+실패시킵니다 (ADR-0107). `spurt`·`gpu`·`docs` extra 는 uv 전용이라 pixi 환경에 없습니다(스크립트의
+`UV_ONLY_EXTRAS`). 종료 코드: 0 일치, 1 드리프트, 2 입력 파일 없음/TOML 오류.
 
 ```bash
 # pixi 설치: https://pixi.prefix.dev/latest/installation/
@@ -123,9 +125,11 @@ Three install paths, each with a different reach:
   dolphin are conda-forge only.
 - **pixi (engines)** — `pixi install -e engines` on linux-64 gives local ISCE2 topsStack + snaphu-py +
   tophu + MintPy + dolphin + orbits/DEM; `engines-portable` is the macOS/Apple-silicon variant without
-  ISCE2 (no osx-arm64 build) and tophu (Linux-only recipe). `pixi.toml` mirrors the core list of
-  `pyproject.toml`; `scripts/check_env.py` fails the tests when they drift (ADR-0107). `pixi.lock` is
-  not committed yet (OQ #70) — the first person with pixi should commit it.
+  ISCE2 (no osx-arm64 build) and tophu (Linux-only recipe). `pixi.toml` mirrors the core list and the
+  `dev`/`hyp3`/`unwrap`/`orbits`+`dem`/`plots` extras of `pyproject.toml`; `scripts/check_env.py` fails
+  the tests when they drift and when a new extra or feature is not classified (ADR-0107); the `spurt`,
+  `gpu` and `docs` extras are uv-only. `pixi.lock` is not committed yet (OQ #70) — the first person
+  with pixi should commit it.
 - **Docker (engines)** — `docker build -f Dockerfile.engines -t wintersar-engines .`, multi-stage on
   `ghcr.io/prefix-dev/pixi`, smoke-tested with `wintersar check-install --strict`. Not built in CI
   (build time, licence isolation: GPL-3 MintPy and the SNAPHU core are co-installed — ADR-0106).

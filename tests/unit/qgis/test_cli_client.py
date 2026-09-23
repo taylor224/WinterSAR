@@ -320,6 +320,17 @@ def test_run_real_cli_init_writes_config(venv_python: Path, tmp_path: Path) -> N
     assert resp.ok and target.exists() and resp.data["path"] == str(target)
 
 
+def test_run_real_cli_usage_error_names_the_command(venv_python: Path) -> None:
+    """A click usage error under ``python -m wintersar.cli`` still yields an envelope whose
+    ``command`` is the sub-command, not ``-m wintersar.cli plan`` (CLI-003, ADR-0091)."""
+    client = WintersarClient(python_exe=venv_python, lang="en")
+    resp = client.run(["plan", "--no-such-option"], timeout=60.0)
+    assert resp.error is None and not resp.ok and resp.exit_code == 2, resp.raw_stderr
+    assert resp.command == "plan"
+    assert [f["rule_id"] for f in resp.findings] == ["CLI-003"]
+    assert resp.findings[0]["params"]["command"] == "plan"
+
+
 def test_cli_not_found_when_python_missing(tmp_path: Path) -> None:
     client = WintersarClient(python_exe=tmp_path / "nope" / "python")
     resp = client.version()

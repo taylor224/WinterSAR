@@ -24,14 +24,15 @@ ADR-0080의 실행기는 증분 단계에 `_pairs_dir`/`_pairs_done`을 넘기�
 엔진(hyp3, isce2_topsstack)은 같은 키를 받지만 아직 읽지 않는다 — 요청했는데 보고가 없으면 실행기가
 `PIPELINE-016`(INFO, "전체를 다시 계산했습니다")을 낸다. 각 엔진이 실제로 무엇을 해야 참여가 되는지,
 이미 갖고 있는 재개(resume) 기능과 어떻게 맞물리는지 적어 둔다. **이 ADR은 구현하지 않는다**(Phase 5, ISCE2
-설치 환경 필요: open-questions #46, #73).
+설치 환경 필요: open-questions #46, #74).
 
 ## 계약 (요약, `wintersar.pipeline.incremental`)
 
 | 항목 | 내용 |
 |---|---|
+| 대상 | **쌍 단계**(`PAIR_STAGES` = interferogram · multilook · unwrap)만. fetch/coregister는 해시 규칙(ADR-0080 §1)만 따르고 이 키를 받지 않으며 `PIPELINE-016`도 나지 않는다(작업이 날짜 단위이고 엔진 작업 폴더 안에 있음) |
 | 입력 | `params["_pairs_dir"]`(노드 디렉터리의 `pairs/`), `params["_pairs_done"] = {key: {hash, path, file_hash, meta}}` |
-| 판단 | 쌍 `key`의 식별자 `pair_identity(params_hash, input_hash)`가 `_pairs_done[key].hash`와 같고 파일이 온전하면 재사용 |
+| 판단 | 쌍 `key`의 식별자 `pair_identity(params_hash, input_hash)`가 `_pairs_done[key].hash`와 같고 파일이 온전(`file_hash` 일치; `file_hash`가 없으면 검증 불가 → 재사용 안 함)하면 재사용. 온전해 보여도 읽을 수 없으면 `PairCache.discard(key)` 후 그 쌍만 다시 계산(단계 실패 아님) |
 | 출력 | `PairCache.store()`로 새 쌍 등록 + `save()`; 산출물 meta에 `pairs`(스택 순서), `pairs_reused`, `pairs_computed` |
 | 무시 | 키를 읽지 않아도 동작은 종전과 같다. 실행기는 `supported: false`로 기록하고 `PIPELINE-016`(INFO) |
 | 해시 | 노드 해시는 이미 날짜 집합·`stack` 입력을 빼고 계산되므로(ADR-0080) 어댑터가 해시를 신경 쓸 필요는 없다 |
@@ -72,7 +73,7 @@ ADR-0080의 실행기는 증분 단계에 `_pairs_dir`/`_pairs_done`을 넘기�
   해시 자체가 바뀌므로(파라미터) 실질적으로는 쌍 키만으로 충분하다.
 - **검증 필요**: 업데이트 모드 run_files의 실제 job 목록(ADR-0029 #46)과 `runfiles_state.json`이 재생성 후
   초기화되는 흐름에서 옛 쌍의 merge/filter가 다시 돌지 않는지 — ISCE2 설치 환경(S 사이트)에서 확인
-  (open-questions #73).
+  (open-questions #74).
 
 ### 언래핑 백엔드 (snaphu · tophu · spurt)
 

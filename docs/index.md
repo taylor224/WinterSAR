@@ -6,7 +6,7 @@
 | 문제 (연구자 진술) | wintersar 의 답 | 모듈 |
 |---|---|---|
 | "다 받아도 맞는 게 몇 개 없다", "같은 하강궤도인데 정합이 abort" | burst 단위 검색 → 스택 그룹핑 → 사전검증 규칙 `SEL-01…13`(원인 → 조치, 한/영) | `select` |
-| 파라미터 하나 바꾸면 전부 다시 | 해시 캐시 DAG: 바뀐 단계와 그 하류만 재실행(`PERF-03`) | `pipeline` |
+| 파라미터 하나 바꾸면 전부 다시 | 해시 캐시 DAG: 바뀐 단계와 그 하류만 재실행(`PERF-03`); 날짜가 늘면 새 날짜에 닿는 쌍만(`run --incremental`, `PERF-06`) | `pipeline` |
 | 큰 간섭도 언래핑이 OOM·느림 | 간섭도 단위 병렬 우선, 메모리 예산 안에서 자동 타일(`PERF-04`) | `unwrap` |
 | "첫 1년을 실패 원인 찾는 데 허비" | 엔진 로그 파서 + 지식 베이스 `KB-xx`(원인 → 조치 → 참고) | `diagnose` |
 | 기준점·대조군 검증·반복 튠 UX 부재 | 기준점 추천, 폐합 대시보드, 수준측량/GNSS 대조(LOS 투영), 파라미터 스윕 | `validate` |
@@ -23,7 +23,7 @@ DAG 노드, 메시지는 한국어/영어로 "원인 + 조치", 성능 주장은
 있습니다. 개발·HyP3 원격 경로의 최소 설치:
 
 ```bash
-git clone https://github.com/taylor224/WinterSAR && cd wintersar
+git clone https://github.com/taylor224/WinterSAR && cd WinterSAR
 uv sync --extra dev                 # Python 3.11 venv (.venv)
 uv run wintersar --help
 uv run wintersar check-install      # 엔진·인증·하드웨어 상태 (미설치 엔진은 ENV-001 Finding, 종료 코드 0)
@@ -70,6 +70,11 @@ wintersar --json run --config config.yaml          # QGIS 플러그인이 읽는
 ([ADR-0032](adr/0032-workdir-layout-and-manifest.md)). 로그는 `work/<stage>/<hash>/logs/` 에 있고
 (`work/logs/` 라는 디렉터리는 없습니다), `run` 은 실패하면 그 디렉터리로 `diagnose` 를 자동으로 붙입니다.
 
+날짜가 하나씩 늘어나는 모니터링 운영은 `run --incremental`(PERF-06, [ADR-0080](adr/0080-incremental-update-per-pair-cache-and-hash-rule.md)):
+처음부터 `--incremental` 로 돌려 두면 이후 실행은 새 날짜에 닿는 쌍만 계산하고 시계열만 다시 역산하며, `plan --incremental`
+이 "부분 캐시 (쌍 캐시 N개 · 신규 M개)" 로 미리 보여 줍니다. 합성 레시피(`--set interferogram.n_dates=7` 로 날짜 추가)는
+[HyP3 튜토리얼](tutorials/hyp3-quickstart.md) §6.
+
 `--set` 의 형식은 `--set <단계>.<키>=<값>` 이고 **그 단계의 파라미터에만** 얹힙니다(다른 단계로 전파되지
 않습니다). 그래서 fake 엔진의 실패 주입은 실패시킬 단계 이름으로 써야 합니다:
 
@@ -89,8 +94,8 @@ wintersar run --config config.yaml --set unwrap.fail_stage=unwrap   # unwrap 에
 | `init [PATH] [--force]` | 예시 `config.yaml` 작성 (플랜 §4.4) | 동작 |
 | `search --config` | ASF burst/SLC 후보 검색 → `work/select/candidates.json` | 보고 |
 | `precheck CANDIDATES --config [--out] [--geometry] [--baseline auto|asf|orbit|none] [--no-fail]` | `SEL-01…13` 규칙 → `precheck_report.{md,html,json}` | 동작 |
-| `plan --config [--until] [--from] [--force STAGE]… [--set k=v]…` | DAG·캐시 상태·예상 리소스·크레딧 견적 (실행 없음) | 동작 |
-| `run --config [--until] [--from] [--force STAGE]… [--set k=v]… [--dry-run]` | 파이프라인 실행; 바뀐 단계와 하류만 (`PERF-03`) | 동작 |
+| `plan --config [--until] [--from] [--force STAGE]… [--set k=v]… [--incremental]` | DAG·캐시 상태·예상 리소스·크레딧 견적 (실행 없음); `--incremental` 은 캐시된 쌍·신규 쌍 수까지 | 동작 |
+| `run --config [--until] [--from] [--force STAGE]… [--set k=v]… [--dry-run] [--incremental]` | 파이프라인 실행; 바뀐 단계와 하류만 (`PERF-03`), `--incremental` 은 날짜 추가 시 새 쌍만 (`PERF-06`) | 동작 |
 | `cache ls|gc --config [--workdir] [--stage] [--keep N] [--max-size GB] [--dry-run]` | 캐시 목록·정리 | 동작 |
 | `diagnose [PATH] [--engine] [--out] [--assume-failed] [--list-kb]` | 엔진 로그 → KB 매칭 → 원인·조치 | 보고 |
 | `validate --ts --leveling [--gnss] [--out] [--radius] [--method] [--align] [--max-gap-days] [--heading] [--incidence] [--no-plots]` | 수준측량·GNSS 대조 리포트 (R-10) | 보고 |
@@ -143,7 +148,8 @@ wintersar bench    --site benchmarks/sites/S_synthetic.yaml [--compare baseline.
 wintersar is an Apache-2.0 Sentinel-1 InSAR (SBAS) toolkit that wraps proven engines (HyP3, ISCE2
 topsStack, SNAPHU/tophu, MintPy, dolphin) behind subprocess adapters and adds what researchers spend
 their time on: burst-level selection with precheck rules `SEL-01..13`, a hash-cached DAG that re-runs
-only the stages downstream of a changed parameter, an unwrapping scheduler that tiles within a memory
+only the stages downstream of a changed parameter (and, with `run --incremental`, only the pairs touching a
+newly added date — PERF-06), an unwrapping scheduler that tiles within a memory
 budget, a log-parsing diagnosis knowledge base `KB-xx` (cause -> fix), ground-truth validation and a
 thin QGIS plugin over the CLI's `--json` envelope. Install with `uv sync --extra dev` (local engines via
 pixi or Docker, see the install guide); run the network-free synthetic pipeline with `wintersar init

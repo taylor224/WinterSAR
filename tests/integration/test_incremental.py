@@ -146,9 +146,22 @@ def test_adding_one_date_recomputes_only_its_pairs(cfg, engine_spy, pair_spy) ->
         "multilook",
         "unwrap",
     ]
-    assert second.pair_summary() == {"reused": 42, "computed": 12}
+    # per stage, never summed over stages (every pair stage handles the same 18 pairs)
+    summary = second.pair_summary()
+    assert summary["by_stage"] == {
+        s: {"reused": 14, "computed": 4} for s in ("interferogram", "multilook", "unwrap")
+    }
+    assert (summary["reused"], summary["computed"], summary["stage"]) == (14, 4, "interferogram")
+    assert second.to_dict()["pairs"] == summary
     ids = [f.rule_id for f in second.findings]
     assert "PIPELINE-016" not in ids  # the fake engine supports the contract
+    # fetch/coregister are hash-rule stages only: never asked for sub-caching, never
+    # reported as "not supporting" it, no incremental block on their records
+    for r in [*first.records, *second.records]:
+        if r.stage in ("fetch", "coregister"):
+            assert "incremental" not in r.extra, (r.stage, r.extra)
+            assert not [f for f in r.findings if f.rule_id == "PIPELINE-016"]
+    assert "PIPELINE-016" not in [f.rule_id for f in first.findings]
     # the engine received the executor's private keys
     ig_params = next(p for s, p in engine_spy.calls if s == "interferogram")
     assert (
@@ -312,3 +325,93 @@ def test_tampered_stack_artifact_still_reuses_intact_pairs(cfg, engine_spy, pair
     assert result.ok and engine_spy.stages == ["unwrap", "timeseries", "corrections", "geocode"]
     assert pair_spy.unwrapped == []
     assert _by_stage(result)["unwrap"].extra["incremental"]["reused"] == 10  # 5 dates -> 10 pairs
+
+
+def _corrupt_cached_pair(node_dir: Path, key: str, how: str) -> None:
+    """Damage one cached pair file so that the manifest still believes it is intact."""
+    import json
+
+    manifest = incremental.pairs_dir(node_dir) / incremental.PAIRS_MANIFEST
+    raw = json.loads(manifest.read_text(encoding="utf-8"))
+    entry = raw["pairs"][key]
+    f = incremental.pairs_dir(node_dir) / entry["path"]
+    if how == "garbage":
+        # a manifest without a file hash cannot be verified at all
+        entry["file_hash"] = None
+        f.write_bytes(b"garbage" * 100)
+        manifest.write_text(json.dumps(raw), encoding="utf-8")
+    else:
+        # mid-file corruption the fast hash (size, mtime, head/tail) does not see on a large
+        # file; this small one gets the damaged bytes' hash recorded so the entry verifies
+        from wintersar.util.hashing import hash_path
+
+        data = bytearray(f.read_bytes())
+        mid = len(data) // 2
+        data[mid : mid + 64] = b"\xff" * 64
+        f.write_bytes(bytes(data))
+        entry["file_hash"] = hash_path(f, fast=True)
+        manifest.write_text(json.dumps(raw), encoding="utf-8")
+        assert incremental.PairEntry.from_dict(key, entry, incremental.pairs_dir(node_dir)).intact()
+
+
+@pytest.mark.parametrize("how", ["garbage", "mid-file"])
+def test_an_unloadable_cached_pair_is_recomputed_not_a_stage_failure(
+    cfg, engine_spy, pair_spy, how: str
+) -> None:
+    """The fast hash does not see every corruption. A hit that cannot be loaded is a cache
+    miss for that one pair: the stage recomputes it, re-stores it and succeeds."""
+    first = api.run(cfg, param_overrides=_overrides(6), incremental=True, until="interferogram")
+    assert first.ok
+    ig = _by_stage(first)["interferogram"]
+    node_dir = cache.stage_dir(cfg.workdir, "interferogram", ig.node_hash)
+    victim = fake_pairs({"n_dates": 6})[3].key
+    _corrupt_cached_pair(node_dir, victim, how)
+    pair_spy.clear()
+    second = api.run(cfg, param_overrides=_overrides(7), incremental=True, until="interferogram")
+    assert second.ok, second.findings
+    new_pairs = sorted(
+        {p.key for p in fake_pairs({"n_dates": 7})} - {p.key for p in fake_pairs({"n_dates": 6})}
+    )
+    assert sorted(pair_spy.synth) == sorted([*new_pairs, victim])
+    info = _by_stage(second)["interferogram"].extra["incremental"]
+    assert info["reused"] == 13 and info["computed"] == 5 and victim in info["computed_pairs"]
+    # the repaired pair is bitwise what a clean synthesis gives and is reusable again
+    with np.load(second.artifacts["igrams"].path) as z:
+        idx = list(z["pairs"]).index(victim)
+        expected = FakeEngine().synth_pair(
+            __import__("wintersar.engines.fake", fromlist=["StackSpec"]).StackSpec.from_params(
+                {"n_dates": 7, "shape": SHAPE}
+            ),
+            fake_pairs({"n_dates": 7})[idx],
+        )
+        np.testing.assert_array_equal(z["wrapped"][idx], expected["wrapped"])
+    pair_spy.clear()
+    third = api.run(cfg, param_overrides=_overrides(7), incremental=True, until="interferogram")
+    assert third.ok and pair_spy.synth == []
+
+
+def test_cache_hits_do_not_replay_run_event_findings(cfg, engine_spy, monkeypatch) -> None:
+    """PIPELINE-016 describes what happened while the stage ran; a later cache hit of the
+    same manifest must not claim "recomputed in full" next to "cached"."""
+    assert api.run(cfg, param_overrides=_overrides(5), incremental=True).ok
+    original = FakeEngine._stage_interferogram
+
+    def no_pairs(self, inputs, params, out):
+        arts = original(self, inputs, params, out)
+        art = arts["igrams"]
+        meta = {k: v for k, v in art.meta.items() if k not in ("pairs_reused", "pairs_computed")}
+        return arts.add(art.model_copy(update={"meta": meta}))
+
+    monkeypatch.setattr(FakeEngine, "_stage_interferogram", no_pairs)
+    ran = api.run(cfg, param_overrides=_overrides(6), incremental=True)
+    assert ran.ok and any(f.rule_id == "PIPELINE-016" for f in ran.findings)
+    stored = cache.load_record(
+        cache.stage_dir(cfg.workdir, "interferogram", _by_stage(ran)["interferogram"].node_hash)
+    )
+    assert stored is not None and any(f.rule_id == "PIPELINE-016" for f in stored.findings)
+    hit = api.run(cfg, param_overrides=_overrides(6), incremental=True)
+    assert hit.ok and hit.ran == []
+    assert not any(f.rule_id == "PIPELINE-016" for f in hit.findings)
+    assert not any(f.rule_id == "PIPELINE-016" for r in hit.records for f in r.findings)
+    plan = api.plan(cfg, param_overrides=_overrides(6), incremental=True)
+    assert not any(f.rule_id == "PIPELINE-016" for s in plan.stages for f in s.findings)

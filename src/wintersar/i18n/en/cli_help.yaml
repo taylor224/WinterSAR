@@ -5,6 +5,8 @@
 # Code resolves them through ``wintersar.util.clihelp.h`` (never ``t`` at import time).
 # ``cli.CLI-00x`` entries extend the root ``cli:`` namespace of en.yaml (deep-merged).
 cli:
+  aborted: "Aborted."
+  action_failed: "'{command}' failed: {error}"
   CLI-003:
     cause: "Invalid usage of '{command}': {detail}"
     fix: "Check the arguments with 'wintersar {command} --help' (global options such as --json/--lang go before the command)."
@@ -47,6 +49,9 @@ cli_help:
     json: "Emit a JSON envelope on stdout."
     lang: "Message language: ko | en (default: WINTERSAR_LANG or ko)."
     verbose: "Show more detail (-vv for tracebacks)."
+    help_option: "Show this help and exit."
+    install_completion: "Install shell completion for the current shell."
+    show_completion: "Print the shell completion script for the current shell (to copy or customise it)."
   version:
     help: "Print the wintersar version."
   check_install:

@@ -8,10 +8,17 @@ private params (``_cores``, ``_memory_gb``, ``_gpu``) together with ``_out_dir``
 memory against the budget (sum of reservations <= budget) so that a future stage-parallel
 executor keeps the same accounting.
 
-Incremental mode (PERF-06, ADR-0080): with ``dag.incremental`` a stale incremental node is
-re-run in its own directory with ``pairs/`` kept; the engine receives ``_pairs_dir`` and
-``_pairs_done`` (per-pair results already there) and reports what it reused/computed in the
-artifact meta, which lands in ``record.extra["incremental"]``.
+Incremental mode (PERF-06, ADR-0080): with ``dag.incremental`` a stale *pair stage*
+(interferogram, multilook, unwrap) is re-run in its own directory with ``pairs/`` kept; the
+engine receives ``_pairs_dir`` and ``_pairs_done`` (per-pair results already there) and
+reports what it reused/computed in the artifact meta, which lands in
+``record.extra["incremental"]``. ``fetch``/``coregister`` follow the hash rule only and are
+never asked for sub-caching (ADR-0082), so they never trigger ``PIPELINE-016``.
+
+GPU (PERF-10, ADR-0095): ``config.compute.gpu`` reaches every stage as ``_gpu`` and as the
+``stage_gpu`` context around the dispatch; when it asks for the GPU on a machine without
+CuPy/CUDA the run carries one ``ENV-005`` (WARN) finding (:func:`gpu_findings`) instead of
+degrading silently.
 
 On failure the manifest is written with ``status: failed``, the engine logs are handed to
 ``wintersar.diagnose.api.diagnose_logs`` (lazy; absent -> no extra findings), a generic
@@ -32,7 +39,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from wintersar.compute.xp import stage_gpu
+from wintersar.compute.xp import resolve_backend, stage_gpu
 from wintersar.engines.base import EngineNotAvailableError
 from wintersar.io.schemas import Artifact, Artifacts, Finding, Resources, StageRecord
 from wintersar.pipeline import cache, incremental
@@ -97,6 +104,21 @@ def machine_budget(cfg: Config, machine: sysinfo.MachineSpec | None = None) -> s
     return spec.budget(
         cores=cfg.compute.cores, memory_gb=cfg.compute.memory_gb, gpu=cfg.compute.gpu
     )
+
+
+def gpu_findings(machine: sysinfo.MachineSpec) -> list[Finding]:
+    """``ENV-005`` (WARN) when the budget asks for the GPU but the kernels will run on numpy.
+
+    The budgeted ``machine.gpu`` is what the executor hands to every stage as ``_gpu`` /
+    ``stage_gpu``; resolving it here (once per plan/run, not per kernel call) is what makes
+    the CPU fallback of ADR-0095 visible in the report. ``WINTERSAR_GPU`` keeps its
+    precedence: an operator who switched the GPU off gets no finding.
+    # source: src/wintersar/compute/xp.py::resolve_backend (degrade policy, ADR-0095)
+    """
+    if not machine.gpu:
+        return []
+    with stage_gpu(True):
+        return list(resolve_backend().findings)
 
 
 @dataclass
@@ -285,6 +307,7 @@ class Executor:
         def fail(record: StageRecord, message: str) -> PipelineError:
             return PipelineError(message, records, findings, available, failed=record)
 
+        gpu_reported = False
         for node in self.dag.nodes:
             if node.skip_reason is not None:
                 records.append(node.pending_record())
@@ -292,7 +315,7 @@ class Executor:
                 continue
             before_start = stage_index(node.stage) < start
             if before_start and node.fallback and node.record is not None:
-                records.append(_cache_hit(node.record, fallback=True))
+                records.append(cache_hit_record(node.record, fallback=True))
                 findings.extend(node.findings)
                 available = available.merged(cache.record_artifacts(node.record))
                 continue
@@ -306,7 +329,7 @@ class Executor:
                     record = None
             if record is not None:
                 node.record = record
-                records.append(_cache_hit(record))
+                records.append(cache_hit_record(record))
                 available = available.merged(cache.record_artifacts(record))
                 continue
             node.partial = self.dag.partial_cache(node) if resolved else None
@@ -318,6 +341,9 @@ class Executor:
                 records.append(blocked)
                 findings.extend(node.findings)
                 raise fail(blocked, f"stage {node.stage!r} is blocked")
+            if not gpu_reported:  # once per run, before the first stage that computes
+                findings.extend(gpu_findings(self.machine))
+                gpu_reported = True
             record = self._execute(node, available)
             records.append(record)
             findings.extend(record.findings)
@@ -345,7 +371,7 @@ class Executor:
             record = self.dag.lookup_cache(node, available)
             if record is not None:
                 node.record = record
-                return _cache_hit(record)
+                return cache_hit_record(record)
             return self._busy_record(node, node_dir)
 
     def _busy_record(self, node: Node, node_dir: Path) -> StageRecord:
@@ -368,9 +394,11 @@ class Executor:
 
     def _execute_locked(self, node: Node, node_dir: Path, available: Artifacts) -> StageRecord:
         assert node.node_hash is not None
-        partial = self.incremental and node.incremental and not node.forced
-        # a full re-run (default mode, --force) starts from an empty directory; an incremental
-        # one keeps pairs/ so the engine can pick up the results that are still valid
+        # only pair stages take part in the sub-cache contract (fetch/coregister have no
+        # per-pair results to keep, ADR-0082); a full re-run (default mode, --force) starts
+        # from an empty directory, an incremental one keeps pairs/ so the engine can pick up
+        # the results that are still valid
+        partial = self.incremental and node.pair_stage and not node.forced
         out_dir, log_dir = cache.prepare_node_dir(node_dir, clean=True, keep_pairs=partial)
         record = StageRecord(
             stage=node.stage,
@@ -426,10 +454,16 @@ class Executor:
             done = incremental.PairCache.load(node_dir, node.stage)
             params[incremental.PAIRS_DIR_KEY] = str(incremental.pairs_dir(node_dir))
             params[incremental.PAIRS_DONE_KEY] = done.done_entries()
-            record.extra["incremental"] = {
-                "requested": True,
-                **incremental.pair_counts(node.pairs_expected, done.done),
-            }
+            counts = incremental.pair_counts(node.pairs_expected, done.done)
+            record.extra["incremental"] = {"requested": True, **counts}
+            if done.manifest_error:
+                # present but unreadable: every pair is computed again and the manifest is
+                # rebuilt — say why, so this is distinguishable from a first incremental run
+                record.extra["incremental"]["manifest"] = "unreadable"
+                record.extra["incremental"]["manifest_error"] = done.manifest_error
+                record.findings.append(
+                    incremental.manifest_finding(node.stage, done.manifest_error, counts)
+                )
         t0 = time.perf_counter()
         try:
             with stage_gpu(params.get("_gpu")):
@@ -637,7 +671,16 @@ class Executor:
             )
 
 
-def _cache_hit(record: StageRecord, fallback: bool = False) -> StageRecord:
+#: findings that describe what happened *while the stage ran* (per-pair reuse accounting);
+#: replaying them on a cache hit would claim "recomputed in full" next to "cached"
+RUN_EVENT_RULES: frozenset[str] = frozenset({"PIPELINE-016", "PIPELINE-017"})
+
+
+def cache_hit_record(record: StageRecord, fallback: bool = False) -> StageRecord:
+    """The stored manifest as a cache-hit record (result findings kept, run events dropped)."""
     return record.model_copy(
-        update={"extra": {**record.extra, "cache_hit": True, "fallback": fallback}}
+        update={
+            "extra": {**record.extra, "cache_hit": True, "fallback": fallback},
+            "findings": [f for f in record.findings if f.rule_id not in RUN_EVENT_RULES],
+        }
     )

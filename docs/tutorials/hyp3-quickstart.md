@@ -172,10 +172,10 @@ wintersar plan --config config.yaml
 │ search        │ -    │ -     │ 건너뜀    │ -        │ - │
 │ precheck      │ -    │ -     │ 건너뜀    │ -        │ - │
 │ fetch         │ fake │ …     │ 실행 예정 │ <hash>   │ … │
-│ coregister    │ fake │ …     │ 실행 예정 │ -        │ … │
-│ interferogram │ fake │ …     │ 실행 예정 │ -        │ … │
-│ multilook     │ fake │ …     │ 실행 예정 │ -        │ … │
-│ unwrap        │ fake │ …     │ 실행 예정 │ -        │ … │
+│ coregister    │ fake │ …     │ 실행 예정 │ <hash>   │ … │
+│ interferogram │ fake │ …     │ 실행 예정 │ <hash>   │ … │
+│ multilook     │ fake │ …     │ 실행 예정 │ <hash>   │ … │
+│ unwrap        │ fake │ …     │ 실행 예정 │ <hash>   │ … │
 │ timeseries    │ fake │ …     │ 실행 예정 │ -        │ … │
 │ corrections   │ fake │ …     │ 실행 예정 │ -        │ … │
 │ geocode       │ fake │ …     │ 실행 예정 │ -        │ … │
@@ -184,6 +184,11 @@ wintersar plan --config config.yaml
 예상 리소스: 시간 … · 메모리 … · 디스크 … · 크레딧 <없음|n>
 │ 정보 │ PIPELINE-010 │ 검증 단계를 건너뜁니다: validate.leveling_csv 또는 validate.gnss 가 설정되지 않았습니다. │ … │
 ```
+
+`fetch`…`unwrap` 은 첫 실행 전인데도 노드 해시가 보이고 `timeseries` 이후는 `-` 입니다: 증분 단계(`fetch`·`coregister`·
+`interferogram`·`multilook`·`unwrap`)는 날짜·쌍 집합을 해시에 넣지 않고 상류를 *생산 노드의 해시*로 식별하므로 실행
+전에 해시가 정해지고, `timeseries` 이후는 상류 산출물의 내용 해시가 필요해 실행 후에야 정해집니다
+([ADR-0080](../adr/0080-incremental-update-per-pair-cache-and-hash-rule.md)).
 
 `search`/`precheck` 는 `run` 안에서 건너뛰고(위 3·4 절에서 따로 실행) `fetch` 부터 시작합니다. HyP3 설정에서는
 `unwrap` 행도 "건너뜀" 이 됩니다 — 언래핑은 HyP3 산출물(`_unw_phase.tif`)에 이미 들어 있기 때문입니다
@@ -244,6 +249,58 @@ wintersar --json run --config config.yaml                  # QGIS 플러그인�
 
 `--json` 과 `--lang ko|en` 은 **전역 옵션**이라 하위 명령 **앞에** 씁니다. `run` 은 *동작* 명령이라 실패하면
 종료 코드 1, 잘못된 입력(없는 단계 이름, 잘못된 `--set`)은 `PIPELINE-014` 와 함께 2 입니다.
+
+### 날짜 추가 — 증분 모드 (`--incremental`, PERF-06)
+
+모니터링 운영에서는 12일마다 새 영상이 한 장 늘어납니다. 기본 모드는 날짜가 늘면 `interferogram` 이하를 **전량**
+다시 계산하지만, `--incremental` 은 `fetch`…`unwrap` 의 쌍 단위 결과(`work/<stage>/<hash>/pairs/`)를 남겨 두고
+새 날짜에 닿는 쌍만 계산한 뒤 `timeseries` 이후만 다시 역산합니다
+([ADR-0080](../adr/0080-incremental-update-per-pair-cache-and-hash-rule.md)). 쌍 캐시는 `--incremental` 로 돌린
+실행이 심으므로 **처음부터** 붙여 둡니다 — 기본 모드로 돌린 뒤 처음 붙이는 증분 실행은 전량 계산하면서 캐시를 심습니다.
+
+실데이터 — 새 영상이 공개되면 §3·§4(search·precheck)를 다시 돌려 스택에 새 날짜를 넣고 같은 `run` 에 플래그만 붙입니다:
+
+```bash
+wintersar plan --config config.yaml --incremental      # 캐시된 쌍 · 신규 쌍 수를 미리 보기
+wintersar run  --config config.yaml --incremental
+```
+
+단, 실 엔진 어댑터(`hyp3`·`isce2_topsstack`)의 쌍 단위 참여는 계약([ADR-0082](../adr/0082-real-engine-participation-in-incremental-mode.md))만
+있고 구현은 미착수라(open-questions #74) 그 단계는 `PIPELINE-016`(INFO) 과 함께 전량 재계산됩니다(HyP3 는 이미
+제출·다운로드한 작업을 `jobs.json` 으로 건너뜀). 로컬 언래핑(`snaphu|tophu`)은 참여합니다. "증분 1장 vs 전체 재처리"
+시간은 `bench_result.json` 이 생기기 전에는 적지 않습니다(규칙 11.8, open-questions #75).
+
+지금 바로(합성) — fake 엔진은 `n_dates` 로 날짜 수를 정하므로 `--set interferogram.n_dates` 를 하나씩 올리면 날짜 추가와
+같습니다(날짜는 `2024-01-01 + 12일·i` 로 고정, 옛 쌍은 비트 단위로 같음 — `tests/integration/test_incremental.py`):
+
+```bash
+wintersar run  --config config.yaml --incremental --set interferogram.n_dates=6   # 처음부터 --incremental: pairs/ 캐시를 심음
+wintersar plan --config config.yaml --incremental --set interferogram.n_dates=7   # 날짜 1개 추가 전 미리 보기
+wintersar run  --config config.yaml --incremental --set interferogram.n_dates=7   # 새 날짜에 닿는 쌍만 계산, 시계열 재역산
+```
+
+예상 출력(모양) — 두 번째 `plan` 과 세 번째 `run`:
+
+```text
+│ fetch         │ fake │ … │ 캐시됨                                 │ <hash> │ … │
+│ coregister    │ fake │ … │ 캐시됨                                 │ <hash> │ … │
+│ interferogram │ fake │ … │ 부분 캐시 (쌍 캐시 <n>개 · 신규 <m>개) │ <hash> │ … │
+│ multilook     │ fake │ … │ 부분 캐시 (쌍 캐시 <n>개 · 신규 <m>개) │ <hash> │ … │
+│ unwrap        │ fake │ … │ 부분 캐시 (쌍 캐시 <n>개 · 신규 <m>개) │ <hash> │ … │
+│ timeseries    │ fake │ … │ 실행 예정                              │ -      │ … │
+실행 예정 6 · 캐시됨 2 · 건너뜀 3
+```
+
+```text
+증분 모드: 새 날짜에 닿는 쌍만 계산하고 시계열을 다시 역산합니다 (PERF-06). (쌍 캐시 <n>개 · 신규 <m>개)
+완료: 6단계 실행, 2단계 캐시 재사용 (…s)
+│ 정보 │ PIPELINE-015 │ 단계 'interferogram'는 증분 모드로 실행됩니다: 캐시된 쌍 <n>개 재사용, 새 쌍 <m>개 계산. │ … │
+```
+
+`interferogram`·`multilook`·`unwrap` 의 노드 해시는 6일치 때와 **같습니다**(날짜 집합은 해시에 들어가지 않음).
+첫 실행에서 `fetch`·`coregister` 에 붙는 `PIPELINE-016`(INFO) 은 fake 엔진이 그 두 단계에서는 쌍 단위 재사용을
+하지 않는다는 뜻이며 정상입니다. `--json` 봉투에는 `data.incremental: true` 와 `data.pairs: {"reused": n, "computed": m}` 이
+들어가고, 이 레시피는 `tests/unit/qgis/test_docs.py` 가 실제로 실행해 `reused > 0` 을 확인합니다.
 
 ## 7. 진단 (diagnose)
 
@@ -397,7 +454,9 @@ fake`, `timeseries.engine: fake`). Flow: `check-install` -> `init` -> `search` (
 (read the `SEL-xx` findings, pin the recommended track; `--baseline none` keeps it offline) -> `plan` (credit
 estimate, nothing runs) -> `run` (HyP3 does coregistration, interferogram and unwrapping in the cloud, so the
 local `unwrap` stage is skipped; MintPy runs `timeseries -> corrections -> geocode`; a second `run` is fully
-cached and `--set unwrap.coherence_threshold=0.5` re-runs only downstream stages) -> `diagnose` (auto-attached
+cached and `--set unwrap.coherence_threshold=0.5` re-runs only downstream stages; `run --incremental` keeps the
+per-pair results of `fetch..unwrap` so adding one date computes only the pairs touching it and re-inverts the time
+series, PERF-06 / ADR-0080 — real-engine adapters do not take part yet, #74) -> `diagnose` (auto-attached
 on failure; `--set unwrap.fail_stage=unwrap` injects a fake failure and yields `PIPELINE-001` + `KB-UNKNOWN`)
 -> `validate` (fixture CSVs under `tests/fixtures/ground_truth` line up with the fake time series; GNSS needs
 `--heading`) -> `refpoint` (paste the "적용" line into `timeseries.reference_point`, then `run --from

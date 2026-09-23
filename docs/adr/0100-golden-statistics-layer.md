@@ -59,6 +59,19 @@
 - **재생성 절차**: `.venv/bin/python scripts/make_golden.py --check` 로 차이를 본 뒤 `scripts/make_golden.py`
   로 다시 쓴다(이전 골든과 달라진 값 목록을 출력). 검토된 의도적 변경 후에만(규칙 11.4), PR 본문에 이유를 적는다.
   실패 메시지(`GOLDEN-001/003`, `golden.check.regenerate`)가 이 절차를 안내한다.
+- **스키마 2 (2026-09-23, 리뷰 2차)**: `array_stats` 는 `n`(배열 크기)·`nan_fraction`·min/max/mean/std/백분위만 담고
+  `n_finite` 는 담지 않는다 — `n · (1 − nan_fraction)` 과 같은 정보인데 정수 정확 비교가 `*_fraction` 허용 오차
+  (ADR-0102)를 무효화했다. 골든은 `scripts/make_golden.py` 로 재생성했고 커밋본과의 diff 는 `n_finite` 4줄 삭제와
+  `schema_version` 1→2 뿐이었다(다른 값은 바이트 동일).
+- **스크립트 오류 경로**: `make_golden.py` / `check_golden.py` 는 CLI 와 같은 계약(ADR-0091)을 따른다 — `--site` 파일
+  없음 `CLI-006`, 읽기·검증 실패(`yaml.YAMLError` 포함 — `ValueError` 의 하위가 아니라 별도로 잡는다) `GOLDEN-006`
+  → 종료 2; 골든 파일이 JSON 이 아니거나 객체가 아니면 `GOLDEN-005`(check: FAIL 종료 1, make: WARN 후 덮어씀);
+  쓰기 실패 `GOLDEN-007`, 그 밖의 예외 `CLI-001` → 종료 1. `--json` 이면 봉투가 stdout 의 유일한 출력이고(nightly
+  가 stdout 을 `golden_check.json` 으로 받는다) 아니면 stderr 에 원인 → 조치; `--markdown` 은 오류 경로에서도 쓴다.
+  `--help` 문구와 불일치 목록은 `i18n/{ko,en}/golden.yaml` 의 `golden.args.*` / `golden.mismatch.*` 이며 `--lang` 은
+  argparse 가 도움말을 그리기 전에 argv 에서 먼저 읽는다(ADR-0090 과 같은 문제). **예외**: argparse 자체의 문구
+  (`usage:`, `show this help message and exit`, 알 수 없는 옵션·`--lang fr` 거부 메시지)는 표준 라이브러리 영어
+  그대로다 — 개발자용 스크립트라 gettext 를 붙이지 않는다.
 - geometry 골든(`ridge_masks.npz`, 배열 골든)은 그대로 둔다: 마스크는 불리언이라 정확 비교가 맞고 이미 작다.
 
 ## 결과 (Consequences)

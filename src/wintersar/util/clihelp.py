@@ -48,9 +48,22 @@ from wintersar.util.output import (
     CLI_USAGE,
     cli_finding,
     emit_json,
+    err_console,
     invoked_command,
     report_unexpected,
 )
+
+# Parameters typer/click add themselves (``add_completion``, ``add_help_option``): their
+# help is a literal in the library, so it is replaced from the catalogue at render time.
+# source: .venv/lib/python3.11/site-packages/typer/completion.py
+#   (_install_completion_placeholder_function: help="Install completion for the current shell.")
+# source: .venv/lib/python3.11/site-packages/typer/_click/decorators.py
+#   (help_option: help="Show this message and exit.")
+BUILTIN_PARAM_KEYS: dict[str, str] = {
+    "help": "cli_help.root.help_option",
+    "install_completion": "cli_help.root.install_completion",
+    "show_completion": "cli_help.root.show_completion",
+}
 
 # ------------------------------------------------------------------ language resolution
 
@@ -79,7 +92,8 @@ def help_lang() -> str:
     """
     if state.lang_explicit and state.lang in SUPPORTED:
         return state.lang
-    return lang_from_argv(sys.argv[1:]) or current_lang()
+    # an embedding interpreter (QGIS, a C host) may never have set sys.argv at all
+    return lang_from_argv(getattr(sys, "argv", [])[1:]) or current_lang()
 
 
 # ------------------------------------------------------------------ catalogue-backed help
@@ -136,6 +150,10 @@ def localize_help(cmd: Any) -> None:
     lang = help_lang()
     cmd.help = _retranslate(cmd.help, lang)
     for param in cmd.params:
+        builtin = BUILTIN_PARAM_KEYS.get(str(param.name))
+        if builtin is not None:
+            param.help = t(builtin, lang)
+            continue
         help_text = getattr(param, "help", None)
         if isinstance(help_text, str):
             param.help = _retranslate(help_text, lang)
@@ -149,20 +167,41 @@ def localize_help(cmd: Any) -> None:
 
 
 def json_requested(argv: Sequence[str]) -> bool:
-    """``--json`` among the global options (before the first command word)."""
+    """``--json`` among the global options (before the first command word).
+
+    Needed when the root callback has not run yet (``Missing command.`` / ``No such
+    command`` are raised by ``TyperGroup.invoke`` before it). The value of ``--lang`` is
+    not a command word, so ``--lang en --json`` counts like ``--json --lang en``.
+    # source: .venv/lib/python3.11/site-packages/typer/core.py TyperGroup.invoke
+    #   (ctx.fail("Missing command.") / resolve_command before super().invoke(ctx))
+    """
+    skip_value = False
     for arg in argv:
+        if skip_value:
+            skip_value = False
+            continue
         if arg == "--json":
             return True
+        if arg == "--lang":
+            skip_value = True
+            continue
         if not arg.startswith("-"):
             return False
     return False
 
 
 def _command_of(exc: BaseException, argv: Sequence[str]) -> str:
+    """``plan`` / ``unwrap run`` for the envelope, whatever the program name was.
+
+    ``ctx.command_path`` starts with the root ``info_name``: one word for the console
+    script, three for ``python -m wintersar.cli`` (how the QGIS client starts the CLI).
+    # source: .venv/lib/python3.11/site-packages/typer/_click/core.py Context.command_path
+    """
     ctx = getattr(exc, "ctx", None)
     path = getattr(ctx, "command_path", None)
-    if isinstance(path, str) and path:
-        words = path.split()[1:]  # drop the program name
+    if ctx is not None and isinstance(path, str) and path:
+        prog = str(getattr(ctx.find_root(), "info_name", None) or "")
+        words = path[len(prog) :].split() if prog and path.startswith(prog) else path.split()[1:]
         if words:
             return " ".join(words)
     return invoked_command(argv)
@@ -201,12 +240,8 @@ def _show_click_error(exc: Any) -> None:
 
 
 def _show_abort() -> None:
-    try:
-        from typer import rich_utils
-
-        rich_utils.rich_abort_error()
-    except Exception:  # pragma: no cover
-        typer.echo("Aborted!", err=True)
+    """Ctrl-C / declined prompt: catalogue text instead of typer's English panel."""
+    err_console.print(t("cli.aborted", state.lang), style="red", markup=False)
 
 
 # ------------------------------------------------------------------ click classes
@@ -219,6 +254,12 @@ class HelpCommand(TyperCommand):
         localize_help(self)
         super().format_help(ctx, formatter)
 
+    def get_help_option(self, ctx: Context) -> Any:
+        option = super().get_help_option(ctx)
+        if option is not None:
+            option.help = t(BUILTIN_PARAM_KEYS["help"], help_lang())
+        return option
+
 
 class HelpGroup(TyperGroup):
     """A typer group whose help is localised at render time and whose ``main`` keeps the
@@ -228,6 +269,12 @@ class HelpGroup(TyperGroup):
     def format_help(self, ctx: Context, formatter: HelpFormatter) -> None:
         localize_help(self)
         super().format_help(ctx, formatter)
+
+    def get_help_option(self, ctx: Context) -> Any:
+        option = super().get_help_option(ctx)
+        if option is not None:
+            option.help = t(BUILTIN_PARAM_KEYS["help"], help_lang())
+        return option
 
     def parse_args(self, ctx: Context, args: list[str]) -> list[str]:
         # NoArgsIsHelpError prints the help page while it is being constructed; under

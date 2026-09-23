@@ -32,9 +32,14 @@
   2. `max_bytes`가 있으면 남은 항목의 합이 예산 이하가 될 때까지 **`finished_at`이 오래된 순서로**(단계를
      가리지 않고) 더 지운다. **보호 항목** = 각 단계의 최신 `ok` manifest(고아·failed는 보호하지 않음)는
      예산이 0이어도 지우지 않는다. 다음 `run`이 바로 그 항목에 대해 해석·적중하므로, 이를 지우면 크기 예산이
-     "강제 전량 재계산"으로 바뀐다. 실패 항목은 로그 보존 때문에 `keep_latest` 안에는 들지만 예산에는
-     밀린다.
+     "강제 전량 재계산"으로 바뀐다. 이 약속은 `keep_latest`보다 우선한다: `--keep 0 --max-size X`도 단계별 최신
+     ok 하나는 남긴다(보호 항목은 `entries`에서 고르고 생존자에 더한다). 예산 없는 `--keep 0`은 종전대로
+     단계를 비운다. 실패 항목은 로그 보존 때문에 `keep_latest` 안에는 들지만 예산에는 밀린다.
   3. 실행 중(잠금) 항목은 언제나 유지. dry-run은 계획만 보고한다.
+  4. 삭제는 확인한다. `shutil.rmtree(ignore_errors=True)`는 심볼릭 링크인 노드 디렉터리를 거부하고(아무것도
+     안 지움) 권한 없는 디렉터리도 그대로 두면서 성공처럼 보였다. 이제 링크는 링크만 `unlink`(대상은 따라가지
+     않음)하고, 지운 뒤에도 남아 있는 항목은 `GcReport.failed`에 넣는다 — `removed`/`freed_bytes`에 넣지 않고
+     다음 gc에서 다시 보고한다. CLI 표시(WARN 한 줄)는 cli.py 소유자 몫.
 - `GcReport`에 `max_bytes`, `protected`, `kept_bytes`, `over_budget`(보호 항목만으로 예산 초과)을 더한다.
   `over_budget`이면 gc는 더 할 수 있는 게 없고, 사용자는 예산을 올리거나 작업 디렉터리를 나눠야 한다
   (i18n `pipeline.cli.cache_over_budget`).
@@ -47,7 +52,9 @@
 
 ## 결과 (Consequences)
 
-- `--max-size 0`은 "각 단계의 최신 ok 하나만 남기기"와 같다(테스트로 고정).
+- `--max-size 0`은 "각 단계의 최신 ok 하나만 남기기"와 같다(테스트로 고정). `--keep 0 --max-size X`도 마찬가지로
+  최신 ok는 남긴다(`test_gc_budget_protects_the_newest_ok_entry_even_with_keep_zero`); 지우지 못한 항목은
+  `failed`로 보고된다(`test_gc_reports_what_it_could_not_delete_and_never_counts_it_as_freed`).
 - ADR-0032의 안내("N은 동시에 유지할 튠 변형 수")는 유지되고, 크기 예산은 그 위의 상한이다. 예산이 튠 변형을
   먼저 밀어내므로 스윕(ADR-0044) 중에는 예산을 넉넉히 두거나 스윕이 끝난 뒤 gc를 돌린다.
 - 증분 모드에서 노드 디렉터리는 재실행 때마다 `finished_at`이 갱신되어 항상 최신이므로, 예산이 증분 사슬을

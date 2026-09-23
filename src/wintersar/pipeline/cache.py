@@ -11,7 +11,10 @@
   ``max_bytes``, additionally evicts the oldest of those (by ``finished_at``) until the work
   directory fits the byte budget — never the newest ``ok`` entry of a stage, which is what the
   next run resolves against (plan §6.2 PERF-03: "캐시 크기 제한과 ``wintersar cache gc``";
-  ADR-0081).
+  ADR-0081); with a budget that entry is protected even when ``keep_latest`` is ``0``.
+  What could not be deleted (a symlinked node directory is unlinked, not followed; a
+  directory without write permission stays) is reported in :attr:`GcReport.failed` and
+  never counted as freed.
 * A node directory may also hold ``pairs/`` (per-pair results + manifest, PERF-06,
   ADR-0080); it is part of the entry's size and survives an incremental re-run.
 * :func:`node_lock` serialises two processes that resolve the *same* node hash on the same
@@ -396,11 +399,15 @@ def size_summary(
 
 @dataclass
 class GcReport:
+    """``removed`` is what is gone (or, in a dry run, what would go); ``failed`` is what gc
+    tried to delete and could not — still on disk, not freed, listed again next time."""
+
     removed: list[CacheEntry]
     kept: list[CacheEntry]
     dry_run: bool
     max_bytes: int | None = None
     protected: list[CacheEntry] = field(default_factory=list)
+    failed: list[CacheEntry] = field(default_factory=list)
 
     @property
     def freed_bytes(self) -> int:
@@ -431,8 +438,12 @@ def gc(
     the total size afterwards by evicting the oldest survivors first — across stages, but
     never the newest ``ok`` entry of a stage: that is the result the next ``run`` resolves
     against, and deleting it would turn a cache budget into a forced full recompute
-    (plan §6.2 PERF-03, ADR-0081). ``GcReport.over_budget`` tells when even those do not
-    fit. Entries locked by a running pipeline are always kept.
+    (plan §6.2 PERF-03, ADR-0081). With a budget that entry is therefore protected even when
+    ``keep_latest`` is ``0`` (``keep_latest=0`` *without* a budget still wipes the stage).
+    ``GcReport.over_budget`` tells when even those do not fit. Entries locked by a running
+    pipeline are always kept. Deletion is verified: an entry whose directory is still there
+    afterwards (no write permission …) lands in ``GcReport.failed``, not in ``removed``; a
+    node directory that is a symlink is unlinked (the target is never followed).
     """
     if keep_latest < 0:
         msg = "keep_latest must be >= 0"
@@ -446,11 +457,14 @@ def gc(
     for s in stages or STAGE_ORDER:
         entries = [e for e in list_records(workdir, s) if not is_locked(e.path)]  # newest first
         survivors = [e for e in entries if not e.orphan][:keep_latest]
+        newest_ok = next((e for e in entries if not e.orphan and e.status == "ok"), None)
+        if max_bytes is not None and newest_ok is not None and newest_ok not in survivors:
+            # the budget mode promises the next run a hit: keep_latest must not undo that
+            survivors.append(newest_ok)
         keys = {id(e) for e in survivors}
         kept.extend(survivors)
         removed.extend(e for e in entries if id(e) not in keys)
-        newest_ok = next((e for e in survivors if e.status == "ok"), None)
-        if newest_ok is not None:
+        if newest_ok is not None and id(newest_ok) in keys:
             protected.append(newest_ok)
     if max_bytes is not None:
         safe = {id(e) for e in protected}
@@ -464,12 +478,37 @@ def gc(
             evicted.add(id(victim))
             removed.append(victim)
         kept = [e for e in kept if id(e) not in evicted]
+    failed: list[CacheEntry] = []
     if not dry_run:
+        gone: list[CacheEntry] = []
         for e in removed:
-            shutil.rmtree(e.path, ignore_errors=True)
+            (gone if _remove_node_dir(e.path) else failed).append(e)
+        removed = gone
     return GcReport(
-        removed=removed, kept=kept, dry_run=dry_run, max_bytes=max_bytes, protected=protected
+        removed=removed,
+        kept=kept,
+        dry_run=dry_run,
+        max_bytes=max_bytes,
+        protected=protected,
+        failed=failed,
     )
+
+
+def _remove_node_dir(path: Path) -> bool:
+    """Delete a node directory and report whether it is really gone.
+
+    A symlinked node directory is unlinked (``shutil.rmtree`` refuses symlinks and, with
+    ``ignore_errors``, used to report success while touching nothing); the link target is
+    never followed. Permission errors leave the directory in place -> ``False``.
+    """
+    try:
+        if path.is_symlink():
+            path.unlink()
+        else:
+            shutil.rmtree(path, ignore_errors=True)
+    except OSError:
+        return False
+    return not (path.exists() or path.is_symlink())
 
 
 def human_size(n: int) -> str:

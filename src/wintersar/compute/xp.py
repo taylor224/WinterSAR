@@ -16,7 +16,10 @@ Precedence (ADR-0095), highest first:
 3. the stage context set with :func:`stage_gpu` from the executor's private ``_gpu`` param
    (``config.compute.gpu`` after ``MachineSpec.budget``: ``auto`` → detected, ``true``/``false``
    → forced) — stage code wraps its work in ``with stage_gpu(params.get("_gpu")):`` so
-   every kernel below it inherits the config without threading a keyword through;
+   every kernel below it inherits the config without threading a keyword through
+   **on the same thread only**: a ``ContextVar`` is not inherited by ``ThreadPoolExecutor``
+   or spawned ``ProcessPoolExecutor`` workers, so pool jobs must carry the request and
+   re-enter ``stage_gpu`` themselves (``wintersar.unwrap.api._Job.gpu`` does);
 4. auto-detect: CuPy importable **and** at least one CUDA device → cupy, else numpy.
 
 A GPU *request* (``True``) that cannot be honoured **degrades to numpy** and reports the

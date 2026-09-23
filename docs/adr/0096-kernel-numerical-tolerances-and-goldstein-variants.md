@@ -23,6 +23,9 @@
     <https://docs.cupy.dev/en/stable/user_guide/performance.html>.
   - scipy `uniform_filter(mode="wrap")` 의 짝수 크기 중심 규약은 테스트
     `test_wrap_smoothing_matches_scipy_periodic_uniform_filter` 로 실측(size 2·3·4·5).
+  - CuPy `isfinite` 의 타입 루프(`e/f/d/F/D -> ?`, 복소수 포함)
+    <https://github.com/cupy/cupy/blob/main/cupy/_logic/content.py>; `cupy.cumsum(a, axis, dtype)`
+    <https://docs.cupy.dev/en/stable/reference/generated/cupy.cumsum.html> (비유한 입력 규약, 2026-09-23).
 
 ## 맥락 (Context)
 
@@ -66,6 +69,25 @@
 - `smooth_mode="wrap"` 은 `xp.pad(mode="wrap")` 뒤 `box_sum` — 창 배치는 `size//2` 앞, `size-1-size//2` 뒤로
   scipy 와 같다(짝수 크기 포함, 실측).
 
+### 비유한(non-finite) 입력 규약 (2차 리뷰 #7)
+
+- **문제**: 누적합(summed-area table)에서 NaN 은 흡수원이라 표본 하나의 NaN/±inf 가 그 오른쪽-아래 전체를
+  오염시켰다(`box_sum`: 10×10 에 NaN 하나 → 64 픽셀 NaN, 창 발자국은 9). `coherence_estimate` 는 그 영역을
+  `where(denom > 0, …, 0)` 로 **코히어런스 0 으로 조용히** 보고했다(40×50, 창 5, NaN 하나 → 594 픽셀이 0).
+  scipy `uniform_filter` 도 러닝 합이라 같은 누출이 있어(실측 64 픽셀) NaN 규약의 기준이 될 수 없다.
+- **`box_sum` / `box_filter`**: 비유한 표본을 0 으로 빼고 누적한 뒤, 그 표본을 창에 포함하는 픽셀만 NaN 으로
+  표시한다(`~isfinite` 지표의 int64 누적합 — 정수라 `> 0` 판정이 정확). 즉 직접 컨볼루션과 같은 **창
+  발자국(footprint) 규약**이며, 유한 입력의 결과는 비트 동일. 정수·불리언 입력은 정의상 유한이라 가드를 건너뛴다.
+- **`assume_finite=True`**(키워드 전용): 지표 패스를 생략한다. 입력이 유한함을 호출자가 보장할 때만 쓰며 비유한
+  입력의 결과는 정의되지 않는다. 쓰는 곳은 Goldstein 루프의 스펙트럼 평활(`_smooth_spectrum`: 패치 안의
+  비유한 표본은 FFT 가 스펙트럼 전 빈으로 섞으므로 가드가 있어도 결과가 같고, 패치당 산술을 이전과 동일하게
+  유지)과 `box_filter` 의 정규화 카운트(상수 영상), 그리고 아래 `coherence_estimate` 내부.
+- **`coherence_estimate`**: 두 영상 중 하나라도 비유한 표본이 창에 들면 **NaN**(0 이 아님). `isfinite(a) &
+  isfinite(b)` 를 한 번 구해 두 영상에서 0 으로 빼고 세 합(교차·전력 2)을 `assume_finite=True` 로 누적한 뒤
+  지표 패스 한 번으로 발자국을 NaN 처리한다. `phase_noise_std` 는 NaN 을 그대로 통과시킨다.
+- **`goldstein_filter`**: 비유한 픽셀을 포함하는 모든 패치 발자국의 합집합이 NaN, 그 밖은 유한 — 변경 없음
+  (연구 `_legacy_*` 등가 테스트의 NaN 입력 케이스 그대로 통과).
+
 ### 허용 오차(테스트에 명시)
 | 비교 | 허용 오차 | 근거 |
 |---|---|---|
@@ -78,6 +100,7 @@
 | GPU 대 CPU — float64 경로(기하 각도, 연구 Goldstein complex128, fringe density) | `rtol=atol=1e-9`(실수), `rtol=1e-6, atol=1e-8`(복소) | CUDA 수학 함수 ~1 ulp 차 예상 |
 | GPU 대 CPU — 불리언 마스크(layover/shadow/combine_masks) | 불일치 픽셀 비율 `≤ 1e-3` | 임계값 경계 픽셀만 뒤집힐 수 있음 |
 | 강제 GPU(무 CuPy) → CPU 강등 | 결과 **동일**(`array_equal`, NaN 포함) + ENV-005 | ADR-0095 |
+| 비유한 입력 발자국(`box_sum`/`box_filter`/`coherence_estimate`/`phase_noise_std`/`goldstein_filter`) | NaN 마스크 **정확히 일치**(`assert_array_equal`); 발자국 밖은 `rtol=1e-5, atol=1e-6`(누적합 부분합의 반올림 차), 정수 합은 비트 동일 | `test_*_non_finite_*`, GPU 패리티 `box_sum_nonfinite`·`coherence_estimate_nonfinite` |
 
 CPU 가 항상 기준이다. GPU 패리티 테스트는 이 머신(CuPy 없음)에서는 이유를 명시해 skip 되며, CUDA 머신에서
 `pytest tests/unit/compute/test_gpu_parity.py` 로 실행해 위 잠정 오차를 확정한다(#72).

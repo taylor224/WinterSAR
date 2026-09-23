@@ -244,3 +244,61 @@ def test_node_lock_is_exclusive_and_gc_spares_locked_entries(workdir: Path) -> N
     with cache.node_lock(held):  # released: available again
         pass
     assert {e.node_hash for e in cache.gc(workdir, keep_latest=1).removed} == {"5" * 16}
+
+
+# ---------------------------------------------------------------------- gc robustness
+
+
+def test_gc_reports_what_it_could_not_delete_and_never_counts_it_as_freed(
+    workdir: Path, tmp_path: Path
+) -> None:
+    """A symlinked node directory is unlinked (target untouched); a directory that cannot
+    be removed lands in ``failed`` — not in ``removed``, not in ``freed_bytes`` — and is
+    listed again by the next gc instead of being "freed" forever."""
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    _record(workdir, "unwrap", "9" * 16, t0 + timedelta(minutes=9))  # newest, survives
+    external = _record(tmp_path / "elsewhere", "unwrap", "e" * 16, t0)
+    link = cache.stage_dir(workdir, "unwrap", "1" * 16)
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(external, target_is_directory=True)
+    stuck = _record(workdir, "unwrap", "2" * 16, t0 + timedelta(minutes=1))
+    stuck.chmod(0o555)  # rmtree cannot delete the manifest/out inside
+    try:
+        report = cache.gc(workdir, keep_latest=1)
+        assert {e.node_hash for e in report.removed} == {"1" * 16}
+        assert {e.node_hash for e in report.failed} == {"2" * 16}
+        assert report.freed_bytes == sum(e.size_bytes for e in report.removed)
+        assert not link.exists() and not link.is_symlink()
+        assert (external / cache.MANIFEST_NAME).exists()  # the link target was not followed
+        assert stuck.exists() and (stuck / cache.MANIFEST_NAME).exists()
+        # still there, still reported (not silently "freed" a second time)
+        again = cache.gc(workdir, keep_latest=1)
+        assert [e.node_hash for e in again.failed] == ["2" * 16] and again.removed == []
+        assert again.freed_bytes == 0
+        dry = cache.gc(workdir, keep_latest=1, dry_run=True)
+        assert [e.node_hash for e in dry.removed] == ["2" * 16] and dry.failed == []
+    finally:
+        stuck.chmod(0o755)
+
+
+def test_gc_budget_protects_the_newest_ok_entry_even_with_keep_zero(workdir: Path) -> None:
+    """``--keep 0 --max-size X`` must not delete the entry the next run resolves against:
+    the budget mode's promise (ADR-0081) beats ``keep_latest``. Without a budget
+    ``keep_latest=0`` still means "wipe the stage"."""
+    t0 = datetime(2026, 1, 1, tzinfo=UTC)
+    for i, h in enumerate(["1" * 16, "2" * 16, "3" * 16]):
+        _record(workdir, "unwrap", h, t0 + timedelta(minutes=i))
+    _record(workdir, "unwrap", "4" * 16, t0 + timedelta(minutes=3), status="failed")
+    dry = cache.gc(workdir, keep_latest=0, max_bytes=10**9, dry_run=True)
+    assert [e.node_hash for e in dry.protected] == ["3" * 16]  # newest *ok*, not the failed
+    assert [e.node_hash for e in dry.kept] == ["3" * 16]
+    assert {e.node_hash for e in dry.removed} == {"1" * 16, "2" * 16, "4" * 16}
+    assert not dry.over_budget
+    zero = cache.gc(workdir, keep_latest=0, max_bytes=0)
+    assert [e.node_hash for e in zero.kept] == ["3" * 16] and zero.over_budget
+    assert cache.stage_dir(workdir, "unwrap", "3" * 16).exists()
+    assert not cache.stage_dir(workdir, "unwrap", "2" * 16).exists()
+    # no budget: keep 0 wipes
+    wipe = cache.gc(workdir, keep_latest=0)
+    assert [e.node_hash for e in wipe.removed] == ["3" * 16] and wipe.kept == []
+    assert wipe.protected == [] and cache.list_records(workdir, "unwrap") == []

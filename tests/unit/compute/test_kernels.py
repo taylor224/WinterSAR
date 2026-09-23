@@ -306,3 +306,101 @@ def test_bench_kernels_returns_numbers_only() -> None:
         assert r["device"] == {"backend": "numpy"}
     else:  # pragma: no cover - CUDA machines
         assert set(r["gpu"]) == set(r["cpu"]) and r["device"]["backend"] == "cupy"
+
+
+# ---------------------------------------------------------------------- non-finite input (ADR-0096)
+
+
+def _footprint(shape: tuple[int, int], r: int, c: int, window) -> np.ndarray:
+    """Output pixels whose ``box_sum`` window contains sample ``(r, c)``."""
+    wy, wx = K._as_pair(window)
+    ty, tx = wy // 2, wx // 2
+    by, bx = wy - 1 - ty, wx - 1 - tx
+    fp = np.zeros(shape, bool)
+    fp[max(r - by, 0) : r + ty + 1, max(c - bx, 0) : c + tx + 1] = True
+    return fp
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])
+@pytest.mark.parametrize("window", [3, (3, 5), 4])
+def test_box_sum_non_finite_sample_poisons_only_its_window(bad: float, window) -> None:
+    """A summed-area table is absorbing: one bad sample would smear over every pixel to its
+    lower-right. The output must be NaN exactly on the pixels whose window contains the
+    sample (what a direct moving-window sum gives) and unchanged everywhere else."""
+    a = np.ones((10, 10), np.float32)
+    clean = K.box_sum(a, window)
+    a[3, 3] = bad
+    out = K.box_sum(a, window)
+    expect = _footprint(a.shape, 3, 3, window)
+    assert out.dtype == np.float32 and expect.sum() == int(np.prod(K._as_pair(window)))
+    np.testing.assert_array_equal(np.isnan(out), expect)
+    np.testing.assert_array_equal(out[~expect], clean[~expect])  # sums of ones: exact
+
+
+def test_box_sum_non_finite_complex_batched_box_filter_and_opt_out() -> None:
+    rng = np.random.default_rng(7)
+    z = (rng.standard_normal((2, 12, 14)) + 1j * rng.standard_normal((2, 12, 14))).astype(
+        np.complex64
+    )
+    clean = K.box_sum(z, 3)
+    z[1, 5, 6] = complex(0.0, np.nan)  # NaN in the imaginary part, second image only
+    out = K.box_sum(z, 3)
+    expect = np.zeros(z.shape, bool)
+    expect[1] = _footprint(z.shape[1:], 5, 6, 3)
+    np.testing.assert_array_equal(np.isnan(out), expect)
+    np.testing.assert_allclose(out[~expect], clean[~expect], rtol=1e-5, atol=1e-6)
+    # box_filter follows for both normalisations (a corner sample: 2x2 footprint)
+    a = np.ones((8, 8), np.float32)
+    a[0, 0] = np.inf
+    for normalize in ("valid", "full"):
+        m = K.box_filter(a, 3, normalize=normalize)
+        np.testing.assert_array_equal(np.isnan(m), _footprint(a.shape, 0, 0, 3))
+        assert np.isfinite(m[2:, 2:]).all()
+    # integer input is finite by construction and keeps its exact sums
+    np.testing.assert_array_equal(K.box_sum(np.ones((6, 6), np.int32), 3)[2, 2], 9.0)
+    # the opt-out reproduces the guarded result bit-for-bit on finite input
+    f = rng.standard_normal((30, 40)).astype(np.float32)
+    np.testing.assert_array_equal(K.box_sum(f, (3, 5), assume_finite=True), K.box_sum(f, (3, 5)))
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf])
+def test_coherence_non_finite_sample_is_nan_on_its_window_footprint_only(bad: float) -> None:
+    """One non-finite sample in either image: the 25 estimates whose 5x5 window contains it
+    are NaN (never a silent coherence 0) and every other estimate is unchanged; the phase
+    noise model passes the nodata through on exactly those pixels."""
+    rng = np.random.default_rng(3)
+    shape = (40, 50)
+    s1 = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(np.complex64)
+    noise = rng.standard_normal(shape) + 1j * rng.standard_normal(shape)
+    s2 = (0.8 * s1 + 0.3 * noise).astype(np.complex64)
+    clean = K.coherence_estimate(s1, s2, 5)
+    assert np.isfinite(clean).all() and (clean > 0).all()
+    expect = _footprint(shape, 20, 25, 5)
+    assert expect.sum() == 25
+    for which in (0, 1):
+        images = [s1.copy(), s2.copy()]
+        images[which][20, 25] = bad
+        coh = K.coherence_estimate(images[0], images[1], 5)
+        assert coh.dtype == np.float32
+        np.testing.assert_array_equal(np.isnan(coh), expect)
+        np.testing.assert_allclose(coh[~expect], clean[~expect], rtol=1e-5, atol=1e-6)
+        std = K.phase_noise_std(coh, looks=4)
+        np.testing.assert_array_equal(np.isnan(std), expect)
+        assert np.isfinite(std[~expect]).all()
+
+
+def test_goldstein_non_finite_sample_is_confined_to_its_patches() -> None:
+    """The FFT spreads a non-finite sample over every patch that contains it and no
+    further: NaN exactly on the union of those patch footprints, finite elsewhere."""
+    _, z = _plane(64, 96, window=32)
+    z = z.copy()
+    z[10, 40] = np.nan
+    out = K.goldstein_filter(z, 0.6, 32)
+    expect = np.zeros(z.shape, bool)
+    for y0 in K._patch_origins(64, 32, 16):
+        for x0 in K._patch_origins(96, 32, 16):
+            if y0 <= 10 < y0 + 32 and x0 <= 40 < x0 + 32:
+                expect[y0 : y0 + 32, x0 : x0 + 32] = True
+    assert expect.sum() == 32 * 48
+    np.testing.assert_array_equal(np.isnan(out), expect)
+    assert np.isfinite(out[~expect]).all()

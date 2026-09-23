@@ -4,7 +4,10 @@ run, and the estimated resources/credits for the latter.
 Estimates come from ``Engine.estimate`` (per engine) plus
 ``wintersar.diagnose.resources.estimate`` (lazy; absent -> nothing added). An incremental
 node (PERF-06) is sized by the pairs it still has to compute and reported with
-``extra["incremental"]`` (``N pairs cached / M new``) plus an INFO ``PIPELINE-015``.
+``extra["incremental"]`` (``N pairs cached / M new``) plus an INFO ``PIPELINE-015``; a node
+whose per-pair manifest was unreadable gets ``PIPELINE-017`` (full recompute, cause named).
+A GPU request the machine cannot honour (``compute.gpu: true`` without CuPy) is reported
+once as ``ENV-005`` (WARN, ADR-0095) when something will run.
 """
 
 from __future__ import annotations
@@ -15,6 +18,8 @@ from wintersar.io.schemas import Artifacts, Finding, Plan, Resources, StageRecor
 from wintersar.pipeline import cache
 from wintersar.pipeline.config import Config
 from wintersar.pipeline.dag import Dag, Node
+from wintersar.pipeline.executor import cache_hit_record, gpu_findings
+from wintersar.pipeline.incremental import manifest_finding
 from wintersar.pipeline.stages import DIAGNOSE_RESOURCES_ENTRYPOINT, load_entrypoint
 from wintersar.util import sysinfo
 
@@ -132,7 +137,7 @@ def build_plan(
     for node in dag.nodes:
         findings.extend(node.findings)
         if node.status == "cached" and node.record is not None:
-            rec = node.record.model_copy(update={"extra": {**node.record.extra, "cache_hit": True}})
+            rec = cache_hit_record(node.record)
             cached.append(rec.node_hash)
             available = available.merged(cache.record_artifacts(node.record))
         elif node.status == "skipped":
@@ -146,11 +151,17 @@ def build_plan(
             to_run.append(rec.node_hash)
             if node.status == "incremental" and node.partial is not None:
                 findings.append(incremental_finding(node.stage, node.partial.counts))
+            if node.partial is not None and node.partial.manifest_error:
+                findings.append(
+                    manifest_finding(node.stage, node.partial.manifest_error, node.partial.counts)
+                )
         stages.append(rec)
     for name in sorted({n.engine for n in dag.to_run() if n.engine}):
         eng = dag.engine(name)
         if eng is not None:
             findings.extend(eng.check_install())
+    if to_run and machine is not None:
+        findings.extend(gpu_findings(machine))
     if not to_run:
         # nothing will execute: the additional cost is zero, not "unknown"
         total = Resources(wall_time_s=0.0, peak_rss_gb=0.0, disk_gb=0.0, network_gb=0.0)

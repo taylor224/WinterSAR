@@ -9,7 +9,7 @@
 ## 한 줄 요약
 
 플랜 §7 의 Phase 0–8 이 모두 **코드·테스트·ADR 수준**으로 트리에 있고, CI 는 lint·형식·`mypy --strict`·단위+통합
-테스트(합성, 네트워크 없음)·합성 벤치마크·Docker 스모크를 돌립니다. 반면 **실제 위성 자료를 한 번도 처리하지
+테스트(합성, 네트워크 없음)·합성 벤치마크·문서 사이트 빌드(`mkdocs build --strict`)·Docker 스모크를 돌립니다. 반면 **실제 위성 자료를 한 번도 처리하지
 않았습니다**: 외부 엔진(ISCE2·SNAPHU·tophu·MintPy·dolphin·hyp3-sdk·sentineleof·sardem)이 개발 환경에 없고, 국내
 대조군 데이터도 없습니다. 따라서 실사이트 DoD 는 전부 미충족이며, v0.1.0 정식 릴리스 전에 그 항목들을 채워야 합니다
 ([로드맵](roadmap.md)).
@@ -20,14 +20,14 @@
 |---|---|---|---|
 | `select` | ASF burst 검색(BURST 우선, SLC fallback), 스택 그룹핑·커버리지·네트워크·참조일 추천, 수직 기선(ASF stack API → 궤도 fallback), 규칙 `SEL-01…13`, 자동 looks, 레이오버·셰도우 마스크, 리포트 md/html/json | `wintersar search`, `wintersar precheck` | `tests/unit/select*`, ADR-0010…0019 |
 | `engines` | 어댑터 `hyp3`, `mintpy`, `snaphu`, `tophu`, `spurt`, `isce2_topsstack`, `dolphin`, `fake`; 크레딧 표 `hyp3_costs.yaml`; MintPy 템플릿 생성(PERF-09); run_files 병렬 실행기; burst2safe; 보조 데이터 캐시 | `wintersar check-install`, config `engine.*` | `tests/unit/engines_*`(`@pytest.mark.engine`, mock), ADR-0020…0029 |
-| `pipeline` | 해시 캐시 DAG(`search … validate` 11단계), `plan`/`run`/`cache ls|gc`, `--set/--until/--from/--force`, 실패 시 `diagnose` 자동 첨부, 작업 디렉터리 규약 | `wintersar plan`, `run`, `cache` | `tests/integration/test_pipeline_fake.py`, `tests/integration/test_incremental.py`, ADR-0030…0034, 0080…0082 |
+| `pipeline` | 해시 캐시 DAG(`search … validate` 11단계), `plan`/`run`/`cache ls|gc`, `--set/--until/--from/--force`, `--incremental`(날짜 추가 시 새 날짜에 닿는 쌍만 계산, PERF-06, ADR-0080; 실 엔진 어댑터의 참여는 #74), 실패 시 `diagnose` 자동 첨부, 작업 디렉터리 규약 | `wintersar plan`, `run`, `cache` | `tests/integration/test_pipeline_fake.py`, `tests/integration/test_incremental.py`, ADR-0030…0034, 0080…0082 |
 | `unwrap` | 스케줄러(간섭도 병렬 우선, 메모리 예산 내 자동 타일, 단차 검출·병합), `unwrap plan/run` | `wintersar unwrap plan|run` | `tests/unit/unwrap`, `tests/integration/test_unwrap_scheduler.py`, ADR-0045…0048 |
-| `diagnose` | 로그 파서(isce2·snaphu·mintpy·hyp3·asf·generic), KB YAML 20항목, `KB-UNKNOWN` 미분류, 리소스 추정 모델, `docs/kb/` 렌더러 | `wintersar diagnose`, `--list-kb` | `tests/fixtures/logs/manifest.yaml`(26 픽스처), ADR-0035…0037 |
+| `diagnose` | 로그 파서(isce2·snaphu·mintpy·hyp3·asf·generic), KB YAML 20항목, `KB-UNKNOWN` 미분류, 리소스 추정 모델, `docs/kb/` 렌더러 | `wintersar diagnose`, `--list-kb` | `tests/fixtures/logs/manifest.yaml`(25 픽스처), ADR-0035…0037 |
 | `validate` | 대조군 CSV 임포트·LOS 투영·RMSE/bias 리포트, 기준점 추천, 폐합 대시보드, 파라미터 스윕(Pareto) | `wintersar validate`, `refpoint`, `closure`, `sweep` | `tests/unit/validate`, ADR-0040…0044 |
 | `research` | 합성 생성기(간섭도·SLC 스택·타일), 대표위상 5종, 스티칭 2종, 지표, YAML 실험 5종, 결과표 | `wintersar research synth|repr-phase|stitch|experiment|experiments` | `docs/research/results/*.md`, ADR-0060…0064 |
 | `io` / `compute` / `bench` | Zarr v3 스택 저장소, COG 내보내기, ISCE2/HyP3/MintPy 포맷 리더, CuPy 선택 백엔드, 벤치마크 프로토콜(`bench_result.json`, `--compare`) | `wintersar bench` | `tests/unit/{io,compute,bench}`, ADR-0050…0054, 0095…0097(GPU 경로는 CUDA 머신 미실행, #72), 0100…0102 |
 | QGIS 플러그인 | CLI `--json` 위의 얇은 클라이언트(패널 6종, Processing 공급자, ZIP 빌드), 환경 탐색 | `qgis_plugin/build_zip.py` | `tests/unit/qgis`, ADR-0070/0071 |
-| 문서 | 개념 9편, 튜토리얼 3편(ko + English summary), KB 생성 페이지, ADR 색인, 이 릴리스 노트, 로드맵 | `mkdocs.yml` | `tests/unit/qgis/test_docs.py`, ADR-0072, 0110–0112 |
+| 문서 | 개념 9편, 튜토리얼 3편(ko + English summary), KB 생성 페이지, ADR 색인, 이 릴리스 노트, 로드맵 | `mkdocs.yml` | `tests/unit/qgis/test_docs.py`, CI `docs` 잡(`mkdocs build --strict`), ADR-0072, 0110–0112 |
 
 CLI 도움말은 `--lang` 을 먼저 읽어 두 언어로 나오고 오류는 항상 Finding/봉투로 끝납니다(ADR-0090/0091). CLI 명령 전체 목록은 `wintersar --help` (현재: `version`, `check-install`, `init`, `search`, `precheck`, `plan`,
 `run`, `diagnose`, `validate`, `refpoint`, `sweep`, `closure`, `bench`, `cache {ls,gc}`, `unwrap {plan,run}`,
@@ -42,7 +42,7 @@ CLI 도움말은 `--lang` 을 먼저 읽어 두 언어로 나오고 오류는 �
 
 | DoD 항목 | 상태 | 근거 / 이유 |
 |---|---|---|
-| CI 녹색 | 부분 | `.github/workflows/ci.yml`(ruff·mypy·pytest·합성 bench·core Docker 스모크)과 `nightly.yml`(골든 통계 회귀 게이트, ADR-0100/0101/0102). 로컬에서는 ruff/mypy/pytest 만 실행했고 원격 CI 결과는 이 환경에서 확인하지 않음 |
+| CI 녹색 | 부분 | `.github/workflows/ci.yml` 의 세 잡 — `lint-test`(ruff·mypy·pytest·합성 bench), `docs`(`uv sync --extra docs` + `mkdocs build --strict`, #73), `docker`(core 이미지 스모크) — 와 `nightly.yml`(골든 통계 회귀 게이트, ADR-0100/0101/0102). 로컬에서는 ruff/mypy/pytest/`mkdocs build --strict` 를 실행했고 원격 CI 결과는 이 환경에서 확인하지 않음 |
 | Docker 빌드 | 미충족(환경) | core 이미지 `Dockerfile` 은 CI job 이 빌드; 엔진 이미지 `Dockerfile.engines` 는 CI 에서 빌드하지 않음(ADR-0106, #71). 이 환경에서는 둘 다 빌드하지 않음 |
 | `check-install` 이 미설치 엔진을 Finding 으로 보고 | 충족 | 실행 확인: 미설치 엔진마다 `ENV-001`, 종료 코드 0, `--strict` 로 1 |
 | 합성 파이프라인 end-to-end 테스트 | 충족 | `tests/integration/test_pipeline_fake.py`, fake 엔진 |
@@ -73,7 +73,7 @@ CLI 도움말은 `--lang` 을 먼저 읽어 두 언어로 나오고 오류는 �
 | DoD 항목 | 상태 | 근거 / 이유 |
 |---|---|---|
 | KB 시드 12개 이상 | 충족 | 20항목(`wintersar diagnose --list-kb`), 전부 `pattern_verified: true` + 출처 |
-| 알려진 실패 케이스 10개(로그 픽스처)에서 정확한 KB 매칭 | 충족 | `tests/fixtures/logs/manifest.yaml` 26 픽스처의 기대 ID 검사. 단 픽스처는 상류 소스 문자열로 만든 **합성 발췌**이지 현장 로그가 아님(#29, #31) |
+| 알려진 실패 케이스 10개(로그 픽스처)에서 정확한 KB 매칭 | 충족 | `tests/fixtures/logs/manifest.yaml` 25 픽스처의 기대 ID 검사(개수는 `tests/unit/qgis/test_docs.py` 가 manifest 와 대조). 단 픽스처는 상류 소스 문자열로 만든 **합성 발췌**이지 현장 로그가 아님(#29, #31) |
 | 매칭 실패 시 미분류 Finding + 로그 발췌 | 충족 | 실행 확인: fake 실패 주입 → `KB-UNKNOWN` + 마스킹 발췌 |
 | `run` 실패 시 자동 첨부, `docs/kb/` 렌더링 | 충족 | ADR-0033, `scripts/render_kb_docs.py --check` |
 
@@ -89,7 +89,7 @@ CLI 도움말은 `--lang` 을 먼저 읽어 두 언어로 나오고 오류는 �
 
 | DoD 항목 | 상태 | 근거 / 이유 |
 |---|---|---|
-| PERF 항목별 before/after 측정치 | 미충족(환경) | 실데이터·엔진 없음. dolphin 어댑터(ADR-0028/0029), CuPy 백엔드(ADR-0053), 증분 모드(PERF-11)는 코드·테스트만 |
+| PERF 항목별 before/after 측정치 | 미충족(환경) | 실데이터·엔진 없음. dolphin 어댑터(PERF-05, ADR-0028/0029), CuPy 백엔드(PERF-10, ADR-0053 + 0095–0097), 증분 모드(PERF-06, ADR-0080/0082; 합성 측정 시나리오는 #75)는 코드·테스트만. 참조 기하 재사용(PERF-11)은 조사 결과만(ADR-0029, 실 ISCE2 확인은 #46) |
 | 채택/기각 ADR | 부분 | 설계·사실 확인 ADR 은 있으나 측정 기반 채택/기각 결정은 없음(#53 A/B 대기) |
 
 ### Phase 6 — research (R-07, R-15): 부분
@@ -135,8 +135,9 @@ CLI 도움말은 `--lang` 을 먼저 읽어 두 언어로 나오고 오류는 �
    스케줄러는 스택 전용 백엔드로만 취급합니다.
 7. **QGIS 미실행.** 플러그인의 Qt 부분은 순수 파이썬 단위 테스트로만 검증했습니다(#60).
 8. **HyP3 실패 사유.** `hyp3_sdk.Job` 에는 실패 사유 필드가 없어 런타임 실패는 `KB-UNKNOWN` 으로 떨어질 수 있습니다(#33).
-9. **문서 빌드 미실행.** `mkdocs`(docs extra)가 개발 환경에 설치되어 있지 않아 `mkdocs build` 는 돌리지 않았고,
-   nav 항목의 존재·링크·명령 유효성만 테스트로 검사합니다(ADR-0112).
+9. **문서는 빌드까지만 검증.** 사이트는 `mkdocs build --strict` 로 빌드되고(로컬 1회 + CI `docs` 잡, #73) 명령·옵션·
+   링크·open-questions 참조는 테스트가 대조하지만(ADR-0112), "예상 출력" 블록은 손으로 채록한 모양이라 i18n
+   문구가 바뀌면 사람이 갱신해야 하고 실데이터 출력은 한 번도 채록하지 않았습니다.
 
 ## 라이선스
 
@@ -165,6 +166,7 @@ uv run ruff check src tests && uv run ruff format --check src tests
 uv run mypy
 uv run pytest -m "not network and not engine_real and not gpu"
 uv run wintersar --json bench --site benchmarks/sites/S_synthetic.yaml --out bench_result.json
+uv sync --extra docs && uv run mkdocs build --strict     # CI `docs` 잡과 같음 (#73)
 ```
 
 `engine` 마커(mock 어댑터 계약 테스트)는 CI 에 포함되고, `engine_real`(실제 엔진 필요)·`network`·`gpu` 만 제외됩니다.
@@ -182,7 +184,8 @@ wintersar 0.1.0.dev0 ships every plan phase (0–8) as code, tests and ADRs: bur
 the unwrap scheduler, a 20-entry diagnosis KB with `KB-UNKNOWN` fallback, ground-truth validation, reference
 point, closure and sweep tools, the research module, Zarr/COG IO, the bench protocol, a thin QGIS plugin and
 this documentation set. CI runs ruff, `mypy --strict`, unit + integration tests on synthetic data, the synthetic
-S benchmark and a Docker smoke test. What is **not** met, honestly: no real Sentinel-1 data has been processed
+S benchmark, `mkdocs build --strict` and a Docker smoke test. Incremental mode (`run --incremental`, PERF-06) ships
+for the fake path and the unwrap runner; real-engine adapters do not take part yet (#74) and no timing exists (#75). What is **not** met, honestly: no real Sentinel-1 data has been processed
 (no engines, credentials or credits in the development environment), so every real-site DoD in Phases 1, 2, 4,
 5, 6 and 7 is unmet; no performance number exists (rule 11.8); the QGIS plugin has not run inside QGIS; the
 licence table still has unverified rows (open-questions #4); several packages wait for a dependency-policy

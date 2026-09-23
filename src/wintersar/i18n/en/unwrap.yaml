@@ -38,6 +38,7 @@ unwrap:
     jumps: "Tile-seam jumps: {n_jump} / {n_boundaries} boundaries"
     outputs: "Outputs: {unw} · {stats}"
     reused: "reusing {n_reused} cached unwrapping result(s) · computing {n_new} (incremental mode, PERF-06)"
+    cache_unloadable: "cached result of {pair} could not be loaded ({error}); unwrapping it again"
   UNW-001:
     cause: "Unwrap backend '{method}' is not available ({detail})."
     fix: "Install it ({install_hint}), check the state with wintersar check-install, or set unwrap.method to an installed engine (snaphu, tophu)."

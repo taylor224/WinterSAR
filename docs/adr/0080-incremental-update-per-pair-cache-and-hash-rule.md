@@ -10,7 +10,10 @@
     `src/wintersar/unwrap/api.py::run_unwrap`
   - ADR-0031(노드 해시), ADR-0032(작업 디렉터리·manifest), ADR-0034(단계 파라미터 계약)
   - 테스트: `tests/integration/test_incremental.py`, `tests/unit/pipeline/test_incremental.py`,
-    `tests/unit/unwrap/test_api_incremental.py`
+    `tests/unit/unwrap/test_api_incremental.py` (읽을 수 없는 매니페스트·읽히지 않는 쌍 파일·쌍 단계 한정은
+    `test_unreadable_pair_manifest_is_discarded_but_named`, `test_plan_and_run_report_an_unreadable_pair_manifest`,
+    `test_an_unloadable_cached_pair_is_recomputed_not_a_stage_failure`,
+    `test_unloadable_cached_pair_is_unwrapped_again_not_fatal`, `test_only_pair_stages_take_part_in_the_sub_cache_contract`)
 
 ## 맥락 (Context)
 
@@ -40,7 +43,11 @@
 ### 1. 해시 규칙(`incremental.py`, `dag.py`)
 
 - 증분 단계 `INCREMENTAL_STAGES = (fetch, coregister, interferogram, multilook, unwrap)`. 시계열 이후는
-  내용 해시 그대로(전량 재역산이 맞다).
+  내용 해시 그대로(전량 재역산이 맞다). 이 중 **쌍 단계** `PAIR_STAGES = (interferogram, multilook, unwrap)`만
+  §2의 쌍 단위 서브캐시 계약에 참여한다. fetch/coregister는 해시 규칙(날짜 집합은 데이터)만 따른다: 작업이 쌍이
+  아니라 날짜 단위이고 엔진 작업 폴더(topsStack `coreg_secondarys/`, ADR-0082) 안에서 이미 재사용되므로 어떤
+  엔진(fake 포함)도 `pairs/`를 만들지 않는다. 따라서 실행기는 이 두 단계에 `_pairs_dir`/`_pairs_done`을 넘기지
+  않고 `extra["incremental"]`도 `PIPELINE-016`도 기록하지 않는다(`Node.pair_stage`).
 - `node_hash(stage, params, inputs, engine, version)`에서 증분 단계는 **`DATA_KEYS = {n_dates, dates, pairs}`**
   (최상위 키)를 params에서 빼고, **`DATA_INPUTS = {stack}`**(precheck 산출물)을 inputs에서 뺀다.
 - 증분 단계의 입력이 증분 단계에서 왔으면 그 입력의 식별자는 **생산 노드의 `node_hash`**다(`Dag._identity`).
@@ -69,12 +76,22 @@ work/<stage>/<hash>/
 - 실행기는 `incremental=True`이고 노드가 증분 단계이며 `--force`가 아닐 때 `out/`·`logs/`만 비우고 `pairs/`는
   남긴 뒤 `params["_pairs_dir"]`, `params["_pairs_done"]`(파일이 존재하는 항목만, 절대 경로)을 넘긴다.
 - 엔진/언래핑 실행기는 쌍마다 식별자 `pair_identity(params_hash, input_hash)`를 계산해 `_pairs_done`의 항목과
-  **식별자가 같고 파일이 온전(빠른 해시 `file_hash` 일치)**할 때만 재사용한다. 새로 계산한 쌍은 `pairs/`에 쓰고
-  manifest에 등록한다. `save()`는 참조되지 않는 결과 파일을 정리한다.
+  **식별자가 같고 파일이 온전(빠른 해시 `file_hash` 일치)**할 때만 재사용한다. `file_hash`가 없는 항목은 검증할 수
+  없으므로 재사용하지 않는다(`PairEntry.intact()`). 빠른 해시는 크기·mtime·앞뒤 1 MiB만 보므로 파일 중간 손상은
+  놓칠 수 있다: 온전해 보이는 적중이 **읽히지 않으면**(`np.load` 실패) 그 쌍 하나만 캐시 미스로 돌린다 —
+  `PairCache.discard(key)` 후 다시 계산·`store`(언래핑은 2차 라운드, fake는 즉시 합성). 단계 실패(`PIPELINE-001`)로
+  번지지 않는다. 새로 계산한 쌍은 `pairs/`에 쓰고 manifest에 등록한다. `save()`는 참조되지 않는 결과 파일을
+  정리한다.
+- `pairs/manifest.json`이 **있는데 읽을 수 없으면**(잘린 JSON, `pairs`가 매핑이 아님 …) 없는 것처럼 버리고 전량
+  계산하되, 원인을 `PairCache.manifest_error`(예외 클래스명 또는 `InvalidManifest`)에 남긴다. `plan`/`run`은
+  `extra["incremental"]["manifest"] = "unreadable"`과 `PIPELINE-017`(INFO, "매니페스트를 읽을 수 없어 N개 쌍을
+  모두 다시 계산")으로 이를 첫 증분 실행(매니페스트 없음, 조용함)과 구분해 보여 준다. 그 실행이 매니페스트를 다시
+  만든다. wintersar 자신의 `save()`는 원자적(tmp → replace)이라 이 상태를 만들지 않는다.
 - 산출물 meta에 `pairs`(스택 순서), `pairs_reused`, `pairs_computed`를 보고하면 실행기가
   `record.extra["pairs"]`, `record.extra["incremental"] = {requested, supported, reused, computed, computed_pairs}`로
   기록한다. 요청했는데 보고가 없으면 `supported: false` + `PIPELINE-016`(INFO) — 실제로는 전량 재계산했음을
-  숨기지 않는다.
+  숨기지 않는다. `PIPELINE-016`/`PIPELINE-017`은 "그 실행에서 일어난 일"이라 캐시 적중으로 manifest를 재생할 때는
+  빼고 보여 준다(`executor.cache_hit_record`, `RUN_EVENT_RULES`); 결과 자체에 대한 finding(UNW-003 등)은 재생된다.
 - 쌍 식별자의 "입력" 부분: fake 간섭도는 **쌍 키**(합성이 `(params, key)`의 순수 함수, 아래), multilook/unwrap은
   **쌍 배열의 내용 해시**(`pair_content_hash`: dtype·shape·bytes). 언래핑의 "파라미터" 부분은 `UnwrapCfg` 덤프 +
   *해석된* 계획(method, 타일 행·열·오버랩) + 백엔드로 가는 사용자 키 + `_tile_offset_cycles`이고 병렬도는 제외
@@ -99,6 +116,9 @@ work/<stage>/<hash>/
   구하고 `igrams` 사슬을 따라 상속한다. 모르면 `new: null`, 텍스트는 `?`.
 - 추정치: 증분 노드의 `n_pairs`는 새 쌍 수로 잡는다(`plan.stage_size`).
 - `RunResult.incremental`, `RunResult.partial`, `RunResult.pair_summary()`; `to_dict()`에 `incremental`, `pairs`.
+  `pair_summary()`는 `{"reused", "computed", "stage", "by_stage"}` — 단계별 수를 `by_stage`에 두고 상위 수치는
+  **한 단계**(가장 많이 계산한 단계, 동률이면 상류)의 값이다. 단계에 걸쳐 **합산하지 않는다**: 세 쌍 단계가 같은
+  쌍 집합을 다루므로 합산은 한 쌍을 세 번 세어 `PIPELINE-015`의 단계별 수와 어긋난다.
 - CLI 플래그(`--incremental`)와 표의 "부분 캐시" 행은 cli.py 소유자가 붙인다(i18n 키 `pipeline.cli.status_incremental`,
   `incremental_pairs`, `incremental_mode`는 준비됨).
 
@@ -111,5 +131,5 @@ work/<stage>/<hash>/
   (ADR-0081)이 노드 디렉터리 단위로 이를 회계한다.
 - 같은 노드 디렉터리를 덮어쓰므로 옛 날짜 집합의 `timeseries` 노드는 입력이 사라져 다시는 적중하지 않는다
   (의도: 최신 스택만 유효).
-- 실 엔진의 참여 조건은 ADR-0082. 측정(증분 1장 vs 전체)은 `bench_result.json`이 생기기 전에는 수치를 쓰지
-  않는다(규칙 11.8, open-questions #74).
+- 실 엔진의 참여 조건은 ADR-0082(실 엔진 검증 항목은 open-questions #74). 측정(증분 1장 vs 전체)은
+  `bench_result.json`이 생기기 전에는 수치를 쓰지 않는다(규칙 11.8, open-questions #75).

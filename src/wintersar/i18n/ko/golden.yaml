@@ -20,3 +20,31 @@ golden:
   GOLDEN-004:
     cause: "골든 파이프라인 실행이 '{stage}' 단계에서 실패했습니다: {error}"
     fix: "먼저 'pytest tests/integration'으로 fake engine 경로가 정상인지 확인하세요. --workdir를 지정하면 실행 디렉터리가 보존됩니다."
+  GOLDEN-005:
+    cause: "골든 파일 {path}을(를) 읽을 수 없습니다: {error}"
+    fix: "커밋된 파일을 되돌리거나('git checkout -- tests/regression/golden/') 'python scripts/make_golden.py'로 다시 만드세요(make_golden 은 읽을 수 없는 골든을 경고로 알린 뒤 덮어씁니다)."
+  GOLDEN-006:
+    cause: "사이트 정의 {path}({option})을(를) 읽을 수 없습니다: {error}"
+    fix: "{option}에 benchmarks/sites/S_synthetic.yaml 같은 사이트 YAML 을 지정하세요 — name, size, runner, stages, config, param_overrides 를 가진 매핑입니다(benchmarks/README.md 참조)."
+  GOLDEN-007:
+    cause: "골든 파일 {path}을(를) 쓸 수 없습니다: {error}"
+    fix: "출력 디렉터리에 쓸 수 있는지 확인하세요. 크기 상한을 넘었다면 통계가 아니라 배열이 골든에 들어간 것입니다(ADR-0100). golden_stats 는 스칼라 통계만 담아야 합니다."
+  mismatch:
+    line: "{path}: {kind} 기대={expected} 실제={actual}"
+    line_float: "{path}: {kind} 기대={expected} 실제={actual} ({tolerance})"
+    more: "... 그 외 {n}개"
+  args:
+    check_description: "합성 사이트를 fake engine 파이프라인으로 실행해 저장된 골든 통계와 비교합니다(ADR-0100~0102). 종료 코드 0 = 일치, 1 = 불일치·골든 없음/읽기 실패·실행 실패, 2 = 잘못된 입력."
+    make_description: "합성 사이트의 골든 통계를 다시 만들고 이전 골든과 달라진 값을 나열합니다(종료 0). --check 를 주면 비교만 합니다(불일치 시 종료 1). 검토된 의도적 변경 후에만 다시 만드세요(규칙 11.4)."
+    site: "사이트 YAML (기본값: {default})"
+    golden: "비교할 골든 stats.json (기본값: {default}/<site>/stats.json)"
+    out: "저장할 골든 stats.json (기본값: {default}/<site>/stats.json)"
+    workdir: "파이프라인 실행 디렉터리를 여기에 보존 (기본값: 삭제되는 임시 디렉터리)"
+    seed: "사이트가 seed 를 고정하지 않을 때 쓰는 interferogram seed (기본값: {default})"
+    rtol: "float 상대 허용 오차, ADR-0102 (기본값: {default:g})"
+    atol: "float 절대 허용 오차 (기본값: {default:g})"
+    fraction_atol: "*_fraction 값의 절대 허용 오차 (기본값: {default:g})"
+    lang: "메시지 언어 (기본값: WINTERSAR_LANG 또는 ko)"
+    json: "텍스트 대신 JSON 봉투를 stdout 에 출력 (오류 경로에서도)"
+    markdown: "Finding 을 Markdown 표로도 이 파일에 저장"
+    check: "쓰지 않고 저장된 골든과 비교만 하며 불일치 시 종료 코드 1"

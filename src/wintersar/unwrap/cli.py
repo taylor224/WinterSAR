@@ -28,8 +28,9 @@ from wintersar.util.output import (
     cli_finding,
     console,
     emit_json,
-    err_console,
     exit_with_findings,
+    print_action_failed,
+    print_error_findings,
     print_findings,
 )
 from wintersar.util.sysinfo import MachineSpec
@@ -264,9 +265,14 @@ def run_cmd(
             findings = _findings(raw)
         if state.json:
             emit_json("unwrap run", {"error": str(e), "stats": str(stats_path)}, findings, ok=False)
+        elif findings:
+            # the findings (UNW-001/UNW-005/…) already carry the message as cause -> fix;
+            # the raw, untranslated exception text is developer detail (-v)
+            print_error_findings(findings, state.lang)
+            if state.verbose:
+                print_action_failed(command, str(e))
         else:
-            err_console.print(f"[red]{e}[/]")
-            print_findings(findings, state.lang)
+            print_action_failed(command, str(e))
         raise typer.Exit(code=1) from e
     stats = json.loads(arts["unwrap_stats"].path.read_text(encoding="utf-8"))
     findings = _findings(stats)

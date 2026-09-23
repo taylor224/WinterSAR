@@ -22,6 +22,19 @@ on:
     - cron: "0 3 * * *" # 03:00 UTC daily
   workflow_dispatch:
 
+# Least privilege for GITHUB_TOKEN: the jobs only check out the code and exchange artifacts
+# inside this run, so `contents: read` is the single scope they need; naming one scope sets
+# every other scope to `none`.
+# source: https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions
+#   ("If you specify the access for any of these permissions, all of those that are not
+#   specified are set to `none`"; example `permissions:\n  contents: read`)
+# source: https://github.com/actions/download-artifact/blob/v4/README.md (`github-token` is
+#   "required when downloading artifacts from a different repository or from a different
+#   workflow run" only) and https://github.com/actions/upload-artifact/blob/v4/README.md
+#   (no token permission documented)
+permissions:
+  contents: read
+
 env:
   # The runner *class* the baseline is keyed on (benchmarks/baselines/S_synthetic.<RUNNER_CLASS>.json).
   # Pinned to an explicit image, not `ubuntu-latest`, so that the file name keeps meaning

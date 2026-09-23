@@ -14,7 +14,7 @@ import yaml
 
 from wintersar.bench import golden as g
 from wintersar.bench.sites import Site, load_site
-from wintersar.i18n import has_key
+from wintersar.i18n import has_key, t
 
 TINY_SITE: dict[str, Any] = {
     "name": "tiny",
@@ -117,7 +117,7 @@ def test_mismatches_to_findings_split_site_from_values() -> None:
     assert fs[1].params["tolerance"] == "rtol=1e-06 atol=1e-09"
     assert fs[1].evidence["expected_value"] == -0.005
     assert fs[0].message_key == "golden.GOLDEN-003.cause" and fs[0].fix_key
-    text = g.format_mismatches(ms, limit=2)
+    text = g.format_mismatches(ms, limit=2, lang="en")
     assert "velocity.mean" in text and "... 1 more" in text
 
 
@@ -130,7 +130,11 @@ def test_i18n_keys_exist_in_both_languages() -> None:
         "golden.check.ok",
         "golden.check.regenerate",
     ]
+    keys += [f"golden.mismatch.{k}" for k in ("line", "line_float", "more")]
+    keys += [f"golden.args.{k}" for k in g.ARG_KEYS]
     for rid in ("GOLDEN-001", "GOLDEN-002", "GOLDEN-003", "GOLDEN-004"):
+        keys += [f"golden.{rid}.cause", f"golden.{rid}.fix"]
+    for rid in ("GOLDEN-005", "GOLDEN-006", "GOLDEN-007"):
         keys += [f"golden.{rid}.cause", f"golden.{rid}.fix"]
     for lang in ("ko", "en"):
         missing = [k for k in keys if not has_key(k, lang)]
@@ -141,10 +145,34 @@ def test_i18n_keys_exist_in_both_languages() -> None:
 def test_array_stats_finite_only_float64() -> None:
     a = np.array([[1.0, 2.0], [np.nan, 4.0]], dtype=np.float32)
     s = g.array_stats(a)
-    assert s["n"] == 4 and s["n_finite"] == 3 and s["nan_fraction"] == pytest.approx(0.25)
+    assert s["n"] == 4 and s["nan_fraction"] == pytest.approx(0.25)
+    assert "n_finite" not in s  # ADR-0102: the finite count lives only in nan_fraction
     assert (s["min"], s["max"], s["mean"]) == (1.0, 4.0, pytest.approx(7.0 / 3.0))
     assert s["p50"] == 2.0 and all(isinstance(s[k], float) for k in ("std", "p05", "p95"))
-    assert g.array_stats(np.full(3, np.nan)) == {"n": 3, "n_finite": 0, "nan_fraction": 1.0}
+    assert g.array_stats(np.full(3, np.nan)) == {"n": 3, "nan_fraction": 1.0}
+
+
+def test_one_masked_pixel_flip_is_within_fraction_tolerance() -> None:
+    """ADR-0102: a threshold-boundary pixel flipping between platforms (1 of 2**17) must
+    not fail the layer, so ``array_stats`` stores no exact finite-pixel count next to the
+    tolerance-compared ``nan_fraction`` (the two carry the same information)."""
+    a = np.ones((256, 512), dtype=np.float32)  # constant values: only nan-ness differs
+    b = a.copy()
+    b[3, 7] = np.nan
+    sa, sb = g.array_stats(a), g.array_stats(b)
+    assert sa["n"] == sb["n"] == 131072 and sb["nan_fraction"] == pytest.approx(1 / 131072)
+    assert g.compare_golden({"unw": sa}, {"unw": sb}) == []
+    # ... whereas more than fraction_atol * n flipped pixels is still a mismatch
+    c = a.copy()
+    c.ravel()[:20] = np.nan  # 20 / 131072 = 1.5e-4 > 1e-4
+    ms = g.compare_golden({"unw": sa}, {"unw": g.array_stats(c)})
+    assert [(m.path, m.kind, m.tolerance) for m in ms] == [
+        ("unw.nan_fraction", "float", "atol=0.0001")
+    ]
+    # structural counts stay exact: a different size is a different array
+    assert [m.path for m in g.compare_golden({"unw": sa}, {"unw": g.array_stats(a[:-1])})] == [
+        "unw.n"
+    ]
 
 
 def test_golden_stats_of_tiny_site(tiny_site: Site, tmp_path: Path) -> None:
@@ -329,11 +357,148 @@ def test_site_change_is_golden_003(repo: Path, capsys: pytest.CaptureFixture[str
     assert site_f["params"]["path"] == "site.param_overrides.interferogram.n_dates"
 
 
-def test_scripts_bad_input_exit_2(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert g.main_check(["--site", str(tmp_path / "missing.yaml")], repo=tmp_path) == 2
-    assert g.main_make(["--site", str(tmp_path / "missing.yaml")], repo=tmp_path) == 2
-    err = capsys.readouterr().err
-    assert "missing.yaml" in err
+def test_scripts_missing_site_is_cli_006_exit_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Bad input keeps the ADR-0091 contract: cause → fix on stderr, or under ``--json`` the
+    envelope as the only stdout (nightly.yml redirects stdout into golden_check.json)."""
+    missing = tmp_path / "missing.yaml"
+    assert g.main_check(["--site", str(missing)], repo=tmp_path) == 2
+    assert g.main_make(["--site", str(missing)], repo=tmp_path) == 2
+    cap = capsys.readouterr()
+    assert cap.out == "" and "missing.yaml" in cap.err and "CLI-006" in cap.err
+    assert "Traceback" not in cap.err and "FileNotFoundError" not in cap.err
+    md = tmp_path / "summary.md"
+    argv = ["--json", "--site", str(missing), "--markdown", str(md)]
+    assert g.main_check(argv, repo=tmp_path) == 2
+    cap = capsys.readouterr()
+    env = json.loads(cap.out)
+    assert cap.err == "" and not env["ok"] and env["command"] == "check-golden"
+    (finding,) = env["findings"]
+    assert finding["rule_id"] == "CLI-006" and finding["params"]["option"] == "--site"
+    assert "missing.yaml" in finding["params"]["path"] and "CLI-006" in md.read_text("utf-8")
+    assert g.main_make(["--json", "--site", str(missing)], repo=tmp_path) == 2
+    assert json.loads(capsys.readouterr().out)["command"] == "make-golden"
+
+
+def test_scripts_unreadable_site_is_golden_006_exit_2(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """yaml.YAMLError is not a ValueError: a syntactically broken site YAML used to escape
+    as a traceback (exit 1); a non-mapping or schema-invalid site is the same finding."""
+    broken = tmp_path / "bad.yaml"
+    broken.write_text("name: [unclosed\n", encoding="utf-8")
+    assert g.main_check(["--json", "--site", str(broken)], repo=tmp_path) == 2
+    cap = capsys.readouterr()
+    env = json.loads(cap.out)
+    assert cap.err == "" and not env["ok"] and env["command"] == "check-golden"
+    (finding,) = env["findings"]
+    assert finding["rule_id"] == "GOLDEN-006" and "bad.yaml" in finding["params"]["path"]
+    assert finding["params"]["option"] == "--site" and finding["params"]["error"]
+    not_mapping = tmp_path / "list.yaml"
+    not_mapping.write_text("- 1\n", encoding="utf-8")
+    assert g.main_make(["--json", "--site", str(not_mapping)], repo=tmp_path) == 2
+    env = json.loads(capsys.readouterr().out)
+    assert env["command"] == "make-golden" and env["findings"][0]["rule_id"] == "GOLDEN-006"
+    invalid = tmp_path / "invalid.yaml"
+    invalid.write_text("name: x\nstages: not-a-list\n", encoding="utf-8")
+    assert g.main_check(["--lang", "en", "--site", str(invalid)], repo=tmp_path) == 2
+    cap = capsys.readouterr()
+    assert cap.out == "" and "GOLDEN-006" in cap.err and "Traceback" not in cap.err
+    assert "Site definition" in cap.err  # translated cause, not a raw key
+
+
+def test_corrupt_golden_is_golden_005(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A golden that is not JSON / not an object: check → GOLDEN-005 FAIL (exit 1, no
+    traceback); make → GOLDEN-005 WARN and the file is regenerated (exit 0)."""
+    golden_file = g.golden_path(repo, "tiny")
+    golden_file.parent.mkdir(parents=True)
+    golden_file.write_text("{bad", encoding="utf-8")
+    res = g.check_golden(load_site(repo / g.DEFAULT_SITE), golden_file, tmp_path / "w")
+    assert not res.ok and [f.rule_id for f in res.findings] == ["GOLDEN-005"]
+    assert res.golden is None and res.stats is None and res.mismatches == []
+    assert g.main_check(["--json"], repo=repo) == 1
+    env = json.loads(capsys.readouterr().out)
+    assert not env["ok"] and [f["rule_id"] for f in env["findings"]] == ["GOLDEN-005"]
+    assert (
+        env["data"]["n_leaves"] is None
+        and "JSONDecodeError" in env["findings"][0]["params"]["error"]
+    )
+    assert g.main_make(["--check", "--lang", "en"], repo=repo) == 1
+    cap = capsys.readouterr()
+    assert "GOLDEN-005" in cap.out and "Traceback" not in cap.err
+    assert g.main_make(["--json"], repo=repo) == 0
+    env = json.loads(capsys.readouterr().out)
+    (warning,) = env["findings"]
+    assert env["ok"] and warning["rule_id"] == "GOLDEN-005" and warning["severity"] == "WARN"
+    assert env["data"]["n_changed"] == 0  # nothing to diff against
+    assert g.load_golden(golden_file)["schema_version"] == g.GOLDEN_SCHEMA_VERSION
+    assert g.main_check(["--json"], repo=repo) == 0
+    capsys.readouterr()
+    golden_file.write_text("[1, 2]", encoding="utf-8")  # JSON, but not an object
+    assert g.main_make(["--lang", "en"], repo=repo) == 0
+    cap = capsys.readouterr()
+    assert "GOLDEN-005" in cap.err and "Golden statistics written" in cap.out
+
+
+def test_unwritable_golden_is_golden_007_exit_1(
+    repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    blocker = tmp_path / "blocker"
+    blocker.write_text("x", encoding="utf-8")
+    out = blocker / "stats.json"  # parent is a regular file → OSError on mkdir
+    assert g.main_make(["--json", "--out", str(out)], repo=repo) == 1
+    env = json.loads(capsys.readouterr().out)
+    assert not env["ok"] and [f["rule_id"] for f in env["findings"]] == ["GOLDEN-007"]
+    assert "stats.json" in env["findings"][0]["params"]["path"]
+
+
+def test_unexpected_exception_is_cli_001_not_a_traceback(
+    repo: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def boom(*_a: Any, **_k: Any) -> Any:
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(g, "compute_golden", boom)
+    assert g.main_make(["--json"], repo=repo) == 1
+    env = json.loads(capsys.readouterr().out)
+    assert not env["ok"] and env["findings"][0]["rule_id"] == "CLI-001"
+    assert "kaboom" in env["data"]["error"]
+    g.write_golden({"x": 1}, g.golden_path(repo, "tiny"))
+    assert g.main_check(["--lang", "en"], repo=repo) == 1
+    cap = capsys.readouterr()
+    assert "CLI-001" in cap.err and "kaboom" in cap.err and "Traceback" not in cap.err
+
+
+def test_help_and_mismatch_listing_come_from_the_catalogue(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rule 11.6 for the dev scripts: option descriptions and the mismatch lines are
+    catalogue keys; ``--lang`` is resolved from argv before argparse renders --help."""
+    monkeypatch.setenv("COLUMNS", "500")  # no line wrapping in format_help()
+    for lang in ("ko", "en"):
+        check_help = g._parser("check_golden.py", check_only=True, lang=lang).format_help()
+        make_help = g._parser("make_golden.py", check_only=False, lang=lang).format_help()
+        assert t("golden.args.lang", lang) in check_help
+        assert t("golden.args.golden", lang, default=str(g.GOLDEN_DIRNAME)) in check_help
+        assert t("golden.args.out", lang, default=str(g.GOLDEN_DIRNAME)) in make_help
+        assert t("golden.args.check", lang) in make_help and "--check" not in check_help
+        assert t("golden.args.check_description", lang) in check_help
+    m = [
+        g.Mismatch("velocity.mean", "float", 1.0, 2.0, "rtol=1e-06 atol=1e-09"),
+        g.Mismatch("n_pairs", "value", 1, 2),
+    ]
+    ko, en = g.format_mismatches(m, lang="ko"), g.format_mismatches(m, lang="en")
+    assert "기대=1.0 실제=2.0 (rtol=1e-06 atol=1e-09)" in ko and "n_pairs: value 기대=1" in ko
+    assert "expected=1.0 actual=2.0 (rtol=1e-06 atol=1e-09)" in en and "(exact)" not in en
+    assert g.format_mismatches(m, limit=1, lang="en").endswith(t("golden.mismatch.more", "en", n=1))
+    assert g._script_lang(["--json", "--lang", "en"]) == "en"
+    assert g._script_lang(["--lang=ko"]) == "ko" and g._script_lang([]) is None
+    with pytest.raises(SystemExit) as ei:  # argparse rejects an unsupported language
+        g.main_check(["--lang", "fr"])
+    assert ei.value.code == 2
 
 
 def test_repo_scripts_are_thin_wrappers() -> None:

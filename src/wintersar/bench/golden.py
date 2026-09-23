@@ -19,6 +19,15 @@ Three layers use it:
   into ``GOLDEN-00x`` findings.
 * :func:`main_make` / :func:`main_check` back ``scripts/make_golden.py`` (regenerate, or
   ``--check``) and ``scripts/check_golden.py`` (CI entry point, exit 1 on mismatch).
+
+The two scripts keep the CLI output contract (CLAUDE.md "envelope vs exit code", ADR-0091):
+every error path is a ``Finding`` — ``CLI-006`` / ``GOLDEN-006`` for a site file that is
+missing or unreadable (exit 2), ``GOLDEN-005`` for a golden that cannot be parsed,
+``GOLDEN-007`` when the golden cannot be written and ``CLI-001`` for anything unexpected
+(exit 1) — printed as the JSON envelope under ``--json`` or as cause → fix lines on stderr,
+never as a traceback (rule 11.11: no unmasked paths). Option help and the mismatch listing
+come from ``i18n/{ko,en}/golden.yaml``; only argparse's own boilerplate (``usage:``, the
+message of an unknown option) stays in English (ADR-0100).
 """
 
 from __future__ import annotations
@@ -34,18 +43,24 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
+import yaml
 from numpy.typing import NDArray
 
 from wintersar.bench.runner import compute_metrics
 from wintersar.bench.sites import Site, build_config, load_site
-from wintersar.i18n import t
+from wintersar.i18n import SUPPORTED, t
 from wintersar.io.schemas import Artifact, Finding, Severity
+from wintersar.util.clihelp import lang_from_argv
 from wintersar.util.masking import mask_mapping, mask_text
 from wintersar.util.output import (
+    CLI_INPUT_MISSING,
+    CLI_UNEXPECTED,
+    cli_finding,
     console,
     emit_json,
     err_console,
     findings_to_markdown,
+    print_error_findings,
     print_findings,
     to_jsonable,
 )
@@ -53,7 +68,9 @@ from wintersar.util.output import (
 if TYPE_CHECKING:
     from wintersar.pipeline.api import RunResult
 
-GOLDEN_SCHEMA_VERSION = 1
+# 2: ``n_finite`` dropped from ``array_stats`` (ADR-0102 — it is ``n * (1 - nan_fraction)``
+# and an exact integer next to a tolerance-compared fraction defeated that tolerance).
+GOLDEN_SCHEMA_VERSION = 2
 GENERATOR = "wintersar.bench.golden"
 # source: src/wintersar/bench/runner.py::pipeline_runner — ``seed`` defaults to the repeat
 # index, so the golden is bench repeat 0 of the same site definition.
@@ -63,6 +80,23 @@ GOLDEN_DIRNAME = Path("tests") / "regression" / "golden"
 DEFAULT_SITE = Path("benchmarks") / "sites" / "S_synthetic.yaml"
 MAX_GOLDEN_BYTES = 50_000
 PERCENTILES: tuple[int, ...] = (5, 25, 50, 75, 95)
+# ``golden.args.<key>`` catalogue keys behind the two scripts' --help (rule 11.6).
+ARG_KEYS: tuple[str, ...] = (
+    "check_description",
+    "make_description",
+    "site",
+    "golden",
+    "out",
+    "workdir",
+    "seed",
+    "rtol",
+    "atol",
+    "fraction_atol",
+    "lang",
+    "json",
+    "markdown",
+    "check",
+)
 # Site fields that must be identical between the golden and the current YAML (exact).
 SITE_KEYS: tuple[str, ...] = (
     "name",
@@ -104,7 +138,8 @@ class Tolerances:
     * floats whose leaf key ends with ``fraction_suffix`` (pixel fractions): absolute
       ``fraction_atol`` only — a one-ulp change of a coherence value at the threshold flips
       one pixel, which must not fail the layer, whereas an algorithm change moves fractions
-      by orders of magnitude more.
+      by orders of magnitude more. Pixel *counts* are therefore never stored next to a
+      fraction (:func:`array_stats` keeps ``n``, the shape, and ``nan_fraction`` only).
     """
 
     rtol: float = 1e-6
@@ -215,15 +250,22 @@ def _short(v: Any, limit: int = 120) -> str:
 
 
 def _finding(rule_id: str, severity: Severity, scope: str | None = None, **params: Any) -> Finding:
+    """A ``GOLDEN-00x`` finding; string params are masked (rule 11.11) because they are
+    rendered on the console and in the Markdown summary, not only in the envelope."""
+    masked = {k: mask_text(v) if isinstance(v, str) else v for k, v in params.items()}
     return Finding(
         rule_id=rule_id,
         severity=severity,
         message_key=f"golden.{rule_id}.cause",
         fix_key=f"golden.{rule_id}.fix",
-        params=params,
-        evidence=dict(params),
+        params=masked,
+        evidence=dict(masked),
         scope=scope,
     )
+
+
+def _error_text(exc: BaseException, limit: int = 300) -> str:
+    return mask_text(f"{type(exc).__name__}: {exc}")[:limit]
 
 
 def mismatches_to_findings(mismatches: Sequence[Mismatch]) -> list[Finding]:
@@ -248,15 +290,25 @@ def mismatches_to_findings(mismatches: Sequence[Mismatch]) -> list[Finding]:
     return out
 
 
-def format_mismatches(mismatches: Sequence[Mismatch], limit: int = 40) -> str:
-    """Plain-text listing for assertion messages (one line per mismatch)."""
+def format_mismatches(
+    mismatches: Sequence[Mismatch], limit: int = 40, lang: str | None = None
+) -> str:
+    """Plain-text listing (one line per mismatch) for the console and assertion messages;
+    the line templates are catalogue keys ``golden.mismatch.*`` (rule 11.6)."""
     lines = [
-        f"{m.path}: {m.kind} expected={_short(m.expected)} actual={_short(m.actual)}"
-        + (f" ({m.tolerance})" if m.kind == "float" else "")
+        t(
+            "golden.mismatch.line_float" if m.kind == "float" else "golden.mismatch.line",
+            lang,
+            path=m.path,
+            kind=m.kind,
+            expected=_short(m.expected),
+            actual=_short(m.actual),
+            tolerance=m.tolerance,
+        )
         for m in mismatches[:limit]
     ]
     if len(mismatches) > limit:
-        lines.append(f"... {len(mismatches) - limit} more")
+        lines.append(t("golden.mismatch.more", lang, n=len(mismatches) - limit))
     return "\n".join(lines)
 
 
@@ -274,12 +326,17 @@ def _load_arrays(path: Path | None) -> dict[str, NDArray[Any]] | None:
 
 def array_stats(a: NDArray[Any]) -> dict[str, Any]:
     """min/max/mean/std/percentiles over the finite values of ``a`` (float64 accumulation
-    so that float32 inputs give the same numbers on every platform up to ~1e-9)."""
+    so that float32 inputs give the same numbers on every platform up to ~1e-9).
+
+    ``n`` is the array size (exact, a shape property); the number of finite values is
+    stored only as ``nan_fraction`` so that a threshold-boundary pixel flipping between
+    platforms is judged by the ``*_fraction`` tolerance (ADR-0102), not by an exact
+    integer compare of the same information.
+    """
     x = np.asarray(a, dtype=np.float64).ravel()
     finite = x[np.isfinite(x)]
     out: dict[str, Any] = {
         "n": int(x.size),
-        "n_finite": int(finite.size),
         "nan_fraction": float(1.0 - finite.size / x.size) if x.size else 0.0,
     }
     if finite.size == 0:
@@ -518,7 +575,11 @@ def check_golden(
     if not gp.exists():
         res.findings.append(_finding("GOLDEN-002", "FAIL", path=str(gp)))
         return res
-    res.golden = load_golden(gp)
+    try:
+        res.golden = load_golden(gp)
+    except (OSError, ValueError) as e:  # unreadable / not JSON / not an object
+        res.findings.append(_finding("GOLDEN-005", "FAIL", path=str(gp), error=_error_text(e)))
+        return res
     stats, result = compute_golden(site, workdir, seed)
     res.stats = stats
     if not result.ok:
@@ -538,39 +599,121 @@ def check_golden(
 
 
 # ============================================================================ script mains
-def _parser(prog: str, check_only: bool) -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog=prog)
-    p.add_argument("--site", type=Path, default=None, help="site YAML (default S_synthetic)")
+# Errors of loading a site YAML: the file itself (OSError), its content (yaml.YAMLError is
+# *not* a ValueError; pydantic's ValidationError and the "top level must be a mapping"
+# check are). # source: .venv/lib/python3.11/site-packages/yaml/error.py (YAMLError(Exception))
+SITE_LOAD_ERRORS: tuple[type[Exception], ...] = (OSError, ValueError, yaml.YAMLError)
+
+
+def _parser(prog: str, check_only: bool, lang: str | None = None) -> argparse.ArgumentParser:
+    """Argument parser whose descriptions come from ``golden.args.*`` (rule 11.6).
+
+    argparse renders ``--help`` while parsing, before ``--lang`` is known, so the caller
+    resolves the language from ``argv`` first (:func:`_script_lang`, ADR-0090 for the same
+    problem in the typer CLI). argparse's own boilerplate (``usage:``, ``show this help
+    message``, unknown-option messages) is stdlib text and stays in English.
+    """
+
+    def h(key: str, **params: Any) -> str:
+        assert key in ARG_KEYS, key  # keep ARG_KEYS (the i18n test) in sync with the parser
+        return t(f"golden.args.{key}", lang, **params)
+
+    p = argparse.ArgumentParser(
+        prog=prog, description=h("check_description" if check_only else "make_description")
+    )
+    p.add_argument("--site", type=Path, default=None, help=h("site", default=str(DEFAULT_SITE)))
     p.add_argument(
         "--golden" if check_only else "--out",
         dest="golden",
         type=Path,
         default=None,
-        help="golden stats.json (default tests/regression/golden/<site>/stats.json)",
+        help=h("golden" if check_only else "out", default=str(GOLDEN_DIRNAME)),
     )
-    p.add_argument("--workdir", type=Path, default=None, help="keep the run directory here")
-    p.add_argument("--seed", type=int, default=GOLDEN_SEED)
-    p.add_argument("--rtol", type=float, default=DEFAULT_TOLERANCES.rtol)
-    p.add_argument("--atol", type=float, default=DEFAULT_TOLERANCES.atol)
-    p.add_argument("--fraction-atol", type=float, default=DEFAULT_TOLERANCES.fraction_atol)
-    p.add_argument("--lang", default=None, help="ko | en (default: WINTERSAR_LANG or ko)")
-    p.add_argument("--json", action="store_true", help="print a JSON envelope on stdout")
-    p.add_argument("--markdown", type=Path, default=None, help="write the findings as Markdown")
+    p.add_argument("--workdir", type=Path, default=None, help=h("workdir"))
+    p.add_argument("--seed", type=int, default=GOLDEN_SEED, help=h("seed", default=GOLDEN_SEED))
+    p.add_argument(
+        "--rtol",
+        type=float,
+        default=DEFAULT_TOLERANCES.rtol,
+        help=h("rtol", default=DEFAULT_TOLERANCES.rtol),
+    )
+    p.add_argument(
+        "--atol",
+        type=float,
+        default=DEFAULT_TOLERANCES.atol,
+        help=h("atol", default=DEFAULT_TOLERANCES.atol),
+    )
+    p.add_argument(
+        "--fraction-atol",
+        type=float,
+        default=DEFAULT_TOLERANCES.fraction_atol,
+        help=h("fraction_atol", default=DEFAULT_TOLERANCES.fraction_atol),
+    )
+    p.add_argument("--lang", default=None, choices=SUPPORTED, help=h("lang"))
+    p.add_argument("--json", action="store_true", help=h("json"))
+    p.add_argument("--markdown", type=Path, default=None, help=h("markdown"))
     if not check_only:
-        p.add_argument(
-            "--check",
-            action="store_true",
-            help="do not write; compare with the stored golden and exit 1 on a mismatch",
-        )
+        p.add_argument("--check", action="store_true", help=h("check"))
     return p
 
 
+def _script_lang(argv: Sequence[str]) -> str | None:
+    """``--lang`` from ``argv`` (``None`` → ``WINTERSAR_LANG`` or ``ko`` inside :func:`t`)."""
+    return lang_from_argv(argv)
+
+
 def _resolve(args: argparse.Namespace, repo: Path) -> tuple[Site, Path, Tolerances]:
+    """Load the site and pick the golden path; raises :data:`SITE_LOAD_ERRORS` for a bad
+    ``--site`` (the callers turn that into ``CLI-006`` / ``GOLDEN-006``)."""
     site_path = args.site if args.site is not None else repo / DEFAULT_SITE
     site = load_site(site_path)
     golden_file = args.golden if args.golden is not None else golden_path(repo, site.name)
     tol = Tolerances(rtol=args.rtol, atol=args.atol, fraction_atol=args.fraction_atol)
     return site, golden_file, tol
+
+
+def _site_findings(exc: BaseException, args: argparse.Namespace, repo: Path) -> list[Finding]:
+    """``CLI-006`` when the site file does not exist, ``GOLDEN-006`` when it cannot be
+    parsed or validated (both are bad input → exit 2)."""
+    site_path = args.site if args.site is not None else repo / DEFAULT_SITE
+    if isinstance(exc, FileNotFoundError):
+        return [cli_finding(CLI_INPUT_MISSING, path=str(site_path), option="--site")]
+    return [
+        _finding("GOLDEN-006", "FAIL", path=str(site_path), option="--site", error=_error_text(exc))
+    ]
+
+
+def _fail(
+    command: str,
+    findings: Sequence[Finding],
+    args: argparse.Namespace,
+    lang: str | None,
+    code: int,
+    data: Any = None,
+) -> int:
+    """Error-path output (ADR-0091): the envelope on stdout under ``--json``, otherwise the
+    findings cause → fix on stderr; ``--markdown`` still gets the table so a CI job summary
+    shows the reason. Returns ``code`` (2 bad input, 1 action failed)."""
+    fs = list(findings)
+    if args.markdown is not None:
+        args.markdown.parent.mkdir(parents=True, exist_ok=True)
+        args.markdown.write_text(findings_to_markdown(fs, lang), encoding="utf-8")
+    if args.json:
+        emit_json(command, data, fs, ok=False)
+    else:
+        print_error_findings(fs, lang)
+    return code
+
+
+def _unexpected(
+    command: str, exc: BaseException, args: argparse.Namespace, lang: str | None
+) -> int:
+    """``CLI-001`` for an exception that escaped the script body — the same contract as
+    ``wintersar.cli.main`` (an envelope is always emitted under ``--json``, never a
+    traceback with unmasked paths)."""
+    detail = _error_text(exc, limit=500)
+    finding = cli_finding(CLI_UNEXPECTED, error=detail)
+    return _fail(command, [finding], args, lang, 1, data={"error": detail})
 
 
 def _report(
@@ -601,22 +744,32 @@ def _report(
 
 def main_check(argv: Sequence[str] | None = None, repo: Path | str | None = None) -> int:
     """``scripts/check_golden.py``: exit 0 when the fresh statistics match the golden, 1 when
-    they do not (or the golden is missing / the run failed), 2 on bad input."""
+    they do not (or the golden is missing / unreadable, the run failed, or something
+    unexpected happened), 2 on bad input (site file missing / unreadable)."""
     root = Path(repo) if repo is not None else Path.cwd()
-    args = _parser("check_golden.py", check_only=True).parse_args(list(argv or []))
+    argv = list(argv or [])
+    lang = _script_lang(argv)
+    args = _parser("check_golden.py", check_only=True, lang=lang).parse_args(argv)
     try:
         site, golden_file, tol = _resolve(args, root)
-    except (OSError, ValueError) as e:
-        err_console.print(mask_text(f"{type(e).__name__}: {e}"))
-        return 2
-    lang = args.lang
+    except SITE_LOAD_ERRORS as e:
+        return _fail("check-golden", _site_findings(e, args, root), args, lang, 2)
+    try:
+        return _run_check(site, golden_file, tol, args, lang)
+    except Exception as e:  # the script's CLI-001 boundary (like wintersar.cli.main)
+        return _unexpected("check-golden", e, args, lang)
+
+
+def _run_check(
+    site: Site, golden_file: Path, tol: Tolerances, args: argparse.Namespace, lang: str | None
+) -> int:
     if not args.json:
         console.print(
             t(
                 "golden.check.start",
                 lang,
                 site=site.name,
-                path=str(golden_file),
+                path=mask_text(str(golden_file)),
                 seed=golden_seed(site, args.seed),
             )
         )
@@ -628,23 +781,34 @@ def main_check(argv: Sequence[str] | None = None, repo: Path | str | None = None
 
 
 def main_make(argv: Sequence[str] | None = None, repo: Path | str | None = None) -> int:
-    """``scripts/make_golden.py``: regenerate the golden (exit 0), or with ``--check`` behave
-    like :func:`main_check` without writing."""
+    """``scripts/make_golden.py``: regenerate the golden (exit 0; a previous golden that
+    cannot be parsed is reported as ``GOLDEN-005`` WARN and overwritten), or with
+    ``--check`` behave like :func:`main_check` without writing. Exit 1 when the pipeline
+    run fails (``GOLDEN-004``), the golden cannot be written (``GOLDEN-007``) or something
+    unexpected happens (``CLI-001``); 2 on bad input."""
     root = Path(repo) if repo is not None else Path.cwd()
-    args = _parser("make_golden.py", check_only=False).parse_args(list(argv or []))
+    argv = list(argv or [])
+    lang = _script_lang(argv)
+    args = _parser("make_golden.py", check_only=False, lang=lang).parse_args(argv)
     try:
         site, golden_file, tol = _resolve(args, root)
-    except (OSError, ValueError) as e:
-        err_console.print(mask_text(f"{type(e).__name__}: {e}"))
-        return 2
-    lang = args.lang
+    except SITE_LOAD_ERRORS as e:
+        return _fail("make-golden", _site_findings(e, args, root), args, lang, 2)
+    try:
+        if args.check:
+            return _run_check(site, golden_file, tol, args, lang)
+        return _run_make(site, golden_file, tol, args, lang)
+    except Exception as e:  # the script's CLI-001 boundary (like wintersar.cli.main)
+        return _unexpected("make-golden", e, args, lang)
+
+
+def _run_make(
+    site: Site, golden_file: Path, tol: Tolerances, args: argparse.Namespace, lang: str | None
+) -> int:
     with tempfile.TemporaryDirectory(prefix="wintersar-golden-") as tmp:
         wd = args.workdir if args.workdir is not None else Path(tmp)
-        if args.check:
-            res = check_golden(site, golden_file, wd, tol, args.seed)
-            _report("check-golden", res, golden_file, args, lang)
-            return 0 if res.ok else 1
         stats, result = compute_golden(site, wd, args.seed)
+    golden_str = mask_text(str(golden_file))
     if not result.ok:
         f = _finding(
             "GOLDEN-004",
@@ -653,16 +817,24 @@ def main_make(argv: Sequence[str] | None = None, repo: Path | str | None = None)
             stage=result.failed_stage or "?",
             error=mask_text(result.error or "")[:300],
         )
-        if args.json:
-            emit_json("make-golden", {"golden": str(golden_file)}, [f], ok=False)
-        else:
-            print_findings([f], lang)
-        return 1
-    previous = load_golden(golden_file) if golden_file.exists() else None
+        return _fail("make-golden", [f], args, lang, 1, data={"golden": golden_str})
+    previous: dict[str, Any] | None = None
+    warnings: list[Finding] = []
+    if golden_file.exists():
+        try:
+            previous = load_golden(golden_file)
+        except (OSError, ValueError) as e:  # corrupt previous golden: report, then overwrite
+            warnings.append(
+                _finding("GOLDEN-005", "WARN", path=str(golden_file), error=_error_text(e))
+            )
     changes = compare_golden(previous, stats, tol) if previous is not None else []
-    n_bytes = write_golden(stats, golden_file)
+    try:
+        n_bytes = write_golden(stats, golden_file)
+    except (OSError, ValueError) as e:  # unwritable path, or statistics over the size cap
+        f = _finding("GOLDEN-007", "FAIL", path=str(golden_file), error=_error_text(e))
+        return _fail("make-golden", [f, *warnings], args, lang, 1, data={"golden": golden_str})
     data = {
-        "golden": str(golden_file),
+        "golden": golden_str,
         "n_bytes": n_bytes,
         "n_leaves": count_leaves(stats),
         "seed": golden_seed(site, args.seed),
@@ -672,16 +844,19 @@ def main_make(argv: Sequence[str] | None = None, repo: Path | str | None = None)
     if args.markdown is not None:
         args.markdown.parent.mkdir(parents=True, exist_ok=True)
         args.markdown.write_text(
-            findings_to_markdown(mismatches_to_findings(changes), lang), encoding="utf-8"
+            findings_to_markdown([*warnings, *mismatches_to_findings(changes)], lang),
+            encoding="utf-8",
         )
     if args.json:
-        emit_json("make-golden", data, [], ok=True)
+        emit_json("make-golden", data, warnings, ok=True)
         return 0
+    if warnings:
+        print_error_findings(warnings, lang)
     console.print(
         t(
             "golden.make.written",
             lang,
-            path=str(golden_file),
+            path=golden_str,
             n_bytes=n_bytes,
             n_leaves=count_leaves(stats),
         )
@@ -690,7 +865,7 @@ def main_make(argv: Sequence[str] | None = None, repo: Path | str | None = None)
         return 0
     if changes:
         console.print(t("golden.make.changed", lang, n=len(changes)))
-        console.print(format_mismatches(changes))
+        console.print(format_mismatches(changes, lang=lang))
     else:
         console.print(t("golden.make.unchanged", lang, n_leaves=count_leaves(stats)))
     return 0

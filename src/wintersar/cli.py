@@ -30,6 +30,7 @@ from wintersar.util import clihelp
 from wintersar.util.clihelp import h
 from wintersar.util.clistate import state
 from wintersar.util.output import (
+    CLI_BAD_VALUE,
     CLI_EXISTS,
     cli_finding,
     console,
@@ -125,10 +126,22 @@ def check_install(
     from wintersar.engines.base import list_engines
     from wintersar.util import sysinfo
 
+    registry = list_engines()
+    # a typo in a CI gate (``--strict --engine snaphuu``) must not pass as "nothing to check"
+    unknown = [name for name in engines or [] if name not in registry]
+    if unknown:
+        finding = cli_finding(
+            CLI_BAD_VALUE,
+            option="--engine",
+            value=", ".join(unknown),
+            allowed=" | ".join(sorted(registry)),
+            command="check-install",
+        )
+        raise exit_with_findings("check-install", [finding])
     spec = sysinfo.detect()
     findings: list[Finding] = []
     rows: list[dict[str, object]] = []
-    for name, cls in sorted(list_engines().items()):
+    for name, cls in sorted(registry.items()):
         if engines and name not in engines:
             continue
         eng = cls()
@@ -311,6 +324,9 @@ def init(
 
 
 def _mount_module_clis() -> None:
+    # an embedding interpreter (QGIS, a C host) may import this module without sys.argv
+    argv = getattr(sys, "argv", [])
+    verbose = "-v" in argv or "--verbose" in argv
     for mod_path in _MODULE_CLIS:
         try:
             mod = importlib.import_module(mod_path)
@@ -319,12 +335,12 @@ def _mount_module_clis() -> None:
                 mod_path.startswith(e.name) or e.name.startswith(mod_path.rsplit(".", 1)[0])
             ):
                 continue  # module not implemented yet
-            if "-v" in sys.argv or "--verbose" in sys.argv:
-                err_console.print(f"[yellow]skip {mod_path}: {e}[/]")
+            if verbose:
+                err_console.print(f"skip {mod_path}: {e}", style="yellow", markup=False)
             continue
         except Exception as e:
-            if "-v" in sys.argv or "--verbose" in sys.argv:
-                err_console.print(f"[yellow]skip {mod_path}: {e!r}[/]")
+            if verbose:
+                err_console.print(f"skip {mod_path}: {e!r}", style="yellow", markup=False)
             continue
         register = getattr(mod, "register", None)
         if callable(register):

@@ -65,15 +65,32 @@ class RunResult:
             and int(r.extra["incremental"].get("reused") or 0) > 0
         ]
 
-    def pair_summary(self) -> dict[str, int]:
-        """``{"reused": n, "computed": m}`` summed over the stages that ran."""
-        reused = computed = 0
+    def pair_summary(self) -> dict[str, Any]:
+        """Per-pair accounting of the incremental stages that ran (PERF-06).
+
+        ``by_stage`` holds every stage's ``{"reused", "computed"}``. The top-level
+        ``reused`` / ``computed`` are the counts of one stage, ``stage`` — the one that
+        computed the most pairs (ties: the upstream-most), i.e. the stage that bounds what
+        the run had to do. They are **never summed** over stages: every pair stage handles
+        the same pair set, so a sum would count each pair once per stage and contradict the
+        per-stage ``PIPELINE-015`` findings.
+        """
+        by_stage: dict[str, dict[str, int]] = {}
         for r in self.ran:
             info = r.extra.get("incremental")
             if isinstance(info, dict):
-                reused += int(info.get("reused") or 0)
-                computed += int(info.get("computed") or 0)
-        return {"reused": reused, "computed": computed}
+                by_stage[r.stage] = {
+                    "reused": int(info.get("reused") or 0),
+                    "computed": int(info.get("computed") or 0),
+                }
+        stage = max(by_stage, key=lambda s: by_stage[s]["computed"], default=None)
+        top = by_stage.get(stage or "", {"reused": 0, "computed": 0})
+        return {
+            "reused": top["reused"],
+            "computed": top["computed"],
+            "stage": stage,
+            "by_stage": by_stage,
+        }
 
     def to_dict(self) -> dict[str, Any]:
         return {

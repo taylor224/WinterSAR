@@ -8,8 +8,9 @@ here. Regenerate only after a reviewed, intended change (rule 11.4)::
     .venv/bin/python scripts/make_golden.py --check   # see the differences
     .venv/bin/python scripts/make_golden.py           # rewrite the golden
 
-Tolerances (ADR-0102): exact for counts, ids, names and shapes; ``rtol=1e-6``/``atol=1e-9``
-for floats; ``atol=1e-4`` for pixel fractions.
+Tolerances (ADR-0102): exact for structural counts (``n``, ``n_pairs``, shapes), ids and
+names; ``rtol=1e-6``/``atol=1e-9`` for floats; ``atol=1e-4`` for pixel fractions (finite-pixel
+counts are stored only as ``nan_fraction`` so that a threshold pixel flip is judged by that).
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ pytestmark = [pytest.mark.slow, pytest.mark.timeout(int(BUDGET_S))]
 def _regenerate_hint(mismatches: list[g.Mismatch]) -> str:
     return (
         f"golden mismatch ({len(mismatches)}):\n"
-        + g.format_mismatches(mismatches)
+        + g.format_mismatches(mismatches, lang="en")
         + "\n"
         + t("golden.check.regenerate", "en")
     )

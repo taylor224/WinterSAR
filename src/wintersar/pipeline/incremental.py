@@ -27,6 +27,15 @@ time series. Two mechanisms make that possible without changing the DAG cache co
    fake interferogram the input is the pair key (synthesis is a pure function of it), for
    unwrapping it is the content hash of the pair's arrays (:func:`pair_content_hash`).
    Real engines receive the same keys and may ignore them (ADR-0082).
+
+   Only the :data:`PAIR_STAGES` (interferogram, multilook, unwrap) take part in this
+   contract: ``fetch``/``coregister`` follow the hash rule but their work is per date inside
+   the engine's own working directory (ADR-0082), so they are never asked for sub-caching
+   and never reported as "not supporting" it. A ``pairs/manifest.json`` that exists but
+   cannot be read is discarded (every pair is computed again) and the cause is carried on
+   :attr:`PairCache.manifest_error` so the plan/run can say so (``PIPELINE-017``); a
+   cached pair file that turns out unloadable is a cache miss for that pair, not a stage
+   failure (:meth:`PairCache.discard`).
 """
 
 from __future__ import annotations
@@ -43,7 +52,7 @@ from typing import Any
 
 import numpy as np
 
-from wintersar.io.schemas import Artifacts, StageRecord
+from wintersar.io.schemas import Artifacts, Finding, StageRecord
 from wintersar.util.hashing import hash_params, hash_path
 
 __all__ = [
@@ -57,6 +66,7 @@ __all__ = [
     "PAIRS_DIR_KEY",
     "PAIRS_DONE_KEY",
     "PAIRS_MANIFEST",
+    "PAIR_STAGES",
     "PairCache",
     "PairEntry",
     "PartialCache",
@@ -65,6 +75,8 @@ __all__ = [
     "hash_view",
     "identity_inputs",
     "is_incremental_stage",
+    "is_pair_stage",
+    "manifest_finding",
     "pair_content_hash",
     "pair_counts",
     "pair_identity",
@@ -80,6 +92,10 @@ INCREMENTAL_STAGES: tuple[str, ...] = (
     "multilook",
     "unwrap",
 )
+#: incremental stages whose results are per interferogram pair and can be kept in ``pairs/``
+#: (the sub-cache contract, ADR-0080 §2). ``fetch``/``coregister`` are incremental for the
+#: hash rule only: no engine (fake included) has per-pair results for them (ADR-0082).
+PAIR_STAGES: tuple[str, ...] = ("interferogram", "multilook", "unwrap")
 #: top-level stage parameters that describe *which* dates/pairs, not *how* (fake path)
 DATA_KEYS: frozenset[str] = frozenset({"n_dates", "dates", "pairs"})
 #: input artifacts that carry the date/pair set on the real path (precheck ``stack.json``)
@@ -105,6 +121,11 @@ _PAIR_ARTIFACTS = ("igrams", "unw")
 
 def is_incremental_stage(stage: str) -> bool:
     return stage in INCREMENTAL_STAGES
+
+
+def is_pair_stage(stage: str) -> bool:
+    """The stage keeps per-pair results (``_pairs_dir`` / ``_pairs_done`` contract)."""
+    return stage in PAIR_STAGES
 
 
 def hash_view(stage: str, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -200,12 +221,14 @@ class PairEntry:
         )
 
     def intact(self) -> bool:
-        """The result file exists and, when a file hash was recorded, still matches."""
+        """The result (file or directory) exists and its recorded fast hash still matches.
+
+        An entry without ``file_hash`` cannot be verified and is therefore never reused:
+        recomputing one pair is cheaper than assembling a stack from a file nobody checked.
+        """
         p = Path(self.path)
-        if not p.is_file():
+        if not p.exists() or self.file_hash is None:
             return False
-        if self.file_hash is None:
-            return True
         try:
             return hash_path(p, fast=True) == self.file_hash
         except OSError:
@@ -240,6 +263,10 @@ class PairCache:
         self.entries: dict[str, PairEntry] = {}
         self.reused: list[str] = []
         self.computed: list[str] = []
+        #: set by :meth:`load` when ``pairs/manifest.json`` existed but was unreadable or
+        #: malformed (the exception class name, or ``"InvalidManifest"``); ``done`` is then
+        #: empty and the stage recomputes every pair
+        self.manifest_error: str | None = None
 
     # ------------------------------------------------------------ constructors
     @classmethod
@@ -253,7 +280,12 @@ class PairCache:
 
     @classmethod
     def load(cls, node_dir: Path, stage: str | None = None) -> PairCache:
-        """Read ``pairs/manifest.json`` of ``node_dir``; missing/unreadable → empty."""
+        """Read ``pairs/manifest.json`` of ``node_dir``.
+
+        A missing manifest is the normal first-run case (empty, silent). One that exists but
+        cannot be parsed, or whose ``pairs`` is not a mapping, is discarded the same way but
+        flagged in :attr:`manifest_error` so the caller can report the full recompute.
+        """
         directory = pairs_dir(node_dir)
         pc = cls(directory, stage)
         p = directory / PAIRS_MANIFEST
@@ -261,10 +293,12 @@ class PairCache:
             return pc
         try:
             raw = json.loads(p.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            pc.manifest_error = type(exc).__name__
             return pc
         pairs = raw.get("pairs") if isinstance(raw, dict) else None
         if not isinstance(pairs, dict):
+            pc.manifest_error = "InvalidManifest"
             return pc
         if pc.stage is None and isinstance(raw.get("stage"), str):
             pc.stage = str(raw["stage"])
@@ -292,6 +326,17 @@ class PairCache:
 
     def entry(self, key: str) -> PairEntry | None:
         return self.entries.get(key)
+
+    def discard(self, key: str) -> None:
+        """Forget a :meth:`lookup` hit whose file turned out to be unusable.
+
+        The engine then computes the pair again and :meth:`store` re-registers it; the
+        stale file is pruned by :meth:`save`. A corrupt cached pair is a cache miss for
+        that pair, never a stage failure.
+        """
+        self.entries.pop(key, None)
+        if key in self.reused:
+            self.reused.remove(key)
 
     def store(
         self, key: str, identity: str, path: Path, meta: Mapping[str, Any] | None = None
@@ -365,12 +410,18 @@ def pair_counts(expected: list[str] | None, done: Mapping[str, Any]) -> dict[str
 
 @dataclass
 class PartialCache:
-    """What a node directory with the same hash already holds (plan status *incremental*)."""
+    """What a node directory with the same hash already holds (plan status *incremental*).
+
+    ``manifest_error`` (from :attr:`PairCache.manifest_error`) marks a directory whose
+    per-pair manifest was present but unreadable: nothing is reusable (``usable`` is
+    ``False``, the node is a plain full recompute) but the plan/run must name the cause.
+    """
 
     node_dir: Path
     record: StageRecord | None
     done: dict[str, PairEntry]
     expected: list[str] | None = None
+    manifest_error: str | None = None
 
     @property
     def usable(self) -> bool:
@@ -381,7 +432,30 @@ class PartialCache:
         return pair_counts(self.expected, self.done)
 
     def to_extra(self) -> dict[str, Any]:
-        return {"status": "partial", **self.counts}
+        out: dict[str, Any] = {"status": "partial" if self.usable else "recompute", **self.counts}
+        if self.manifest_error:
+            out["manifest"] = "unreadable"
+            out["manifest_error"] = self.manifest_error
+        return out
+
+
+def manifest_finding(stage: str, error: str, counts: Mapping[str, int | None]) -> Finding:
+    """INFO ``PIPELINE-017``: the per-pair manifest of ``stage`` existed but was unreadable,
+    so the whole pair set is computed again (this run rebuilds the manifest)."""
+    expected = counts.get("expected")
+    return Finding(
+        rule_id="PIPELINE-017",
+        severity="INFO",
+        message_key="pipeline.PIPELINE-017.cause",
+        fix_key="pipeline.PIPELINE-017.fix",
+        params={
+            "stage": stage,
+            "error": error,
+            "n_pairs": "?" if expected is None else int(expected),
+        },
+        evidence={"manifest_error": error, **dict(counts)},
+        scope=stage,
+    )
 
 
 def _stack_pairs(path: Path) -> list[str] | None:

@@ -27,7 +27,16 @@ from wintersar.io.schemas import Finding
 from wintersar.util.clihelp import HelpGroup, h
 from wintersar.util.clistate import state
 from wintersar.util.masking import mask_text
-from wintersar.util.output import console, emit_json, err_console, print_findings
+from wintersar.util.output import (
+    console,
+    emit_json,
+    print_action_failed,
+    print_error_findings,
+    print_findings,
+)
+
+# ResearchError ids that mean "bad input/usage" (exit 2, CLAUDE.md), not a failed action
+USAGE_RULES: frozenset[str] = frozenset({"RES-006"})
 
 research_app = typer.Typer(
     name="research",
@@ -48,16 +57,21 @@ def _finding(rule_id: str, severity: str = "FAIL", **params: Any) -> Finding:
     )
 
 
-def _fail(command: str, err: Exception, code: int = 1) -> None:
+def _fail(command: str, err: Exception, code: int | None = None) -> None:
+    """Report ``err`` and exit: 2 for an argument outside its allowed set (RES-006), 1
+    for a failed action. A ``ResearchError`` is printed once, as its finding (cause -> fix);
+    any other exception through the generic ``cli.action_failed`` line."""
     from wintersar.research.repr_phase import ResearchError
 
     findings = [_finding(err.rule_id, **err.params)] if isinstance(err, ResearchError) else []
+    if code is None:
+        code = 2 if isinstance(err, ResearchError) and err.rule_id in USAGE_RULES else 1
     if state.json:
         emit_json(command, {"error": mask_text(str(err))}, findings, ok=False)
+    elif findings:
+        print_error_findings(findings, state.lang)
     else:
-        err_console.print(f"[red]{mask_text(str(err))}[/]")
-        if findings:
-            print_findings(findings, state.lang)
+        print_action_failed(command, str(err))
     raise typer.Exit(code=code)
 
 

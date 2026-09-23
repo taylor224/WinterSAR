@@ -28,7 +28,17 @@ whose identity — the unwrapping parameters that influence it plus the content 
 wrapped phase / coherence / mask (/ truth) — matches a per-pair result already kept in
 ``pairs/`` is taken from there and only the others are unwrapped; the assembled ``unw.npz``
 and ``stats.json`` look exactly as after a full run (``per_pair[i]["reused"]`` marks the
-reused ones). Without those keys nothing changes.
+reused ones). A cached pair whose file cannot be loaded is a cache miss for that pair
+(unwrapped again in a second round), never a stage failure. Without those keys nothing
+changes.
+
+GPU (PERF-10, ADR-0095): the executor's ``_gpu`` private param (``config.compute.gpu``) is
+the backend request of this stage. It is passed to the kernels called on the main thread
+(``combine_masks``/``fringe_density`` in :func:`stack_fringe_density`) and carried into every
+worker on :class:`_Job` — ``contextvars`` such as ``stage_gpu`` are not inherited by thread
+or spawned-process pools, so :func:`_unwrap_one` re-enters ``stage_gpu(job.gpu)`` itself. A
+GPU request the machine cannot honour runs on numpy and is reported as ``ENV-005`` (WARN) in
+the stage findings / ``stats.json``; ``stats["compute"]`` names the backend that ran.
 
 The ``.npz`` interchange loads whole arrays per worker; the chunked Zarr store (PERF-08)
 replaces it for real stacks.
@@ -42,6 +52,7 @@ import multiprocessing as mp
 import shutil
 import threading
 import time
+import zipfile
 from collections.abc import Mapping
 from concurrent.futures import (
     Executor,
@@ -58,6 +69,14 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
+from wintersar.compute.xp import (
+    STAGE_PARAM,
+    GpuRequest,
+    coerce_request,
+    resolve_backend,
+    stage_gpu,
+    stage_preference,
+)
 from wintersar.engines.base import EngineNotAvailableError
 from wintersar.i18n import t
 from wintersar.io.igrams import IgramStack
@@ -97,6 +116,7 @@ __all__ = [
     "resolve_plan",
     "run_unwrap",
     "stack_fringe_density",
+    "stage_gpu_request",
 ]
 
 #: every ``UnwrapCfg`` field (derived, so a new config field is never silently ignored)
@@ -188,8 +208,21 @@ def _machine_from_params(machine: MachineSpec, params: dict[str, Any]) -> Machin
     )
 
 
-def stack_fringe_density(stack: IgramStack, cfg: UnwrapCfg) -> float | None:
-    """Median fringe density over up to three interferograms (first, middle, last)."""
+def stage_gpu_request(params: Mapping[str, Any]) -> bool | None:
+    """The GPU preference of this stage: the executor's ``_gpu`` param, else the enclosing
+    ``stage_gpu`` context (``None`` = env / auto-detect, as outside the executor)."""
+    req = coerce_request(params.get(STAGE_PARAM), source=STAGE_PARAM)
+    return req if req is not None else stage_preference()
+
+
+def stack_fringe_density(
+    stack: IgramStack, cfg: UnwrapCfg, *, gpu: GpuRequest = None
+) -> float | None:
+    """Median fringe density over up to three interferograms (first, middle, last).
+
+    ``gpu`` is the stage's backend request (:func:`stage_gpu_request`), forwarded to the
+    ported kernels (PERF-10).
+    """
     n = stack.n_pairs
     if n == 0:
         return None
@@ -200,8 +233,9 @@ def stack_fringe_density(stack: IgramStack, cfg: UnwrapCfg) -> float | None:
             stack.coherence[i],
             cfg.coherence_threshold if cfg.mask.coherence else 0.0,
             water=stack.mask_for(i) if (cfg.mask.water or cfg.mask.layover) else None,
+            gpu=gpu,
         )
-        f = fringe_density(stack.wrapped[i], mask)
+        f = fringe_density(stack.wrapped[i], mask, gpu=gpu)
         if np.isfinite(f):
             values.append(f)
     return float(np.median(values)) if values else None
@@ -259,6 +293,9 @@ class _Job:
     native_tiles: bool
     want_truth: bool
     tile_offset_cycles: dict[str, float] = field(default_factory=dict)
+    #: backend request of the stage (``_gpu``); re-entered as ``stage_gpu`` in the worker
+    #: because contextvars do not cross thread / spawned-process pools (ADR-0095)
+    gpu: bool | None = None
 
 
 @dataclass
@@ -281,7 +318,19 @@ def _jump_summary(jumps: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 def _unwrap_one(job: _Job) -> _JobResult:
-    """Unwrap interferogram ``job.index`` (runs in a worker process or thread)."""
+    """Unwrap interferogram ``job.index`` (runs in a worker process or thread).
+
+    The stage's GPU request travels on the job: a pool worker starts with an empty
+    ``stage_gpu`` context, so without this every kernel below would resolve ``auto`` and
+    ``config.compute.gpu`` would be ignored exactly when ``n_parallel > 1``.
+    """
+    if job.gpu is None:  # keep whatever context the caller runs in (inline execution)
+        return _unwrap_job(job)
+    with stage_gpu(job.gpu):
+        return _unwrap_job(job)
+
+
+def _unwrap_job(job: _Job) -> _JobResult:
     t0 = time.perf_counter()
     with np.load(job.igram_path, allow_pickle=False) as z:
         wrapped = np.asarray(z["wrapped"][job.index], dtype=np.float32)
@@ -298,6 +347,7 @@ def _unwrap_one(job: _Job) -> _JobResult:
             truth = np.asarray(z["unw_true"][job.index], dtype=np.float32)
 
     threshold = job.coherence_threshold if job.use_coherence else 0.0
+    backend = resolve_backend()  # what the kernels of this worker see (stats + tests)
     mask = combine_masks(coh, threshold, water=geo_mask)
     unwrapper = backends.get_unwrapper(job.method)
     params = dict(job.backend_params)
@@ -362,6 +412,7 @@ def _unwrap_one(job: _Job) -> _JobResult:
         "mask": mask_stats(mask),
         "boundary_jumps": _jump_summary(jumps),
         "backend": backend_stats,
+        "compute": {"backend": backend.name, "gpu_source": backend.source},
         "tile_dir": tile_dir,
         "wall_time_s": time.perf_counter() - t0,
     }
@@ -650,7 +701,11 @@ def run_unwrap(
     cfg = cfg_from_params(params)
     requested = str(params.get("method") or cfg.method)
     machine = _machine_from_params(machine, params)
-    fringe = stack_fringe_density(stack, cfg)
+    # PERF-10: one backend decision for the stage (ADR-0095); a GPU request that cannot be
+    # honoured degrades to numpy here and is reported below (ENV-005), never raised
+    gpu_request = stage_gpu_request(params)
+    backend = resolve_backend(gpu_request)
+    fringe = stack_fringe_density(stack, cfg, gpu=gpu_request)
     n_par = params.get("_n_parallel")
     plan = resolve_plan(
         stack.shape,
@@ -662,7 +717,9 @@ def run_unwrap(
         n_parallel_override=int(n_par) if n_par is not None else None,
     )
     log(f"plan {json.dumps(plan.to_dict(), default=str)}")
-    findings: list[Finding] = []
+    findings: list[Finding] = list(backend.findings)
+    if backend.degraded:
+        log(f"ENV-005 gpu requested by {backend.source} but unavailable; kernels run on numpy")
     base_stats: dict[str, Any] = {
         "plan": plan.to_dict(),
         "reasons": plan.explain(),
@@ -670,7 +727,14 @@ def run_unwrap(
         "n_pairs": stack.n_pairs,
         "shape": list(stack.shape),
         "fringe_density": fringe,
-        "machine": {"cores": machine.cores, "memory_gb": machine.memory_gb, "gpu": machine.gpu},
+        # ``machine.gpu`` is what the kernels actually got, not what was asked for
+        "machine": {"cores": machine.cores, "memory_gb": machine.memory_gb, "gpu": backend.is_gpu},
+        "compute": {
+            "backend": backend.name,
+            "gpu_requested": backend.requested,
+            "gpu_source": backend.source,
+            "degraded": backend.degraded,
+        },
         "params": {k: v for k, v in params.items() if not k.startswith("_")},
         "cfg": cfg.model_dump(mode="json"),
         "igrams": {"path": str(igrams.path), "format": igram_format, "kind": igrams.kind},
@@ -731,10 +795,11 @@ def run_unwrap(
             if hit is not None:
                 reused[i] = hit
         log(t("unwrap.run.reused", n_reused=len(reused), n_new=stack.n_pairs - len(reused)))
-    jobs = [
-        _Job(
+
+    def make_job(i: int) -> _Job:
+        return _Job(
             index=i,
-            pair=pair,
+            pair=stack.pairs[i],
             igram_path=str(igram_path),
             method=plan.method,
             plan=plan.to_dict(),
@@ -746,10 +811,10 @@ def run_unwrap(
             native_tiles=native_tiles,
             want_truth=want_truth,
             tile_offset_cycles=offsets,
+            gpu=gpu_request,
         )
-        for i, pair in enumerate(stack.pairs)
-        if i not in reused
-    ]
+
+    jobs = [make_job(i) for i in range(stack.n_pairs) if i not in reused]
     log(
         t(
             "unwrap.run.start",
@@ -763,13 +828,6 @@ def run_unwrap(
     sampler = _RssSampler()
     sampler.start()
     results, failures = _execute(jobs, plan.n_parallel, use_threads) if jobs else ([], [])
-    peak_rss_mb = sampler.stop()
-
-    for pair, error in failures:
-        findings.append(
-            _finding("UNW-004", "FAIL", scope=pair, pair=pair, error=error, log=str(log_path))
-        )
-        log(f"UNW-004 {pair}: {error}")
 
     # -- assemble -------------------------------------------------------------------
     n, (ny, nx) = stack.n_pairs, stack.shape
@@ -777,12 +835,17 @@ def run_unwrap(
     conncomp = np.zeros((n, ny, nx), dtype=np.uint16)
     per_pair: list[dict[str, Any]] = []
     tile_dirs: dict[str, str] = {}
-    for r in results:
-        unw[r.index] = np.load(r.unw_path)
-        cc = np.load(r.conncomp_path)
+
+    def place(index: int, unw_i: NDArray[Any], cc: NDArray[Any]) -> None:
+        nonlocal conncomp
         if cc.max(initial=0) > np.iinfo(conncomp.dtype).max:
             conncomp = conncomp.astype(np.uint32)
-        conncomp[r.index] = cc
+        unw[index] = unw_i
+        conncomp[index] = cc
+
+    def take(r: _JobResult) -> None:
+        cc = np.load(r.conncomp_path)
+        place(r.index, np.load(r.unw_path), cc)
         per_pair.append(r.stats)
         if r.stats.get("tile_dir"):
             tile_dirs[r.pair] = str(r.stats["tile_dir"])
@@ -790,13 +853,30 @@ def run_unwrap(
             kept = pair_cache.path_for(r.pair)
             np.savez(kept, unw=unw[r.index], conncomp=cc)
             pair_cache.store(r.pair, identities[r.index], kept, meta=_pair_stats_meta(r.stats))
-    for i, path in reused.items():
-        with np.load(path, allow_pickle=False) as z:
-            unw[i] = np.asarray(z["unw"], dtype=np.float32)
-            cc = np.asarray(z["conncomp"])
-        if cc.max(initial=0) > np.iinfo(conncomp.dtype).max:
-            conncomp = conncomp.astype(np.uint32)
-        conncomp[i] = cc
+
+    for r in results:
+        take(r)
+    # a reused pair whose file cannot be loaded (the fast hash is blind to mid-file damage,
+    # an old manifest may lack the hash …) is a cache miss for that pair: drop it from the
+    # reuse set and unwrap it in a second round instead of failing the whole stage
+    retry: list[_Job] = []
+    for i, path in list(reused.items()):
+        try:
+            with np.load(path, allow_pickle=False) as z:
+                place(i, np.asarray(z["unw"], dtype=np.float32), np.asarray(z["conncomp"]))
+        except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile) as e:
+            del reused[i]
+            if pair_cache is not None:
+                pair_cache.discard(stack.pairs[i])
+            retry.append(make_job(i))
+            log(
+                t(
+                    "unwrap.run.cache_unloadable",
+                    pair=stack.pairs[i],
+                    error=f"{type(e).__name__}: {e}",
+                )
+            )
+            continue
         entry = pair_cache.entry(stack.pairs[i]) if pair_cache is not None else None
         stats_i: dict[str, Any] = dict(entry.meta) if entry is not None else {}
         stats_i.update({"pair": stack.pairs[i], "index": i, "reused": True})
@@ -804,6 +884,18 @@ def run_unwrap(
         td = stats_i.get("tile_dir")
         if td and Path(str(td)).is_dir():
             tile_dirs[stack.pairs[i]] = str(td)
+    if retry:
+        more, more_failures = _execute(retry, plan.n_parallel, use_threads)
+        for r in more:
+            take(r)
+        failures.extend(more_failures)
+    peak_rss_mb = sampler.stop()
+
+    for pair, error in failures:
+        findings.append(
+            _finding("UNW-004", "FAIL", scope=pair, pair=pair, error=error, log=str(log_path))
+        )
+        log(f"UNW-004 {pair}: {error}")
     per_pair.sort(key=lambda s_: int(s_.get("index", 0)))
     if pair_cache is not None:
         pair_cache.save()

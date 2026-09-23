@@ -51,6 +51,9 @@ pipeline:
   PIPELINE-016:
     cause: "Engine '{engine}' of stage '{stage}' does not support per-pair reuse (_pairs_done); the stage was recomputed in full."
     fix: "This is expected. To take part in incremental updates the engine adapter must implement the ADR-0082 contract (read _pairs_done, write the pairs/ manifest)."
+  PIPELINE-017:
+    cause: "The per-pair manifest of stage '{stage}' existed but could not be read ({error}); it was discarded and all {n_pairs} pair(s) are computed again."
+    fix: "Expected after an interrupted write or external corruption; nothing to do — this run rebuilds the manifest. If it repeats, check the disk and the permissions of the work directory."
   cli:
     plan_title: "Plan: {project} ({workdir})"
     run_title: "Run: {project} ({workdir})"
@@ -83,6 +86,8 @@ pipeline:
     gc_dry_suffix: " [dry-run: nothing deleted]"
     status_incremental: "partial"
     incremental_pairs: "pairs cached {n_cached} · new {n_new}"
+    incremental_pairs_stage: "{stage}: pairs cached {n_cached} · new {n_new}"
+    gc_failed: "could not delete {n_failed} entrie(s) (still on disk, not counted as freed): {entries}"
     incremental_mode: "incremental mode: only pairs touching new dates are computed; the time series is re-inverted (PERF-06)."
     cache_budget: "{total} of budget {budget} used · protected entries (newest ok per stage) {protected}"
     cache_over_budget: "The protected entries alone exceed the budget by {over} — raise the budget or split the work directory."

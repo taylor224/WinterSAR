@@ -51,6 +51,9 @@ pipeline:
   PIPELINE-016:
     cause: "단계 '{stage}'의 엔진 '{engine}'은(는) 쌍 단위 재사용(_pairs_done)을 지원하지 않아 전체를 다시 계산했습니다."
     fix: "정상 동작입니다. 엔진이 증분 처리에 참여하려면 ADR-0082의 계약(_pairs_done 읽기, pairs/ 매니페스트 쓰기)을 구현해야 합니다."
+  PIPELINE-017:
+    cause: "단계 '{stage}'의 쌍 단위 매니페스트가 있었지만 읽을 수 없어({error}) 버렸습니다. 쌍 {n_pairs}개를 모두 다시 계산합니다."
+    fix: "쓰기 중단이나 외부 손상 뒤에 나타나는 정상 동작이며 이번 실행이 매니페스트를 다시 만듭니다. 반복되면 디스크와 작업 디렉터리 권한을 확인하세요."
   cli:
     plan_title: "실행 계획: {project} ({workdir})"
     run_title: "실행: {project} ({workdir})"
@@ -83,6 +86,8 @@ pipeline:
     gc_dry_suffix: " [dry-run: 실제로 삭제하지 않음]"
     status_incremental: "부분 캐시"
     incremental_pairs: "쌍 캐시 {n_cached}개 · 신규 {n_new}개"
+    incremental_pairs_stage: "{stage}: 쌍 캐시 {n_cached}개 · 신규 {n_new}개"
+    gc_failed: "{n_failed}개 항목을 지우지 못했습니다 (디스크에 남아 있으며 확보 용량에 넣지 않음): {entries}"
     incremental_mode: "증분 모드: 새 날짜에 닿는 쌍만 계산하고 시계열을 다시 역산합니다 (PERF-06)."
     cache_budget: "예산 {budget} 중 {total} 사용 · 보호 항목(단계별 최신 ok) {protected}"
     cache_over_budget: "보호 항목만으로도 예산을 {over} 초과합니다 — 예산을 늘리거나 작업 디렉터리를 나누세요."

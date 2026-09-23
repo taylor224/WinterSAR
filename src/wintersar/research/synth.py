@@ -11,6 +11,13 @@ Provides ground truth for unit tests, the fake engine and the research module:
 
 Everything is deterministic given ``rng``. Units: phase in radians, displacement in metres,
 Sentinel-1 C-band wavelength 0.05546576 m (ESA S1 product spec: 5.405 GHz).
+
+**Golden-sensitive (ADR-0100).** :func:`deformation_field`, :func:`turbulent_atmosphere`,
+:func:`coherence_map`, :func:`make_interferogram` and :func:`make_stack` feed the fake engine,
+so any change to their output (not only their API) changes
+``tests/regression/golden/S_synthetic/stats.json``: run
+``.venv/bin/python scripts/make_golden.py --check`` before pushing and, when the change is
+intended, regenerate with ``scripts/make_golden.py`` and say why in the PR body (rule 11.4).
 """
 
 from __future__ import annotations

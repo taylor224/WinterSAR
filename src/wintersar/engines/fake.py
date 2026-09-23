@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import zipfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, timedelta
@@ -100,7 +101,19 @@ def fake_pairs(params: Mapping[str, Any]) -> list[Pair]:
 
 
 def rng_for(seed: int, *tokens: str) -> np.random.Generator:
-    """Generator keyed by ``seed`` and a stable token (a date, a pair key …)."""
+    """Generator keyed by ``seed`` and a stable token (a date, a pair key …).
+
+    The seed is a *sequence* of two non-negative ints: ``default_rng`` passes an
+    ``array_like[ints]`` seed to ``SeedSequence``, whose entropy mixing makes the stream a
+    pure function of ``(seed, token)`` — the per-pair purity ADR-0080 §3 relies on.
+    # source: .venv/lib/python3.11/site-packages/numpy/random/_generator.pyi
+    #   (``default_rng(seed: _ArrayLikeInt_co | SeedSequence | …)``) and
+    #   ``numpy.random.default_rng.__doc__`` (numpy 2.4): "seed : {None, int,
+    #   array_like[ints], SeedSequence, …} … If an int or array_like[ints] is passed, then
+    #   all values must be non-negative and will be passed to SeedSequence to derive the
+    #   initial BitGenerator state"
+    # source: https://numpy.org/doc/stable/reference/random/bit_generators/generated/numpy.random.SeedSequence.html
+    """
     digest = hashlib.sha256("\0".join(tokens).encode("utf-8")).digest()
     return np.random.default_rng([int(seed), int.from_bytes(digest[:8], "big")])
 
@@ -172,9 +185,33 @@ class StackSpec:
 PAIR_ARRAYS = ("wrapped", "coherence", "mask", "unw_true")
 
 
-def _load_pair(path: Path, keys: tuple[str, ...]) -> dict[str, NDArray[Any]]:
-    with np.load(path, allow_pickle=False) as z:
-        return {k: np.asarray(z[k]) for k in keys}
+def _load_pair(path: Path, keys: tuple[str, ...]) -> dict[str, NDArray[Any]] | None:
+    """Arrays of a cached pair file, or ``None`` when it cannot be loaded.
+
+    The manifest's fast hash (size, mtime, head/tail) does not see every corruption; an
+    unloadable hit is a cache miss for that pair (recomputed, re-stored), never a stage
+    failure (ADR-0080).
+    """
+    try:
+        with np.load(path, allow_pickle=False) as z:
+            return {k: np.asarray(z[k]) for k in keys}
+    except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile):
+        return None
+
+
+def _cached_pair(
+    cache: PairCache | None, key: str, ident: str, keys: tuple[str, ...]
+) -> dict[str, NDArray[Any]] | None:
+    """Reusable arrays for ``key`` (identity match, file intact *and* loadable) or ``None``."""
+    if cache is None:
+        return None
+    hit = cache.lookup(key, ident)
+    if hit is None:
+        return None
+    data = _load_pair(hit, keys)
+    if data is None:
+        cache.discard(key)
+    return data
 
 
 @register_engine
@@ -297,11 +334,7 @@ class FakeEngine(Engine):
         stacks: dict[str, list[NDArray[Any]]] = {k: [] for k in PAIR_ARRAYS}
         for pair in pairs:
             ident = pair_identity(param_hash, pair.key)
-            data: dict[str, NDArray[Any]] | None = None
-            if cache is not None:
-                hit = cache.lookup(pair.key, ident)
-                if hit is not None:
-                    data = _load_pair(hit, PAIR_ARRAYS)
+            data = _cached_pair(cache, pair.key, ident, PAIR_ARRAYS)
             if data is None:
                 data = self.synth_pair(spec, pair)
                 if cache is not None:
@@ -354,9 +387,9 @@ class FakeEngine(Engine):
         for i, key in enumerate(keys):
             pair = {k: arrays[k][i] for k in PAIR_ARRAYS}
             ident = pair_identity(param_hash, pair_content_hash(*(pair[k] for k in PAIR_ARRAYS)))
-            hit = cache.lookup(key, ident)
-            if hit is not None:
-                pair = _load_pair(hit, PAIR_ARRAYS)
+            cached = _cached_pair(cache, key, ident, PAIR_ARRAYS)
+            if cached is not None:
+                pair = cached
             else:
                 path = cache.path_for(key)
                 np.savez(path, **pair)
@@ -387,9 +420,8 @@ class FakeEngine(Engine):
                 ident = pair_identity(
                     param_hash, pair_content_hash(*(pair[k] for k in PAIR_ARRAYS))
                 )
-                hit = cache.lookup(key, ident)
-                if hit is not None:
-                    got = _load_pair(hit, ("unw", "conncomp"))
+                got = _cached_pair(cache, key, ident, ("unw", "conncomp"))
+                if got is not None:
                     result = (got["unw"].astype(np.float32), got["conncomp"].astype(np.uint8))
             if result is None:
                 result = self.unwrap_pair(pair["coherence"], pair["mask"], pair["unw_true"], thr)

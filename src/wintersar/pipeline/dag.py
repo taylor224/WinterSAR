@@ -177,8 +177,14 @@ class Node:
 
     @property
     def incremental(self) -> bool:
-        """The stage keeps per-pair results and follows the PERF-06 hash rule."""
+        """The stage follows the PERF-06 hash rule (pair/date set is data, not a parameter)."""
         return not self.spec.is_python and incremental.is_incremental_stage(self.stage)
+
+    @property
+    def pair_stage(self) -> bool:
+        """The stage keeps per-pair results (``pairs/`` sub-cache contract, ADR-0080 §2);
+        ``fetch``/``coregister`` are incremental for the hash rule only."""
+        return self.incremental and incremental.is_pair_stage(self.stage)
 
     @property
     def blocked(self) -> bool:
@@ -227,7 +233,7 @@ class Node:
         }
         if self.stale:
             extra["stale"] = True
-        if self.partial is not None and self.partial.usable:
+        if self.partial is not None and (self.partial.usable or self.partial.manifest_error):
             extra["incremental"] = self.partial.to_extra()
         return StageRecord(
             stage=self.stage,
@@ -599,8 +605,10 @@ class Dag:
         return dict(record.inputs) == current
 
     def partial_cache(self, node: Node) -> incremental.PartialCache | None:
-        """Per-pair results already present in the node directory (incremental mode only)."""
-        if not (self.incremental and node.incremental) or node.node_hash is None or node.forced:
+        """Per-pair results already present in the node directory (incremental mode, pair
+        stages only). Also returned — with nothing usable — when the per-pair manifest was
+        present but unreadable, so the plan can report the forced full recompute."""
+        if not (self.incremental and node.pair_stage) or node.node_hash is None or node.forced:
             return None
         node_dir = cache.stage_dir(self.workdir, node.stage, node.node_hash)
         if not node_dir.is_dir():
@@ -611,13 +619,14 @@ class Dag:
             record=cache.load_record(node_dir),
             done=pc.done,
             expected=node.pairs_expected,
+            manifest_error=pc.manifest_error,
         )
-        return partial if partial.usable else None
+        return partial if (partial.usable or partial.manifest_error) else None
 
     def expected_pairs(self, node: Node, available: Artifacts) -> list[str] | None:
-        """Pair set of an incremental node: engine hook / input meta / stack, else inherited
+        """Pair set of a pair-stage node: engine hook / input meta / stack, else inherited
         from the incremental producer of its ``igrams``/``unw`` input."""
-        if not node.incremental:
+        if not node.pair_stage:
             return None
         eng = self.engine(node.engine) if node.engine else None
         pairs = incremental.expected_pairs(eng, node.stage, node.params, available)
@@ -625,7 +634,7 @@ class Dag:
             return pairs
         for name in ("igrams", "unw"):
             producer = self._producer(node, name)
-            if producer is not None and producer.incremental and producer.pairs_expected:
+            if producer is not None and producer.pair_stage and producer.pairs_expected:
                 return list(producer.pairs_expected)
         return None
 

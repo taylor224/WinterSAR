@@ -5,7 +5,8 @@ SNAPHU / tophu, MintPy, dolphin) behind subprocess adapters and adds what the ec
 
 - **select** — burst-level search (ASF), automatic stack grouping, precheck rules `SEL-01..13`
   (same track? common bursts? polarization? baselines? looks? layover?) with cause → fix messages (ko/en)
-- **pipeline** — hash-cached DAG: change one parameter, re-run only downstream stages (`PERF-03`)
+- **pipeline** — hash-cached DAG: change one parameter, re-run only downstream stages (`PERF-03`); add one
+  acquisition with `run --incremental`, recompute only the pairs that touch it (`PERF-06`)
 - **unwrap** — scheduler: per-interferogram parallelism first, automatic tiling within a memory budget (`PERF-04`)
 - **diagnose** — engine log parsers + knowledge base `KB-xx` (SNAPHU, ISCE2, MintPy, HyP3, auth, env)
 - **validate** — reference-point recommendation, loop-closure dashboard, levelling/GNSS comparison (LOS projection), parameter sweeps
@@ -38,6 +39,8 @@ printf '{"type":"FeatureCollection","features":[]}' > aoi.geojson
 wintersar plan --config config.yaml
 wintersar run  --config config.yaml
 wintersar run  --config config.yaml --set unwrap.coherence_threshold=0.5   # only unwrap and downstream re-run
+wintersar run  --config config.yaml --incremental                           # seeds the per-pair cache (PERF-06)
+wintersar run  --config config.yaml --incremental --set interferogram.n_dates=7   # one more date: only its pairs are computed
 wintersar diagnose work/             # logs live in work/<stage>/<hash>/logs (ADR-0032)
 ```
 

@@ -294,5 +294,175 @@ def test_run_result_reports_incremental_flag(
     )
     assert result.ok and result.incremental is incremental_mode
     assert result.to_dict()["incremental"] is incremental_mode
-    assert result.pair_summary() == {"reused": 0, "computed": 0}
+    assert result.pair_summary() == {"reused": 0, "computed": 0, "stage": None, "by_stage": {}}
     assert result.partial == []
+
+
+# ---------------------------------------------------------------------- robustness
+
+
+def _corrupt_pair_manifest(node_dir: Path, how: str) -> Path:
+    manifest = incremental.pairs_dir(node_dir) / incremental.PAIRS_MANIFEST
+    if how == "truncated":
+        manifest.write_text(manifest.read_text(encoding="utf-8")[:200], encoding="utf-8")
+    elif how == "pairs_not_a_mapping":
+        raw = json.loads(manifest.read_text(encoding="utf-8"))
+        raw["pairs"] = ["a_b"]
+        manifest.write_text(json.dumps(raw), encoding="utf-8")
+    elif how == "not_an_object":
+        manifest.write_text("[]", encoding="utf-8")
+    return manifest
+
+
+@pytest.mark.parametrize("how", ["truncated", "pairs_not_a_mapping", "not_an_object"])
+def test_unreadable_pair_manifest_is_discarded_but_named(tmp_path: Path, how: str) -> None:
+    """Present-but-unreadable is not the same as absent: ``done`` is empty either way, but
+    only the former sets ``manifest_error`` (the plan/run report it as PIPELINE-017)."""
+    node_dir = tmp_path / "unwrap" / "h"
+    pc = incremental.PairCache(incremental.pairs_dir(node_dir), "unwrap")
+    p = pc.path_for("a_b")
+    np.savez(p, unw=np.zeros((2, 2), np.float32))
+    pc.store("a_b", "id1", p)
+    pc.save()
+    assert incremental.PairCache.load(node_dir).manifest_error is None
+    _corrupt_pair_manifest(node_dir, how)
+    loaded = incremental.PairCache.load(node_dir, "unwrap")
+    assert loaded.done == {} and loaded.manifest_error, how
+    assert loaded.manifest_error == ("InvalidManifest" if how != "truncated" else "JSONDecodeError")
+    # a missing manifest stays silent (the normal first incremental run)
+    empty = incremental.PairCache.load(tmp_path / "nowhere", "unwrap")
+    assert empty.done == {} and empty.manifest_error is None
+    partial = incremental.PartialCache(
+        node_dir=node_dir, record=None, done={}, expected=["a_b"], manifest_error="JSONDecodeError"
+    )
+    assert not partial.usable
+    assert partial.to_extra() == {
+        "status": "recompute",
+        "expected": 1,
+        "done": 0,
+        "cached": 0,
+        "new": 1,
+        "manifest": "unreadable",
+        "manifest_error": "JSONDecodeError",
+    }
+    finding = incremental.manifest_finding("unwrap", "JSONDecodeError", partial.counts)
+    assert finding.rule_id == "PIPELINE-017" and finding.severity == "INFO"
+    assert finding.params == {"stage": "unwrap", "error": "JSONDecodeError", "n_pairs": 1}
+
+
+def test_plan_and_run_report_an_unreadable_pair_manifest(tmp_path: Path, cache_dir: Path) -> None:
+    """End to end: truncate ``pairs/manifest.json`` of the unwrap node, then plan/run with one
+    more date. Both say why every pair is recomputed (PIPELINE-017, ``manifest:
+    unreadable``); the run rebuilds the manifest so the next increment reuses again."""
+    from wintersar.pipeline import api
+
+    cfg = write_fake_config(tmp_path)
+    six = {"interferogram": {"n_dates": 6, "shape": [16, 16]}}
+    seven = {"interferogram": {"n_dates": 7, "shape": [16, 16]}}
+    first = api.run(cfg, param_overrides=six, until="unwrap", incremental=True)
+    assert first.ok
+    unw_hash = next(r.node_hash for r in first.records if r.stage == "unwrap")
+    node_dir = cache.stage_dir(cfg.workdir, "unwrap", unw_hash)
+    _corrupt_pair_manifest(node_dir, "truncated")
+
+    plan = api.plan(cfg, param_overrides=seven, incremental=True)
+    by = {s.stage: s for s in plan.stages}
+    assert by["unwrap"].extra["incremental"] == {
+        "status": "recompute",
+        "expected": 18,
+        "done": 0,
+        "cached": 0,
+        "new": 18,
+        "manifest": "unreadable",
+        "manifest_error": "JSONDecodeError",
+    }
+    assert by["multilook"].extra["incremental"]["status"] == "partial"  # untouched upstream
+    infos = {f.scope: f for f in plan.findings if f.rule_id == "PIPELINE-017"}
+    assert list(infos) == ["unwrap"] and infos["unwrap"].severity == "INFO"
+    assert infos["unwrap"].params == {"stage": "unwrap", "error": "JSONDecodeError", "n_pairs": 18}
+    assert not any(f.rule_id == "PIPELINE-015" and f.scope == "unwrap" for f in plan.findings)
+
+    result = api.run(cfg, param_overrides=seven, until="unwrap", incremental=True)
+    assert result.ok, result.findings
+    rec = next(r for r in result.records if r.stage == "unwrap")
+    info = rec.extra["incremental"]
+    assert info["manifest"] == "unreadable" and info["manifest_error"] == "JSONDecodeError"
+    assert info["reused"] == 0 and info["computed"] == 18 and info["supported"]
+    assert [f.scope for f in result.findings if f.rule_id == "PIPELINE-017"] == ["unwrap"]
+    # the manifest is rebuilt: a third run with one more date reuses the 18 pairs
+    eight = {"interferogram": {"n_dates": 8, "shape": [16, 16]}}
+    third = api.run(cfg, param_overrides=eight, until="unwrap", incremental=True)
+    assert third.ok
+    rec3 = next(r for r in third.records if r.stage == "unwrap")
+    assert rec3.extra["incremental"]["reused"] == 18 and rec3.extra["incremental"]["computed"] == 4
+    assert "manifest" not in rec3.extra["incremental"]
+    assert not any(f.rule_id == "PIPELINE-017" for f in third.findings)
+
+
+def test_entry_without_file_hash_is_never_reused_and_discard_forgets_a_hit(
+    tmp_path: Path,
+) -> None:
+    """``intact()`` verifies something or says no; ``discard()`` turns an unloadable hit back
+    into a miss so the engine recomputes and re-stores the pair."""
+    node_dir = tmp_path / "unwrap" / "h"
+    pc = incremental.PairCache(incremental.pairs_dir(node_dir), "unwrap")
+    p = pc.path_for("a_b")
+    np.savez(p, unw=np.zeros((2, 2), np.float32))
+    entry = pc.store("a_b", "id1", p)
+    assert entry.intact()
+    unverifiable = incremental.PairEntry("a_b", "id1", str(p), file_hash=None)
+    assert not unverifiable.intact()
+    assert not incremental.PairEntry("a_b", "id1", str(tmp_path / "gone.npz"), "x").intact()
+    pc.save()
+    manifest = incremental.pairs_dir(node_dir) / incremental.PAIRS_MANIFEST
+    raw = json.loads(manifest.read_text(encoding="utf-8"))
+    raw["pairs"]["a_b"]["file_hash"] = None
+    manifest.write_text(json.dumps(raw), encoding="utf-8")
+    engine = incremental.PairCache.from_params(
+        {
+            incremental.PAIRS_DIR_KEY: str(incremental.pairs_dir(node_dir)),
+            incremental.PAIRS_DONE_KEY: incremental.PairCache.load(node_dir).done_entries(),
+        },
+        "unwrap",
+    )
+    assert engine is not None and engine.lookup("a_b", "id1") is None  # cannot be verified
+    # a verified hit that turns out unloadable: discard -> recompute -> store
+    fresh = incremental.PairCache.from_params(
+        {
+            incremental.PAIRS_DIR_KEY: str(incremental.pairs_dir(node_dir)),
+            incremental.PAIRS_DONE_KEY: {"a_b": entry.to_dict()},
+        },
+        "unwrap",
+    )
+    assert fresh is not None and fresh.lookup("a_b", "id1") == p and fresh.reused == ["a_b"]
+    fresh.discard("a_b")
+    assert fresh.reused == [] and fresh.entry("a_b") is None
+    fresh.store("a_b", "id1", p)
+    assert fresh.summary() == {"pairs_reused": [], "pairs_computed": ["a_b"]}
+    fresh.discard("nope")  # unknown keys are ignored
+
+
+def test_only_pair_stages_take_part_in_the_sub_cache_contract(
+    tmp_path: Path, cache_dir: Path
+) -> None:
+    """fetch/coregister follow the hash rule but have no per-pair results: they are never
+    asked for sub-caching, never get a partial cache and never a PIPELINE-016."""
+    assert incremental.PAIR_STAGES == ("interferogram", "multilook", "unwrap")
+    assert all(incremental.is_incremental_stage(s) for s in incremental.PAIR_STAGES)
+    assert incremental.is_incremental_stage("fetch") and not incremental.is_pair_stage("fetch")
+    cfg = write_fake_config(tmp_path)
+    dag = Dag(cfg, incremental=True)
+    dag.build({"interferogram": {"n_dates": 6, "shape": [16, 16]}})
+    for stage in ("fetch", "coregister"):
+        node = dag.node(stage)
+        assert node.incremental and not node.pair_stage
+        assert node.pairs_expected is None
+        # even a stray pairs/ manifest in its directory is ignored
+        node_dir = cache.stage_dir(cfg.workdir, stage, node.node_hash or "")
+        pc = incremental.PairCache(incremental.pairs_dir(node_dir), stage)
+        p = pc.path_for("20240101_20240113")
+        np.savez(p, x=np.zeros(2))
+        pc.store("20240101_20240113", "id", p)
+        pc.save()
+        assert dag.partial_cache(node) is None
+    assert dag.node("interferogram").pair_stage and dag.node("unwrap").pair_stage

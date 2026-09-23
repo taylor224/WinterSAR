@@ -20,6 +20,7 @@ from typing import Any
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from wintersar.i18n import t
@@ -97,7 +98,14 @@ def print_findings(
     for f in sort_findings(findings):
         sev, rid, cause, fix = render_finding(f, lang)
         scope = f" [{f.scope}]" if f.scope else ""
-        table.add_row(f"[{colors[f.severity]}]{sev}[/]", rid + scope, cause, fix)
+        # catalogue text and scopes are data, not rich markup: ``[unwrap run]`` or
+        # ``[dry-run: …]`` would otherwise be parsed as a style tag and vanish
+        table.add_row(
+            f"[{colors[f.severity]}]{escape(sev)}[/]",
+            escape(rid + scope),
+            escape(cause),
+            escape(fix),
+        )
     console.print(table)
     n = {s: sum(1 for f in findings if f.severity == s) for s in ("FAIL", "WARN", "INFO")}
     console.print(
@@ -148,13 +156,20 @@ def cli_finding(
     )
 
 
+_ERROR_STYLES = {"FAIL": "red", "WARN": "yellow", "INFO": "cyan"}
+
+
 def print_error_findings(findings: Sequence[Finding], lang: str | None = None) -> None:
-    """stderr rendering of an error path: ``cause`` in red, then ``fix`` (rule 11.6 order)."""
+    """stderr rendering of an error path: ``ID: cause`` (coloured by severity), then
+    ``fix`` on the next line (rule 11.6 order). Text is printed verbatim, never as markup.
+    """
     for f in findings:
         _sev, rid, cause, fix = render_finding(f, lang)
-        err_console.print(f"[red]{rid}: {cause}[/]")
+        err_console.print(
+            f"{rid}: {cause}", style=_ERROR_STYLES.get(f.severity, "red"), markup=False
+        )
         if fix:
-            err_console.print(fix)
+            err_console.print(fix, markup=False)
 
 
 def exit_with_findings(
@@ -229,5 +244,12 @@ def report_unexpected(exc: BaseException, argv: Sequence[str] | None = None) -> 
     if state.json:
         emit_json(invoked_command(argv), {"error": detail}, [finding], ok=False)
     else:
-        err_console.print(f"[red]{t('cli.CLI-001.cause', error=detail)}[/]")
-        err_console.print(t("cli.CLI-001.fix", error=detail))
+        err_console.print(t("cli.CLI-001.cause", error=detail), style="red", markup=False)
+        err_console.print(t("cli.CLI-001.fix", error=detail), markup=False)
+
+
+def print_action_failed(command: str, error: str) -> None:
+    """Text-mode line for an action that failed without a finding of its own (exit 1)."""
+    err_console.print(
+        t("cli.action_failed", command=command, error=mask_text(error)), style="red", markup=False
+    )

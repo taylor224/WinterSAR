@@ -68,8 +68,10 @@ CLAUDE.md 의 계약: `ok` 는 "대상에 FAIL 이 없는가", 종료 코드는 
 | CLI-009 | 입력에 레코드가 없음 | 2 | path, option |
 | CLI-010 | 명령에 필요한 구성 요소를 불러올 수 없음 | 2 | command, error |
 
-모듈 고유 ID 는 그대로 쓴다: `PIPELINE-014`(plan/run/cache 사용법), `UNW-005`(스택 읽기 실패, 1),
-`BENCH-004`(사이트 YAML, 2), `RES-006/010`(연구 명령 값·실험 이름, 1), `VAL-0xx`(1).
+모듈 고유 ID 는 그대로 쓴다: `PIPELINE-014`(plan/run/cache 사용법 — 설정 파일이 디렉터리이거나 읽을 수
+없는 `OSError` 포함, 2), `UNW-005`(스택 읽기 실패, 1), `BENCH-004`(사이트 YAML, 2), `RES-006`(연구 명령
+인자가 허용 범위 밖, **2** — 2차 리뷰에서 1 → 2, `research.cli.USAGE_RULES`), `RES-010`(실험 이름, 1),
+`VAL-0xx`(1). `check-install --engine <미등록 이름>` 은 `CLI-008`(2)이다(이전: 조용히 빈 표 + `ok:true`).
 
 ### click 예외 가로채기 (`clihelp.HelpGroup`)
 
@@ -100,6 +102,36 @@ cause/fix 키가 두 언어에 존재함을 확인하고, 같은 입력을 `--la
 - 되돌리는 조건: typer 가 non-standalone 모드에서 `Exit` 와 반환값을 구분하는 API 를 제공하면
   `sys.exit(rv if isinstance(rv, int) else 0)` 휴리스틱을 제거한다.
 
+## 2차 리뷰 보완 (2026-09-23, 리뷰 발견 2/20/24/31/41/42/44/45/46)
+
+- **루트 콜백 이전의 click 오류와 `--json`.** `TyperGroup.invoke` 는 `ctx.fail("Missing command.")` 와
+  `resolve_command`("No such command") 를 `super().invoke(ctx)`(= `_main_callback`) **앞에서** 던지므로
+  `state.json` 은 아직 False 다. `clihelp.json_requested(argv)` 가 대신 argv 를 훑는데, `--lang` 의 값을
+  명령어로 오인해 `--lang en --json nosuch` 에서 봉투를 내지 않았다. 이제 `--lang` 다음 토큰을 건너뛴다
+  (`output.invoked_command` 와 같은 규칙).
+  - 출처: `.venv/lib/python3.11/site-packages/typer/core.py` `TyperGroup.invoke`.
+- **프로그램 이름.** `_command_of` 는 `ctx.command_path` 에서 루트 `Context.info_name` 전체를 뗀다.
+  콘솔 스크립트는 한 단어지만 QGIS 플러그인이 쓰는 `python -m wintersar.cli` 는 세 단어라 봉투의
+  `command` 가 `-m wintersar.cli plan` 이 됐었다.
+- **텍스트 모드의 원시 예외 문구.** `unwrap run` / `research *` 는 finding 이 원인을 이미 담고 있으면
+  (UNW-001/005, RES-0xx) `err_console.print(str(e))` 를 더 이상 찍지 않고 `print_error_findings`
+  (`ID: 원인` / `조치`)만 낸다(원시 문구는 `-v` 에서만). finding 이 없는 예외는 새 키
+  `cli.action_failed`("'{command}' 명령이 실패했습니다: {error}")로 낸다. 연구 명령의 원인이 두 번
+  (원시 + 표) 찍히던 문제와 영어 원시 문구가 `--lang ko` 에 섞이던 문제(규칙 11.6)를 함께 닫는다.
+- **rich 마크업.** 카탈로그 문구·scope·예외 문구는 데이터다. `[dry-run: …]`, `[unwrap run]` 처럼 `[` 로
+  시작하는 조각을 rich 가 스타일 태그로 먹어 사라졌다(`cache gc --dry-run` 이 실제 삭제와 구별되지 않았다).
+  `print_findings` 는 `rich.markup.escape`, `print_error_findings`/`report_unexpected`/`print_action_failed`
+  는 `markup=False` 로 찍는다. 색은 `style=` 인자로 준다.
+- **증분 실행 안내줄.** `run --incremental` 의 PERF-06 안내줄("새 날짜에 닿는 쌍만 계산 … 다시 역산")은
+  실제로 쌍 캐시를 쓰며 실행된 단계(`record.extra["incremental"]`)가 있을 때만 찍는다. 모두 캐시된 재실행에서
+  "쌍 캐시 0개 · 신규 0개" 를 내던 것을 고쳤다.
+- **검증.** `tests/unit/test_cli_envelopes.py` 에 케이스 6개(check-install 미등록 엔진, 디렉터리 설정 ×3,
+  RES-006 종료 코드)와 텍스트 모드 테스트 5개(`--lang en --json` 봉투, 프로그램 이름, 마크업 보존,
+  `gc --dry-run` 표시, 증분 안내줄, 원인 1회 출력)를 더했다. `tests/unit/qgis/test_cli_client.py` 가
+  실제 `python -m wintersar.cli` 로 `command == "plan"` 을 확인한다.
+- `tests/unit/research/test_cli.py::test_synth_noise_model_option` 의 `bad.exit_code == 1` 은 2 로 바뀌어야
+  한다(research 소유자; 통합자 메모).
+
 ## English summary
 
 Every CLI error path now ends in a `Finding` with a `CLI-xxx` (or module) rule id whose
@@ -114,3 +146,10 @@ errors are intercepted in `clihelp.HelpGroup.main`, which runs typer in non-stan
 (verified in typer 0.27.2 `_main`), and `NoArgsIsHelpError` is replaced under `--json` because
 its constructor already prints the help page. `tests/unit/test_cli_envelopes.py` drives every
 command with broken input in JSON and in both text languages.
+
+Second review round: `json_requested` skips the value of `--lang` (group-level errors are
+raised before the root callback), the envelope's `command` strips the whole program name
+(`python -m wintersar.cli`), `check-install --engine <unknown>` is CLI-008 (exit 2), a
+directory/unreadable `--config` is PIPELINE-014 (exit 2) instead of CLI-001, RES-006 exits 2,
+text mode prints a finding's cause once (no raw exception line; `cli.action_failed` when no
+finding exists), and rendered text is escaped so `[dry-run: …]`/`[scope]` survive rich.

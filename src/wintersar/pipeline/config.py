@@ -4,6 +4,12 @@
 config file's directory. ``Config.normalized_params(stage)`` returns the *canonical*
 parameter mapping of a stage (defaults filled, keys sorted) which the DAG hashes
 (PERF-03: parameter normalisation before hashing).
+
+Error contract of :func:`load_config` (ADR-0091, CLI-004 / CLI-005): a missing file raises
+``FileNotFoundError``; anything wrong *inside* the file raises a ``ValueError`` — either
+:class:`ConfigError` (YAML syntax, wrapping pyyaml's ``YAMLError``, which is **not** a
+``ValueError`` itself) or pydantic's ``ValidationError`` (which is). Callers therefore need
+exactly two ``except`` clauses and never have to know pyyaml's exception hierarchy.
 """
 
 from __future__ import annotations
@@ -15,6 +21,14 @@ from typing import Any, Literal, cast
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+class ConfigError(ValueError):
+    """``config.yaml`` is not parseable YAML (raised by :func:`load_config`).
+
+    Wraps ``yaml.YAMLError`` (kept as ``__cause__``) so that every config-loading error is a
+    ``ValueError``; a caller catching ``ValueError`` gets YAML *and* pydantic failures alike.
+    """
 
 
 class _Strict(BaseModel):
@@ -258,9 +272,19 @@ def _resolve_paths(cfg: Config, base: Path) -> Config:
 
 
 def load_config(path: str | Path) -> Config:
+    """Read and validate ``config.yaml`` (see the module docstring for the error contract).
+
+    Raises ``FileNotFoundError`` (missing file), :class:`ConfigError` (YAML syntax) or
+    ``pydantic.ValidationError`` (schema); the last two are both ``ValueError``.
+    """
     p = Path(path)
-    with p.open(encoding="utf-8") as fh:
-        raw = yaml.safe_load(fh) or {}
+    try:
+        with p.open(encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh) or {}
+    except yaml.YAMLError as exc:
+        # pyyaml's errors are not ValueErrors; without this a CLI that (correctly) maps
+        # ValueError -> CLI-005 would report a typo in config.yaml as a crash (CLI-001).
+        raise ConfigError(f"{type(exc).__name__}: {exc}") from exc
     cfg = Config.model_validate(raw)
     cfg.config_path = p.resolve()
     return _resolve_paths(cfg, p.resolve().parent)

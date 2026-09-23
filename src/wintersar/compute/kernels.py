@@ -12,6 +12,13 @@ both libraries are used — verified against the CuPy reference (2026-09-16):
 Box sums use cumulative sums (no ``scipy.ndimage`` dependency) so CPU and GPU execute the
 same arithmetic; the CPU result is the reference in tests (tolerance stated per kernel).
 
+Non-finite input (ADR-0096): NaN is absorbing in a cumulative sum, so a single NaN/±inf
+sample would contaminate every pixel to its lower-right. :func:`box_sum` therefore drops
+non-finite samples from the table and returns NaN exactly on the pixels whose window
+contains one — the footprint a direct moving-window sum would give — and
+:func:`coherence_estimate` reports those pixels as NaN, never as coherence 0.
+``assume_finite=True`` skips the extra pass where the caller knows its input is finite.
+
 Kernels
 -------
 * :func:`multilook` — coherent (complex) or incoherent averaging by ``(az, rg)`` looks.
@@ -45,10 +52,37 @@ def _as_pair(v: int | tuple[int, int]) -> tuple[int, int]:
     return (int(v), int(v))
 
 
-def box_sum(a: Any, window: int | tuple[int, int], xp: ModuleType | None = None) -> Any:
+def _window_sum(p: Any, wy: int, wx: int, ny: int, nx: int, xp: ModuleType, acc_dtype: Any) -> Any:
+    """Window sums of the padded array ``p`` (see :func:`box_sum` for the padding) through
+    a summed-area table accumulated in ``acc_dtype``; the result has the unpadded shape."""
+    c = xp.cumsum(xp.cumsum(p, axis=-2, dtype=acc_dtype), axis=-1, dtype=acc_dtype)
+    # S[i,j] = C[i+wy, j+wx] - C[i, j+wx] - C[i+wy, j] + C[i, j] with the +1 shift of the pad
+    return (
+        c[..., wy : wy + ny, wx : wx + nx]
+        - c[..., 0:ny, wx : wx + nx]
+        - c[..., wy : wy + ny, 0:nx]
+        + c[..., 0:ny, 0:nx]
+    )
+
+
+def box_sum(
+    a: Any,
+    window: int | tuple[int, int],
+    xp: ModuleType | None = None,
+    *,
+    assume_finite: bool = False,
+) -> Any:
     """Sum over a centred ``window`` (rows, cols) for the last two axes, zero-padded edges.
 
     Implemented with 2-D cumulative sums (summed-area table); output has the input shape.
+
+    Non-finite samples (NaN, ±inf) are left out of the table — NaN is absorbing in a
+    cumulative sum and would otherwise contaminate every pixel to its lower-right — and the
+    output is NaN exactly where the window contains one, as a direct moving-window sum
+    gives; finite input is unaffected (bit-identical). ``assume_finite=True`` skips that
+    guard (one extra cumulative-sum pass) for callers that know the input is finite; the
+    result is then undefined for non-finite input. Integer and boolean input is finite by
+    construction and never guarded.
     """
     xp = xp or xp_of(a)
     wy, wx = _as_pair(window)
@@ -60,33 +94,43 @@ def box_sum(a: Any, window: int | tuple[int, int], xp: ModuleType | None = None)
     by, bx = wy - 1 - ty, wx - 1 - tx  # pixels after the centre
     pad = [(0, 0)] * (a.ndim - 2) + [(ty + 1, by), (tx + 1, bx)]
     p = xp.pad(a, pad, mode="constant")
+    finite = None
+    if not assume_finite and np.issubdtype(p.dtype, np.inexact):
+        # source: https://github.com/cupy/cupy/blob/main/cupy/_logic/content.py
+        #   (isfinite loops e/f/d/F/D -> ?, i.e. complex input is supported)
+        finite = xp.isfinite(p)
+        p = xp.where(finite, p, 0).astype(p.dtype, copy=False)
     # summed-area tables cancel large partial sums: accumulate in double precision and cast
     # back, otherwise float32 cumsums over multi-megapixel images lose the small-window sums
     acc_dtype = np.complex128 if np.issubdtype(p.dtype, np.complexfloating) else np.float64
-    c = xp.cumsum(xp.cumsum(p, axis=-2, dtype=acc_dtype), axis=-1, dtype=acc_dtype)
-    # S[i,j] = C[i+wy, j+wx] - C[i, j+wx] - C[i+wy, j] + C[i, j] with the +1 shift above
-    out = (
-        c[..., wy : wy + ny, wx : wx + nx]
-        - c[..., 0:ny, wx : wx + nx]
-        - c[..., wy : wy + ny, 0:nx]
-        + c[..., 0:ny, 0:nx]
-    )
+    out = _window_sum(p, wy, wx, ny, nx, xp, acc_dtype)
+    if finite is not None:
+        # count the non-finite samples in every window: an int64 table is exact, so ``> 0``
+        # is exact too — no rounding can hide or invent a hit
+        touched = _window_sum(~finite, wy, wx, ny, nx, xp, np.int64) > 0
+        out = xp.where(touched, np.nan, out)
     out_dtype = a.dtype if np.issubdtype(a.dtype, np.inexact) else acc_dtype
     return out.astype(out_dtype)
 
 
 def box_filter(
-    a: Any, window: int | tuple[int, int], xp: ModuleType | None = None, normalize: str = "valid"
+    a: Any,
+    window: int | tuple[int, int],
+    xp: ModuleType | None = None,
+    normalize: str = "valid",
+    *,
+    assume_finite: bool = False,
 ) -> Any:
     """Moving-window mean. ``normalize='valid'`` divides by the number of in-image pixels
-    (edges unbiased); ``'full'`` divides by ``wy*wx`` (edges taper to zero)."""
+    (edges unbiased); ``'full'`` divides by ``wy*wx`` (edges taper to zero). Windows that
+    contain a non-finite sample are NaN (see :func:`box_sum`)."""
     xp = xp or xp_of(a)
     wy, wx = _as_pair(window)
-    s = box_sum(a, (wy, wx), xp)
+    s = box_sum(a, (wy, wx), xp, assume_finite=assume_finite)
     if normalize == "full":
         return s / float(wy * wx)
     ones = xp.ones(a.shape[-2:], dtype=np.float32)
-    n = box_sum(ones, (wy, wx), xp)
+    n = box_sum(ones, (wy, wx), xp, assume_finite=True)  # a constant image is finite
     return s / n
 
 
@@ -163,17 +207,21 @@ def _smooth_spectrum(mag: Any, size: int, mode: str, xp: ModuleType) -> Any:
     bins before and ``size - 1 - size // 2`` after the centre, the same placement as
     :func:`box_sum`.
     """
+    # ``assume_finite``: a non-finite sample anywhere in a patch makes every bin of its
+    # spectrum non-finite (the FFT mixes all samples), so the box_sum guard would flag the
+    # whole patch anyway; skipping it keeps the per-patch arithmetic of the Goldstein loop
+    # exactly as before (ADR-0096 legacy equivalence, NaN input included).
     if mode == "box":
-        return box_filter(mag, size, xp, normalize="full")
+        return box_filter(mag, size, xp, normalize="full", assume_finite=True)
     ny, nx = mag.shape[-2], mag.shape[-1]
     before = size // 2
     after = size - 1 - before
     pad = [(0, 0)] * (mag.ndim - 2) + [(before, after), (before, after)]
     # source: https://docs.cupy.dev/en/stable/reference/generated/cupy.pad.html (mode='wrap')
     p = xp.pad(mag, pad, mode="wrap")
-    return box_sum(p, size, xp)[..., before : before + ny, before : before + nx] / float(
-        size * size
-    )
+    return box_sum(p, size, xp, assume_finite=True)[
+        ..., before : before + ny, before : before + nx
+    ] / float(size * size)
 
 
 def _padded_length(n: int, window: int, step: int) -> int:
@@ -322,7 +370,9 @@ def coherence_estimate(
     """Sample coherence magnitude of two co-registered complex images over a moving window.
 
     ``|g| = |sum(s1*conj(s2))| / sqrt(sum|s1|^2 * sum|s2|^2)``, clipped to ``[0, 1]``; pixels whose
-    window has zero power are ``0``. The window is centred and truncated at the image edge
+    window has zero power are ``0``. Pixels whose window contains a non-finite sample (NaN,
+    ±inf) in *either* image are NaN: nodata propagates over the window footprint only and is
+    never reported as coherence 0. The window is centred and truncated at the image edge
     (numerator and denominator use the same pixels, so the estimator stays normalised).
     """
     xp = xp or xp_of(s1)
@@ -331,18 +381,28 @@ def coherence_estimate(
     if a.shape != b.shape:
         msg = f"shape mismatch {a.shape} vs {b.shape}"
         raise ValueError(msg)
-    cross = box_sum(a * xp.conj(b), window, xp)
-    p1 = box_sum((xp.abs(a) ** 2).astype(np.float32), window, xp)
-    p2 = box_sum((xp.abs(b) ** 2).astype(np.float32), window, xp)
+    # a non-finite sample in either image spoils every estimate whose window contains it:
+    # take it out of all three sums here and mark the footprint once, instead of running
+    # the box_sum guard three times (see box_sum for the summed-area-table hazard)
+    finite = xp.isfinite(a) & xp.isfinite(b)
+    a = xp.where(finite, a, 0).astype(np.complex64, copy=False)
+    b = xp.where(finite, b, 0).astype(np.complex64, copy=False)
+    cross = box_sum(a * xp.conj(b), window, xp, assume_finite=True)
+    p1 = box_sum((xp.abs(a) ** 2).astype(np.float32), window, xp, assume_finite=True)
+    p2 = box_sum((xp.abs(b) ** 2).astype(np.float32), window, xp, assume_finite=True)
     denom = xp.sqrt(xp.maximum(p1, 0.0) * xp.maximum(p2, 0.0))
     coh = xp.abs(cross) / xp.maximum(denom, np.float32(1e-20))
     coh = xp.where(denom > 0, coh, np.float32(0.0))
-    return xp.minimum(coh, np.float32(1.0)).astype(np.float32)
+    coh = xp.minimum(coh, np.float32(1.0))
+    # windows holding at least one non-finite sample (counts <= window area: exact in float32)
+    touched = box_sum((~finite).astype(np.float32), window, xp, assume_finite=True) > 0
+    return xp.where(touched, np.float32(np.nan), coh).astype(np.float32)
 
 
 def phase_noise_std(coherence: Any, looks: int = 1, xp: ModuleType | None = None) -> Any:
     """Cramér-Rao-type phase standard deviation ``sqrt((1-g^2)/(2*L*g^2))`` clipped to the
-    uniform-phase limit ``pi/sqrt(3)`` (same model as :mod:`wintersar.research.synth`)."""
+    uniform-phase limit ``pi/sqrt(3)`` (same model as :mod:`wintersar.research.synth`).
+    NaN coherence (nodata, see :func:`coherence_estimate`) stays NaN."""
     xp = xp or xp_of(coherence)
     g2 = xp.asarray(coherence).astype(np.float32) ** 2
     g2 = xp.maximum(g2, np.float32(1e-12))

@@ -5,6 +5,8 @@
 # ``wintersar.util.clihelp.h`` 로 읽는다(임포트 시점의 ``t`` 호출 금지).
 # ``cli.CLI-00x`` 항목은 ko.yaml 의 루트 ``cli:`` 네임스페이스를 확장한다(깊은 병합).
 cli:
+  aborted: "중단되었습니다."
+  action_failed: "'{command}' 명령이 실패했습니다: {error}"
   CLI-003:
     cause: "'{command}' 명령의 사용법이 잘못되었습니다: {detail}"
     fix: "'wintersar {command} --help' 로 인자를 확인하세요(--json/--lang 같은 전역 옵션은 명령 앞에 둡니다)."
@@ -47,6 +49,9 @@ cli_help:
     json: "표준 출력에 JSON 봉투를 냅니다."
     lang: "메시지 언어: ko | en (기본값: WINTERSAR_LANG 또는 ko)."
     verbose: "더 자세히 출력합니다(-vv 는 추적 정보 포함)."
+    help_option: "이 도움말을 표시하고 종료합니다."
+    install_completion: "현재 셸에 자동 완성을 설치합니다."
+    show_completion: "현재 셸의 자동 완성 스크립트를 출력합니다(복사하거나 직접 설치할 때)."
   version:
     help: "wintersar 버전을 출력합니다."
   check_install:
@@ -104,7 +109,7 @@ cli_help:
     help: "스케줄된 전략으로 스택의 모든 간섭도를 언래핑합니다."
     igrams: "igrams.npz (wintersar.io.igrams 형식)."
     out: "출력 디렉터리(unw.npz, stats.json)."
-    coherence_threshold: "이 긴밀도(coherence) 미만 픽셀을 마스킹합니다."
+    coherence_threshold: "이 코히어런스(coherence) 미만 픽셀을 마스킹합니다."
     memory_gb: "메모리 예산(GB, 기본값: 감지값 x 0.8)."
     cores: "CPU 코어 수(기본값: 감지값)."
     tiles: "타일 수를 ROWSxCOLS 로 직접 지정."
@@ -137,11 +142,11 @@ cli_help:
     help: "기준점 후보를 추천하고 MintPy 자동 규칙과 비교합니다(R-09)."
     aoi: "AOI GeoJSON (lon/lat). 기본값: 유효 픽셀 전체."
     top: "후보 수."
-    coherence: "평균 긴밀도 지도(.npy/.npz)."
+    coherence: "평균 코히어런스 지도(.npy/.npz)."
     conncomp: "연결 성분 지도(.npy/.npz)."
     dem: "고도 지도(.npy/.npz, 미터)."
     weights: "가중치 덮어쓰기, 예: coherence=0.4,conncomp=0.3 (ADR-0041)."
-    min_coherence: "이 평균 긴밀도 미만 픽셀을 제외합니다."
+    min_coherence: "이 평균 코히어런스 미만 픽셀을 제외합니다."
     mintpy_threshold: "비교에 쓸 MintPy minCoherence."
     out: "후보 JSON 을 이 경로에 씁니다."
   sweep:
@@ -201,7 +206,7 @@ cli_help:
     shape: "행·열 수."
     seed: "난수 시드."
     atmosphere_std_rad: "대기 위상 스크린의 표준편차(rad)."
-    coherence_base: "합성 간섭도의 기본 긴밀도(0-1)."
+    coherence_base: "합성 간섭도의 기본 코히어런스(0-1)."
     looks: "위상 잡음 모델에 쓰는 looks 수."
     noise_model: "crlb (Cramer-Rao 하한, 기본값) | exact (실제 위상 분포)."
     water_fraction: "수역으로 마스킹할 장면 비율(0-1)."
@@ -211,8 +216,8 @@ cli_help:
     max_offset_cycles: "tiles: 주입하는 최대 2π 오프셋(사이클)."
     noise_std_rad: "tiles: 타일에 더하는 잡음"
     factor: "tiles: 저해상도 기준 계수"
-    tau_dates: "slc: 긴밀도 감쇠(날짜 수)"
-    coherence_floor: "slc: 장기 긴밀도"
+    tau_dates: "slc: 코히어런스 감쇠(날짜 수)"
+    coherence_floor: "slc: 장기 코히어런스"
   research_experiment:
     help: "YAML 로 정의한 실험을 실행합니다(결과 JSON + Markdown 표)."
     yaml_path: "실험 YAML 경로 또는 번들 이름(S_synth_repr_phase)."

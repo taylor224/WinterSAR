@@ -21,6 +21,12 @@
   - `actions/download-artifact` v4 README: `with: name, path`, "Downloading artifacts that were created from
     `action/upload-artifact@v3` and below are not supported" (ci.yml 은 upload-artifact@v4)
     <https://github.com/actions/download-artifact/blob/v4/README.md>
+  - GitHub Docs "Workflow syntax" `permissions`: 값은 `read`/`write`/`none`, "If you specify the access for any of these
+    permissions, all of those that are not specified are set to `none`", 예시 `permissions:\n  contents: read`
+    <https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#permissions>
+  - `actions/download-artifact` v4 README: `github-token` 은 "required when downloading artifacts from a different
+    repository or from a different workflow run" 일 때만; `actions/upload-artifact` v4 README 에는 토큰 권한 요구가 없다
+    <https://github.com/actions/upload-artifact/blob/v4/README.md>
   - 이 저장소 `.github/workflows/ci.yml`(checkout@v4, setup-uv@v5, `uv sync --extra dev`, upload-artifact@v4),
     `src/wintersar/bench/cli.py`(`--json bench --site --out --repeats`), `src/wintersar/bench/report.py`
     (`compare`, `load_result`, `CompareReport.ok/to_markdown`)
@@ -51,6 +57,12 @@
 | `compare-baseline` | `needs: bench`, `continue-on-error: true`; `benchmarks/baselines/S_synthetic.${RUNNER_CLASS}.json` 이 있으면 아티팩트를 내려받아 `bench.report.compare` 표를 `$GITHUB_STEP_SUMMARY` 에 쓰고 회귀가 있으면 exit 1(잡만 빨감); 없으면 요약에 "기준선 없음" 한 줄 | **워크플로는 통과** (보고만) |
 
 - 트리거: `cron: "0 3 * * *"`(UTC 03:00, 기본 브랜치 최신 커밋) + `workflow_dispatch`.
+- 토큰 권한(2026-09-23 리뷰 2차): 워크플로 최상위에 `permissions: contents: read`. 잡은 체크아웃과 같은 실행 안의
+  아티팩트 업로드/다운로드만 하므로 다른 scope 는 필요 없고, 하나라도 지정하면 나머지는 `none` 이 된다(위 출처).
+  액션은 ci.yml 과 같은 major 태그(`@v4`/`@v5`)로 고정한다 — 커밋 SHA 고정은 SHA 를 갱신할 dependabot/renovate 설정이
+  이 저장소에 없어 채택하지 않았다(후속: 그 설정을 추가할 때 두 워크플로를 함께 전환). ci.yml 에도 같은 `permissions`
+  블록이 필요하다(다른 담당 파일이라 이번 라운드에는 제안만). `tests/unit/bench/test_nightly_workflow.py` 가 권한과
+  게이트/보고 구조를 고정한다.
 - 러너 클래스는 `ubuntu-24.04` 로 명시(`RUNNER_CLASS` env, `runs-on` 과 같은 값). `ubuntu-latest` 를 쓰지 않는
   이유: 기준선 파일 이름(`S_synthetic.<runner>.json`)이 러너 클래스를 뜻해야 하는데 `-latest` 는 OS 가 바뀌면
   같은 이름으로 다른 머신을 가리킨다. 기준선 생성·갱신 정책은 `benchmarks/baselines/README.md`.

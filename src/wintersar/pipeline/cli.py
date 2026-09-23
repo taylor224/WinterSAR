@@ -19,6 +19,7 @@ from typing import Annotated, Any
 import typer
 import yaml
 from pydantic import ValidationError
+from rich.markup import escape
 from rich.table import Table
 
 from wintersar.i18n import t
@@ -78,7 +79,8 @@ def _load(config: Path, command: str = "plan") -> Config:
     except FileNotFoundError:
         detail = t("cli.config_not_found", path=mask_text(str(config)))
         raise usage_error(command, detail) from None
-    except (ValidationError, yaml.YAMLError, ValueError) as exc:
+    # a directory or an unreadable file is bad input (exit 2), not an unexpected exception
+    except (ValidationError, yaml.YAMLError, ValueError, OSError) as exc:
         detail = t("cli.invalid_config", error=mask_text(str(exc)))
         raise usage_error(command, detail) from None
 
@@ -264,7 +266,11 @@ def run_cmd(
             console.print(t("pipeline.cli.dry_run"))
             console.print(_resources_line(result.plan.resources))
         elif result.ok:
-            if result.incremental:
+            # only when a stage really ran with the per-pair cache: a fully cached run
+            # computed nothing and re-inverted nothing, so the line would be wrong
+            if result.incremental and any(
+                isinstance(r.extra.get("incremental"), dict) for r in result.ran
+            ):
                 ps = result.pair_summary()
                 console.print(
                     f"{t('pipeline.cli.incremental_mode')} "
@@ -402,13 +408,14 @@ def cache_gc(
         )
     for e in report.removed:
         console.print(f"  - {e.stage}/{e.node_hash} ({cache.human_size(e.size_bytes)})")
+    # the suffix reads ``[dry-run: …]``: escaped so rich does not take it for a style tag
     console.print(
         t(
             "pipeline.cli.gc_summary",
             n_removed=len(report.removed),
             freed=cache.human_size(report.freed_bytes),
             n_kept=len(report.kept),
-            dry=t("pipeline.cli.gc_dry_suffix") if dry_run else "",
+            dry=escape(t("pipeline.cli.gc_dry_suffix")) if dry_run else "",
         )
     )
 

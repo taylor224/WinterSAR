@@ -2,8 +2,9 @@
 
 pixi is not installed on the development machine (CLAUDE.md Environment), so these tests
 verify what can be verified without it: the manifest parses, the tables the install docs rely
-on exist, platform exclusions match the conda-forge facts recorded in ADR-0105, and the core
-dependency list cannot drift from ``pyproject.toml`` (``scripts/check_env.py``).
+on exist, platform exclusions match the conda-forge facts recorded in ADR-0105, and neither the core
+dependency list nor any mirrored extra can drift from ``pyproject.toml`` (``scripts/check_env.py``:
+every pyproject extra and every pixi feature is compared or explicitly declared one-sided).
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ def check_env() -> ModuleType:
     spec = importlib.util.spec_from_file_location("check_env", CHECK_ENV)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod  # importlib recipe: register before executing
     spec.loader.exec_module(mod)
     return mod
 
@@ -144,6 +146,8 @@ def test_check_env_script_passes_on_repo() -> None:
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "agree" in proc.stdout
+    for group in ("core", "dev", "hyp3", "unwrap", "aux", "plots"):
+        assert group in proc.stdout, group
 
 
 def test_core_list_mirrors_pyproject(check_env: ModuleType, manifest: dict[str, Any]) -> None:
@@ -212,6 +216,137 @@ def test_requirement_parsing(check_env: ModuleType) -> None:
     assert check_env.parse_requirement('foo[bar] >= 1 ; python_version < "3.12"') == ("foo", ">=1")
     assert check_env.parse_requirement("types-PyYAML") == ("types-pyyaml", "")
     assert check_env.normalize_spec("*") == check_env.normalize_spec(None) == ""
+
+
+def test_check_env_classifies_every_extra_and_feature(
+    check_env: ModuleType, manifest: dict[str, Any]
+) -> None:
+    """Every pyproject extra and every pixi feature is compared or explicitly one-sided.
+
+    ``unwrap``/``orbits``/``dem`` mirror conda-forge features, ``plots`` is a subset of the dev
+    table; ``spurt`` (no conda-forge package, ADR-0025), ``gpu`` (CPU-only engine environments)
+    and ``docs`` (mkdocs is the uv/CI path) are uv-only; the conda-only engines and ``geo`` are
+    pixi-only (ADR-0107).
+    """
+    with PYPROJECT.open("rb") as fh:
+        pyproject = tomllib.load(fh)
+    extras = set(pyproject["project"]["optional-dependencies"])
+    mapped = {e for g in check_env.GROUPS.values() for e in g.extras} - {"core"}
+    assert mapped == {"dev", "hyp3", "unwrap", "orbits", "dem", "plots"}
+    assert mapped <= extras
+    assert extras - mapped == set(check_env.UV_ONLY_EXTRAS) == {"spurt", "gpu", "docs"}
+    features = set(manifest["feature"])
+    mapped_features = {g.table[1] for g in check_env.GROUPS.values() if g.table[0] == "feature"}
+    assert mapped_features == {"dev", "hyp3", "unwrap", "aux"}
+    assert features - mapped_features == set(check_env.PIXI_ONLY_FEATURES)
+    assert set(check_env.PIXI_ONLY_FEATURES) == {"geo", "tophu", "isce2", "mintpy", "dolphin"}
+    assert check_env.GROUPS["plots"].subset and not check_env.GROUPS["dev"].subset
+    # what the script prints must agree with the tables above
+    problems = check_env.compare(pyproject, manifest)
+    assert problems == []
+
+
+def test_check_env_detects_conda_feature_drift(check_env: ModuleType) -> None:
+    """Round-2 finding: unwrap/orbits/dem/plots used to be outside the guard."""
+    pyproject: dict[str, Any] = {
+        "project": {
+            "dependencies": [],
+            "optional-dependencies": {
+                "unwrap": ["snaphu>=0.5"],  # spec drift vs the conda feature
+                "orbits": ["sentineleof>=0.99"],  # spec drift
+                "dem": ["sardem>=0.11"],  # in sync
+                "plots": ["matplotlib>=9.9", "pandas>=2.1"],  # spec drift vs the dev table
+            },
+        }
+    }
+    pixi: dict[str, Any] = {
+        "pypi-dependencies": {},
+        "feature": {
+            "unwrap": {"dependencies": {"snaphu": ">=0.4,<1"}},
+            "aux": {"dependencies": {"sentineleof": ">=0.10", "sardem": {"version": ">=0.11"}}},
+            "dev": {"pypi-dependencies": {"matplotlib": ">=3.8", "pandas": ">=2.1", "pytest": "*"}},
+        },
+    }
+    problems = check_env.compare(pyproject, pixi, ["unwrap", "aux", "plots"])
+    joined = "\n".join(problems)
+    assert "[unwrap] snaphu: pyproject.toml '>=0.5' != pixi.toml '<1,>=0.4'" in joined
+    assert "[aux] sentineleof: pyproject.toml '>=0.99' != pixi.toml '>=0.10'" in joined
+    assert "sardem" not in joined
+    assert "[plots] matplotlib: pyproject.toml '>=9.9' != pixi.toml '>=3.8'" in joined
+    assert "pandas" not in joined
+    assert "pytest" not in joined  # plots is a *subset* of the dev table: extra entries are fine
+    # an extra that is silently missing on the pixi side is reported, one-sided lists are not
+    pixi["feature"]["aux"]["dependencies"].pop("sardem")
+    assert "[aux] sardem>=0.11: in pyproject.toml, missing in [feature.aux.dependencies]" in (
+        check_env.compare(pyproject, pixi, ["aux"])
+    )
+    # two extras mapped onto one conda table must agree with each other
+    pyproject["project"]["optional-dependencies"]["orbits"].append("sardem>=0.12")
+    assert any(
+        "[aux] sardem" in p and "orbits" in p and "dem" in p
+        for p in check_env.compare(pyproject, pixi, ["aux"])
+    )
+
+
+def test_check_env_reports_unclassified_extra_and_feature(check_env: ModuleType) -> None:
+    """A new extra or feature must be mapped or declared one-sided, otherwise it is drift."""
+    pyproject: dict[str, Any] = {
+        "project": {"dependencies": [], "optional-dependencies": {"newthing": ["foo>=1"]}}
+    }
+    pixi: dict[str, Any] = {
+        "pypi-dependencies": {},
+        "feature": {"newfeat": {"dependencies": {"bar": ">=1"}}},
+    }
+    problems = check_env.compare(pyproject, pixi)
+    joined = "\n".join(problems)
+    assert "[extras] newthing" in joined and "UV_ONLY_EXTRAS" in joined
+    assert "[features] newfeat" in joined and "PIXI_ONLY_FEATURES" in joined
+    # the declared one-sided lists are accepted without a counterpart
+    pyproject["project"]["optional-dependencies"] = {"spurt": ["spurt>=0.1,<1"]}
+    pixi["feature"] = {"geo": {"dependencies": {"gdal": ">=3.5"}}}
+    classified = [
+        p for p in check_env.compare(pyproject, pixi) if p.startswith(("[extras]", "[features]"))
+    ]
+    assert classified == []
+    # a --group selection compares only that group and skips the classification
+    pyproject["project"]["optional-dependencies"] = {"newthing": ["foo>=1"]}
+    assert check_env.compare(pyproject, pixi, ["core"]) == []
+
+
+@pytest.mark.parametrize("bad", ["missing", "invalid-toml", "bad-requirement"])
+def test_check_env_cli_bad_input_exits_2(tmp_path: Path, bad: str) -> None:
+    """Exit 2 = bad input, distinguishable from 1 = drift (no traceback, message on stderr)."""
+    pyproject = tmp_path / "pyproject.toml"
+    pixi = tmp_path / "pixi.toml"
+    pyproject.write_text('[project]\ndependencies = ["numpy>=1.26"]\n', encoding="utf-8")
+    if bad == "invalid-toml":
+        pixi.write_text("[pypi-dependencies\nnumpy = \n", encoding="utf-8")
+    elif bad == "bad-requirement":
+        pixi.write_text('[pypi-dependencies]\nnumpy = ">=1.26"\n', encoding="utf-8")
+        pyproject.write_text('[project]\ndependencies = ["-not a requirement"]\n', encoding="utf-8")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(CHECK_ENV),
+            "--pyproject",
+            str(pyproject),
+            "--pixi",
+            str(pixi),
+            "--group",
+            "core",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "Traceback" not in proc.stderr
+    assert proc.stderr.startswith("check_env.py: ")
+    assert proc.stdout == ""
+    if bad == "bad-requirement":
+        assert "not a requirement" in proc.stderr
+    else:
+        assert "pixi.toml" in proc.stderr
 
 
 # ------------------------------------------------------------------ Dockerfile.engines

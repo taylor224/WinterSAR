@@ -89,3 +89,17 @@ add an open-questions row and code the safest fallback; every user-facing string
 in both languages as `<ns>.<ID>.cause`/`.fix`; decisions go to numbered ADRs; no performance numbers
 without `bench_result.json`; mask home paths and tokens in anything logged. Touch only the files your
 task owns; the shared contracts and the listed shared files are edited by the integrator.
+
+## 골든 통계 (Golden statistics, ADR-0100)
+
+`tests/regression/golden/S_synthetic/stats.json` 은 합성 S 사이트를 fake 엔진으로 돌린 결과의
+기계 독립 통계(속도장 분포·마스크 비율·폐합 RMS·Finding 목록 등)를 고정한다. 다음 파일을 바꾸면
+값이 달라질 수 있으므로 **같은 커밋에서** `.venv/bin/python scripts/make_golden.py` 로 재생성하고
+PR 본문에 그 사실을 적는다:
+
+- `src/wintersar/engines/fake.py` (`rng_for`, `synth_params`, `fake_dates`: 쌍별 RNG 시드)
+- `src/wintersar/research/synth.py` (`make_interferogram`, `turbulent_atmosphere`, `deformation_field`)
+- `src/wintersar/bench/golden.py` 의 통계 정의, `benchmarks/sites/S_synthetic.yaml`
+
+검증은 `scripts/make_golden.py --check` (CI 의 regression 테스트가 같은 비교를 수행한다).
+성능 수치(시간·메모리)는 골든에 넣지 않는다(규칙 11.8).

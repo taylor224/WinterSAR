@@ -60,8 +60,14 @@ def igram() -> synth.SynthIgram:
 
 
 def _kernel_cases(z: np.ndarray, s2: np.ndarray) -> dict[str, Callable[[Any], Any]]:
+    def poison(a: Any) -> Any:  # one nodata sample: NaN on its window footprint only (ADR-0096)
+        a = a.copy()
+        a[5, 7] = np.nan
+        return a
+
     return {
         "box_sum": lambda a: K.box_sum(a.real.astype(np.float32), (3, 5)),
+        "box_sum_nonfinite": lambda a: K.box_sum(poison(a.real.astype(np.float32)), (3, 5)),
         "box_filter": lambda a: K.box_filter(a.real.astype(np.float32), 4),
         "multilook_mean": lambda a: K.multilook(a, 4, 2),
         "multilook_power": lambda a: K.multilook(a, 3, 3, method="power"),
@@ -80,6 +86,9 @@ def _kernel_cases(z: np.ndarray, s2: np.ndarray) -> dict[str, Callable[[Any], An
         "coherence_estimate": lambda a: K.coherence_estimate(
             a, xpmod.asarray(s2, xpmod.xp_of(a)), 5
         ),
+        "coherence_estimate_nonfinite": lambda a: K.coherence_estimate(
+            poison(a), xpmod.asarray(s2, xpmod.xp_of(a)), 5
+        ),
         "phase_noise_std": lambda a: K.phase_noise_std(
             K.coherence_estimate(a, xpmod.asarray(s2, xpmod.xp_of(a)), 5), looks=4
         ),
@@ -91,12 +100,14 @@ def _kernel_cases(z: np.ndarray, s2: np.ndarray) -> dict[str, Callable[[Any], An
     "name",
     [
         "box_sum",
+        "box_sum_nonfinite",
         "box_filter",
         "multilook_mean",
         "multilook_power",
         "goldstein_hann_clamp",
         "goldstein_bartlett_zero_wrap",
         "coherence_estimate",
+        "coherence_estimate_nonfinite",
         "phase_noise_std",
     ],
 )

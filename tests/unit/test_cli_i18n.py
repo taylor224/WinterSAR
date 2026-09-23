@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -20,7 +21,7 @@ import yaml
 from typer.testing import CliRunner
 
 from wintersar.cli import app
-from wintersar.i18n import SUPPORTED, load_catalog, t
+from wintersar.i18n import SUPPORTED, has_key, load_catalog, t
 from wintersar.util import clihelp
 from wintersar.util.clistate import state
 
@@ -42,6 +43,12 @@ OWNED_CLIS = [
 # typer adds these itself (add_completion) and click adds --help: not catalogue texts
 TYPER_OWN_PARAMS = {"help", "install_completion", "show_completion"}
 HANGUL = re.compile("[가-힣]")
+# rich wraps long help texts across table rows: compare without whitespace and box borders
+_BOX = re.compile(r"[\s│╭╮╰╯─┃┏┓┗┛━┡┩╇┳┻╋┼]")
+
+
+def _squash(text: str) -> str:
+    return _BOX.sub("", text)
 
 
 def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, str]:
@@ -95,6 +102,35 @@ def test_lang_from_argv_edge_cases() -> None:
     assert clihelp.lang_from_argv(["--lang", "--json"]) is None
     assert clihelp.lang_from_argv(["--json", "--lang", "ko"]) == "ko"
     assert clihelp.lang_from_argv(["--lang=", "--lang", "en"]) == "en"
+
+
+def test_json_requested_skips_the_value_of_lang() -> None:
+    """``--lang en --json`` requests JSON like ``--json --lang en`` (ADR-0091)."""
+    assert clihelp.json_requested(["--lang", "en", "--json", "nosuch"])
+    assert clihelp.json_requested(["--lang=en", "--json"])
+    assert clihelp.json_requested(["-v", "--json"])
+    assert not clihelp.json_requested(["--lang", "en", "plan", "--json"])  # after the command
+    assert not clihelp.json_requested(["--lang", "--json"])  # click reads it as the value
+    assert not clihelp.json_requested([])
+
+
+def test_help_lang_and_h_work_without_sys_argv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An embedding interpreter (QGIS, a C host) may never set ``sys.argv``."""
+    monkeypatch.setattr(state, "lang_explicit", False)
+    monkeypatch.setenv("WINTERSAR_LANG", "en")
+    monkeypatch.delattr(sys, "argv")
+    assert clihelp.help_lang() == "en"
+    assert clihelp.h("cli_help.version.help") == t("cli_help.version.help", "en")
+
+
+def test_cli_imports_in_an_interpreter_without_sys_argv() -> None:
+    code = (
+        "import sys; del sys.argv; import wintersar.cli; "
+        "print(len(wintersar.cli.app.registered_commands))"
+    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    assert int(done.stdout.strip()) >= 3
 
 
 def test_h_registers_both_languages_and_falls_back_to_the_key() -> None:
@@ -185,6 +221,34 @@ def test_help_follows_lang(args: list[str], needle_ko: str, needle_en: str) -> N
     en_text = re.sub(r"\s+", " ", en.output)
     assert needle_ko in ko_text, ko.output
     assert needle_en in en_text and not HANGUL.search(en.output), en.output
+
+
+@pytest.mark.parametrize("args", [["--help"], ["plan", "--help"], ["unwrap", "run", "--help"]])
+def test_builtin_option_help_follows_lang(args: list[str]) -> None:
+    """``--help`` (click) and ``--install-completion``/``--show-completion`` (typer) carry
+    English literals in the libraries; rendered help replaces them from the catalogue."""
+    ko = runner.invoke(app, ["--lang", "ko", *args]).output
+    en = runner.invoke(app, ["--lang", "en", *args]).output
+    ko_flat, en_flat = _squash(ko), _squash(en)
+    for key in clihelp.BUILTIN_PARAM_KEYS.values():
+        assert all(has_key(key, lang) for lang in SUPPORTED), key
+    assert _squash(t("cli_help.root.help_option", "ko")) in ko_flat, ko
+    assert "Showthismessage" not in ko_flat and not HANGUL.search(en), (ko, en)
+    assert _squash(t("cli_help.root.help_option", "en")) in en_flat, en
+    if args == ["--help"]:
+        assert "--install-completion" in ko and "--show-completion" in en  # typer adds them
+        for name in ("install_completion", "show_completion"):
+            assert _squash(t(f"cli_help.root.{name}", "ko")) in ko_flat, ko
+            assert _squash(t(f"cli_help.root.{name}", "en")) in en_flat, en
+        assert "Installcompletion" not in ko_flat
+
+
+def test_korean_help_uses_the_runtime_term_for_coherence() -> None:
+    """Runtime strings and table headers say 코히어런스; help text must not say 긴밀도."""
+    ko = _cli_help_file("ko")
+    assert not [k for k, v in ko.items() if "긴밀도" in v]
+    coherence_keys = [k for k in ko if "coherence" in k]
+    assert coherence_keys and all("코히어런스" in ko[k] for k in coherence_keys), coherence_keys
 
 
 def test_top_level_help_reads_lang_after_help_from_argv(monkeypatch: pytest.MonkeyPatch) -> None:

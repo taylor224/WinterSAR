@@ -505,5 +505,5 @@ def test_synth_noise_model_option(tmp_path: Path):
             "bogus",
         ],
     )
-    assert bad.exit_code == 1
+    assert bad.exit_code == 2  # RES-006 = argument outside its allowed set: bad input (ADR-0091)
     assert json.loads(bad.stdout)["findings"][0]["rule_id"] == "RES-006"
