@@ -45,10 +45,16 @@ TYPER_OWN_PARAMS = {"help", "install_completion", "show_completion"}
 HANGUL = re.compile("[가-힣]")
 # rich wraps long help texts across table rows: compare without whitespace and box borders
 _BOX = re.compile(r"[\s│╭╮╰╯─┃┏┓┗┛━┡┩╇┳┻╋┼]")
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    """Drop ANSI styling (rich emits bold/dim even with NO_COLOR when a terminal is forced)."""
+    return _ANSI.sub("", text)
 
 
 def _squash(text: str) -> str:
-    return _BOX.sub("", text)
+    return _BOX.sub("", _plain(text))
 
 
 def _flatten(d: dict[str, Any], prefix: str = "") -> dict[str, str]:
@@ -236,7 +242,7 @@ def test_builtin_option_help_follows_lang(args: list[str]) -> None:
     assert "Showthismessage" not in ko_flat and not HANGUL.search(en), (ko, en)
     assert _squash(t("cli_help.root.help_option", "en")) in en_flat, en
     if args == ["--help"]:
-        assert "--install-completion" in ko and "--show-completion" in en  # typer adds them
+        assert "--install-completion" in _plain(ko) and "--show-completion" in _plain(en)
         for name in ("install_completion", "show_completion"):
             assert _squash(t(f"cli_help.root.{name}", "ko")) in ko_flat, ko
             assert _squash(t(f"cli_help.root.{name}", "en")) in en_flat, en

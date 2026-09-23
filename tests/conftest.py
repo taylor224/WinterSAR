@@ -36,6 +36,19 @@ def _lang_ko(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WINTERSAR_LANG", "ko")
 
 
+@pytest.fixture(autouse=True)
+def _plain_cli_output(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep CLI output byte-identical on CI and locally.
+
+    typer forces a colour terminal when GITHUB_ACTIONS / FORCE_COLOR / PY_COLORS is set
+    (typer/rich_utils.py), which threads ANSI codes through option names and breaks
+    substring assertions on ``--help`` text.
+    # source: .venv/lib/python3.11/site-packages/typer/rich_utils.py (FORCE_TERMINAL)
+    """
+    for var in ("GITHUB_ACTIONS", "FORCE_COLOR", "PY_COLORS"):
+        monkeypatch.delenv(var, raising=False)
+
+
 @pytest.fixture
 def rng() -> np.random.Generator:
     return np.random.default_rng(42)
